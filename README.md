@@ -21,6 +21,19 @@ A management panel for vLLM inference servers: monitor model and server hardware
 
 ## Environment
 
-- **Deployment**: Linux / Windows, Docker or Python 3.10+
+- **Deployment environment**: Linux / Windows, Docker or Python 3.10+
 - **Managed target**: Linux server with SSH enabled, running the vLLM engine on NVIDIA GPU + CUDA (other GPU brands not supported yet — no test platform available)
 - **Browser**: Chrome / Edge / Firefox and other modern browsers
+
+## Deployment
+
+One-click remote deploy via `tools/server_deploy.py`: packages the app locally, uploads it, builds the Docker image on the target, and swaps the container. Set the three required variables, then run:
+
+```bash
+export DEPLOY_TARGET=<server-IP>
+export DEPLOY_USER=<ssh-user>
+export SERVER_PASS=<ssh-password>
+python tools/server_deploy.py deploy
+```
+
+The target server needs Docker and SSH; the local machine needs Python 3.10+ with `paramiko`. `verify` re-checks a running deployment and `probe` shows its current state.
