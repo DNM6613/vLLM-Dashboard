@@ -1,5 +1,7 @@
 # vLLM-Dashboard
 
+[中文](README-CN.md)
+
 A management panel for vLLM inference servers: monitor model and server hardware status remotely in real time through a browser. Configure environment variables and model launch parameters with ease, with an integrated SSH-based console for server configuration management.
 
 ## Features
