@@ -1,0 +1,39 @@
+target-version = "py311"
+line-length = 120
+extend-exclude = ["venv", "node_modules", "frontend", "data"]
+
+[lint]
+select = ["E", "W", "F", "I", "UP", "S", "SIM", "RUF"]
+
+ignore = [
+    "BLE001",
+    "S110",
+    "S603",
+    "S604",
+    "S507",
+    "S104",
+    "S108",
+    "DTZ005",
+    "SIM102",
+    "SIM114",
+    "SIM108",
+    "TRY401",
+    "PLW1510",
+    "RUF013",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "PIE810",
+    "E501",
+    "E402",
+]
+
+[lint.per-file-ignores]
+"tests/*" = [
+    "S101",
+    "S105",
+    "S106",
+    "S107",
+    "RUF012",
+    "S108",
+]
