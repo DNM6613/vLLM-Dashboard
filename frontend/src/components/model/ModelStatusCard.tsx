@@ -101,6 +101,7 @@ export const ModelStatusCard = memo(function ModelStatusCard() {
               num={model?.running_requests}
               num2={model?.waiting_requests}
               num3={model?.preemptions_total}
+              format={fmtInt}
             />
             <Stat label={t('Prompt Throughput (tok/s)')} num={model?.prompt_tokens_per_s} format={fmtInt} />
             <Stat label={t('Generation Throughput (tok/s)')} num={model?.generation_tokens_per_s} format={fmtInt} />
