@@ -26,7 +26,7 @@ setup(
     description=("Web dashboard for managing and monitoring a remote vLLM "
                  "inference service: model scan/start/stop/download, "
                  "hardware monitoring, SSH console"),
-    author="uforce",
+    author="vLLM-Dashboard",
     packages=find_packages(exclude=["tests", "tests.*"]),
     install_requires=read_requirements(),
     entry_points={

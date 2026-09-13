@@ -8,16 +8,16 @@ import time
 
 import paramiko
 
-SERVER = os.environ.get("DEPLOY_TARGET", "10.131.1.9")
-USER = os.environ.get("DEPLOY_USER", "uforce")
+SERVER = os.environ.get("DEPLOY_TARGET", "")
+USER = os.environ.get("DEPLOY_USER", "")
 CONTAINER = os.environ.get("DEPLOY_CONTAINER", "vllm-dashboard-dev")
 API_PORT = os.environ.get("DEPLOY_API_PORT", "5173")
 API = f"http://127.0.0.1:{API_PORT}"
 DATA_VOL = os.environ.get(
-    "DEPLOY_DATA_VOL", "/home/uforce/vllm-dashboard-dev/data:/app/data")
-BUILD_DIR = os.environ.get("DEPLOY_BUILD_DIR", "/home/uforce/vllm-dashboard-build")
+    "DEPLOY_DATA_VOL", f"/home/{USER}/vllm-dashboard-dev/data:/app/data")
+BUILD_DIR = os.environ.get("DEPLOY_BUILD_DIR", f"/home/{USER}/vllm-dashboard-build")
 TAR_LOCAL = "_server_deploy.tar"
-TAR_REMOTE = os.environ.get("DEPLOY_TAR_REMOTE", "/home/uforce/_server_deploy.tar")
+TAR_REMOTE = os.environ.get("DEPLOY_TAR_REMOTE", f"/home/{USER}/_server_deploy.tar")
 
 SHIP_FILES = ["Dockerfile", ".dockerignore", "requirements-lock.txt", "setup.py"]
 SHIP_DIRS = ["backend", "frontend"]
@@ -201,6 +201,12 @@ def main() -> None:
     if mode == "push":
         push()
         return
+    if not SERVER:
+        print("ERROR: DEPLOY_TARGET 环境变量未设置（set DEPLOY_TARGET=<服务器IP>& python ...）")
+        sys.exit(1)
+    if not USER:
+        print("ERROR: DEPLOY_USER 环境变量未设置（set DEPLOY_USER=<用户名>& python ...）")
+        sys.exit(1)
     password = os.environ.get("SERVER_PASS", "")
     if not password:
         print("ERROR: SERVER_PASS 环境变量未设置（set SERVER_PASS=<密码>& python ...）")
