@@ -32,14 +32,16 @@ vLLM 推理服务器管理面板：通过浏览器远程实时掌握模型与服
 Linux / macOS:
 
 ```bash
-curl -fsSLk https://10.131.1.14/uforce/vLLM-Dashboard/raw/master/install.sh | bash
+curl -fsSL https://cdn.jsdelivr.net/gh/DNM6613/vLLM-Dashboard@master/install.sh | bash
 ```
 
 Windows:
 
 ```powershell
-curl -fsSLk https://10.131.1.14/uforce/vLLM-Dashboard/raw/master/install.ps1 -o $env:TEMP\vd-install.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\vd-install.ps1
+curl -fsSL https://cdn.jsdelivr.net/gh/DNM6613/vLLM-Dashboard@master/install.ps1 -o $env:TEMP\vd-install.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\vd-install.ps1
 ```
+
+无法访问 GitHub 的机器（如内网），先设置 `VLLM_DASHBOARD_REPO` 指向可访问的源码镜像，再从镜像获取安装脚本运行。
 
 Docker 远程部署：`tools/server_deploy.py` 在本地打包、上传，在目标机构建 Docker 镜像并替换容器。设置三个必填变量后运行：
 

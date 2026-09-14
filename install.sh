@@ -1,14 +1,14 @@
 #!/bin/bash
 # vLLM-Dashboard 一行安装器（Linux / macOS）
 #
-#   curl -fsSLk https://10.131.1.14/uforce/vLLM-Dashboard/raw/master/install.sh | bash
+#   curl -fsSL https://cdn.jsdelivr.net/gh/DNM6613/vLLM-Dashboard@master/install.sh | bash
 #
 # 可选参数: 安装目录（默认 ~/vLLM-Dashboard）
-# 可选环境变量: VLLM_DASHBOARD_GITEA（默认 https://10.131.1.14）、VLLM_DASHBOARD_BRANCH（默认 master）
+# 可选环境变量: VLLM_DASHBOARD_REPO（默认 https://github.com/DNM6613/vLLM-Dashboard，可指向内网镜像）、
+#               VLLM_DASHBOARD_BRANCH（默认 master）
 set -euo pipefail
 
-GITEA="${VLLM_DASHBOARD_GITEA:-https://10.131.1.14}"
-REPO_PATH="uforce/vLLM-Dashboard"
+REPO="${VLLM_DASHBOARD_REPO:-https://github.com/DNM6613/vLLM-Dashboard}"
 BRANCH="${VLLM_DASHBOARD_BRANCH:-master}"
 INSTALL_DIR="${1:-$HOME/vLLM-Dashboard}"
 
@@ -22,8 +22,11 @@ if [ -f "$INSTALL_DIR/deploy.sh" ]; then
 else
     tmpTar=$(mktemp)
     trap 'rm -f "$tmpTar"' EXIT
-    echo "  下载 $GITEA/$REPO_PATH (branch: $BRANCH) ..."
-    curl -fsSLk "$GITEA/$REPO_PATH/archive/$BRANCH.tar.gz" -o "$tmpTar"
+    echo "  下载 $REPO (branch: $BRANCH) ..."
+    CURL_ARGS=(-fsSL)
+    repoHost="${REPO#*://}"; repoHost="${repoHost%%/*}"
+    [[ "$repoHost" =~ ^[0-9.]+$ ]] && CURL_ARGS+=(-k)
+    curl "${CURL_ARGS[@]}" "$REPO/archive/$BRANCH.tar.gz" -o "$tmpTar"
     mkdir -p "$INSTALL_DIR"
     tar xzf "$tmpTar" -C "$INSTALL_DIR" --strip-components=1
     echo "  ✓ 源码已解压到 $INSTALL_DIR"

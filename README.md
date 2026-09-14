@@ -32,14 +32,16 @@ One-line install (fetches the source, installs dependencies, and builds the fron
 Linux / macOS:
 
 ```bash
-curl -fsSLk https://10.131.1.14/uforce/vLLM-Dashboard/raw/master/install.sh | bash
+curl -fsSL https://cdn.jsdelivr.net/gh/DNM6613/vLLM-Dashboard@master/install.sh | bash
 ```
 
 Windows:
 
 ```powershell
-curl -fsSLk https://10.131.1.14/uforce/vLLM-Dashboard/raw/master/install.ps1 -o $env:TEMP\vd-install.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\vd-install.ps1
+curl -fsSL https://cdn.jsdelivr.net/gh/DNM6613/vLLM-Dashboard@master/install.ps1 -o $env:TEMP\vd-install.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\vd-install.ps1
 ```
+
+On machines without GitHub access (e.g. intranet hosts), point `VLLM_DASHBOARD_REPO` at a reachable source mirror, then fetch the install script from that mirror.
 
 Docker remote deploy: `tools/server_deploy.py` packages the app locally, uploads it, builds the Docker image on the target, and swaps the container. Set the three required variables, then run:
 
