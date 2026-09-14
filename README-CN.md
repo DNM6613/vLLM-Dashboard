@@ -25,9 +25,23 @@ vLLM 推理服务器管理面板：通过浏览器远程实时掌握模型与服
 - **管理目标**：Linux 服务器，启用 SSH 服务，运行 vLLM 推理引擎，NVIDIA GPU + CUDA 环境（因没有测试开发平台，暂不支持其他品牌）
 - **浏览器**：Chrome / Edge / Firefox 等现代浏览器
 
-## 部署
+## 安装
 
-一键远程部署：`tools/server_deploy.py` 在本地打包、上传，在目标机构建 Docker 镜像并替换容器。设置三个必填变量后运行：
+一键安装（自动拉取源码、安装依赖并构建前端）：
+
+Linux / macOS:
+
+```bash
+curl -fsSLk https://10.131.1.14/uforce/vLLM-Dashboard/raw/master/install.sh | bash
+```
+
+Windows:
+
+```powershell
+curl -fsSLk https://10.131.1.14/uforce/vLLM-Dashboard/raw/master/install.ps1 -o $env:TEMP\vd-install.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\vd-install.ps1
+```
+
+Docker 远程部署：`tools/server_deploy.py` 在本地打包、上传，在目标机构建 Docker 镜像并替换容器。设置三个必填变量后运行：
 
 ```bash
 export DEPLOY_TARGET=<服务器IP>
@@ -37,3 +51,17 @@ python tools/server_deploy.py deploy
 ```
 
 目标服务器需 Docker 与 SSH；本机需 Python 3.10+ 及 `paramiko`。`verify` 复检已运行的部署，`probe` 查看当前状态。
+
+已有仓库副本时可手动安装：Linux / macOS 运行 `bash deploy.sh`，Windows 运行 `powershell -ExecutionPolicy Bypass -File deploy.ps1`。安装后编辑 `.env`（首次自动从 `.env.example` 复制）配置参数。
+
+## 快速开始
+
+```bash
+bash start.sh   # Linux / macOS
+```
+
+```powershell
+.\start.ps1     # Windows
+```
+
+浏览器打开 http://localhost:5174。
