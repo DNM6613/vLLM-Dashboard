@@ -21,12 +21,41 @@ if [ -f "$INSTALL_DIR/deploy.sh" ]; then
     echo "  ✓ 发现已有安装: $INSTALL_DIR（跳过下载）"
 else
     tmpTar=$(mktemp)
-    trap 'rm -f "$tmpTar"' EXIT
+    tmpHeaders=$(mktemp)
+    trap 'rm -f "$tmpTar" "$tmpHeaders"' EXIT
     echo "  下载 $REPO (branch: $BRANCH) ..."
     CURL_ARGS=(-fsSL)
     repoHost="${REPO#*://}"; repoHost="${repoHost%%/*}"
-    [[ "$repoHost" =~ ^[0-9.]+$ ]] && CURL_ARGS+=(-k)
-    curl "${CURL_ARGS[@]}" "$REPO/archive/$BRANCH.tar.gz" -o "$tmpTar"
+    if [[ "$repoHost" =~ ^[0-9.]+$ ]]; then
+        # 内网 IP 主机：TLS 校验必须显式选择，不再默认关闭
+        if [ -n "${VLLM_DASHBOARD_CACERT:-}" ]; then
+            CURL_ARGS+=(--cacert "$VLLM_DASHBOARD_CACERT")
+        elif [ "${VLLM_DASHBOARD_INSECURE:-}" = "1" ]; then
+            echo "  ⚠ VLLM_DASHBOARD_INSECURE=1：跳过 TLS 证书校验（不建议）"
+            CURL_ARGS+=(-k)
+        else
+            echo "  ✗ 仓库为 IP 主机：请设置 VLLM_DASHBOARD_CACERT=/path/ca.crt（推荐）"
+            echo "    或 VLLM_DASHBOARD_INSECURE=1 跳过 TLS 校验（不建议）"
+            exit 1
+        fi
+    fi
+    curl "${CURL_ARGS[@]}" "$REPO/archive/$BRANCH.tar.gz" -o "$tmpTar" -D "$tmpHeaders"
+    # 完整性校验（GitHub 提供 Archive-Sha256 头；自定义镜像源无此头则跳过）
+    expectedSha=$(grep -i '^Archive-Sha256:' "$tmpHeaders" | head -n1 | tr -d '\r' | awk '{print tolower($2)}' || true)
+    if [ -n "$expectedSha" ]; then
+        if command -v sha256sum &> /dev/null; then
+            actualSha=$(sha256sum "$tmpTar" | awk '{print $1}')
+        else
+            actualSha=$(shasum -a 256 "$tmpTar" | awk '{print $1}')
+        fi
+        if [ "$actualSha" != "$expectedSha" ]; then
+            echo "  ✗ Tarball SHA256 不匹配（镜像可能被篡改）"
+            exit 1
+        fi
+        echo "  ✓ SHA256 校验通过"
+    else
+        echo "  ⚠ 该仓库不提供校验和，跳过完整性校验"
+    fi
     mkdir -p "$INSTALL_DIR"
     tar xzf "$tmpTar" -C "$INSTALL_DIR" --strip-components=1
     echo "  ✓ 源码已解压到 $INSTALL_DIR"
@@ -62,7 +91,12 @@ fi
 echo -e "\n[5/5] 构建前端（原生部署需要前端产物，否则 5174 仅 API + /docs）..."
 if [ -d "frontend" ] && command -v node &> /dev/null && command -v npm &> /dev/null; then
     (cd frontend && npm install && npm run build)
-    rm -rf static
+    if [ -f static/index.html ]; then
+        rm -rf static
+    elif [ -d static ]; then
+        echo "  ⚠ static/ 存在但缺少 index.html，已备份为 static.bak.$(date +%s)"
+        mv static "static.bak.$(date +%s)"
+    fi
     cp -r frontend/dist static
     echo "  ✓ 前端构建完成（frontend/dist -> static/，STATIC_DIR 默认指向）"
 else

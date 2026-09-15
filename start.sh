@@ -1,5 +1,5 @@
 #!/bin/bash
-set -uo pipefail
+set -euo pipefail
 
 cd "$(dirname "$0")"
 
@@ -11,8 +11,8 @@ envFile=".env"
 apiHost="0.0.0.0"
 apiPort=5174
 if [ -f "$envFile" ]; then
-    apiHost=$(grep -E '^[[:space:]]*API_HOST[[:space:]]*=' "$envFile" | head -n1 | cut -d= -f2- | tr -d '[:space:]')
-    apiPort=$(grep -E '^[[:space:]]*API_PORT[[:space:]]*=' "$envFile" | head -n1 | cut -d= -f2- | tr -d '[:space:]')
+    apiHost=$(grep -E '^[[:space:]]*API_HOST[[:space:]]*=' "$envFile" | head -n1 | cut -d= -f2- | tr -d '[:space:]' || true)
+    apiPort=$(grep -E '^[[:space:]]*API_PORT[[:space:]]*=' "$envFile" | head -n1 | cut -d= -f2- | tr -d '[:space:]' || true)
     [ -n "$apiHost" ] || apiHost="0.0.0.0"
     case "$apiPort" in (*[!0-9]*|"") apiPort=5174;; esac
 fi
@@ -21,15 +21,33 @@ pythonExe="python3"
 venvPython="venv/bin/python"
 if [ -x "$venvPython" ]; then pythonExe="$venvPython"; fi
 
+# A process on our ports is only ours if its command line matches the
+# dashboard backend (uvicorn backend.main:app) or a vite dev server under
+# this project directory. Anything else is left untouched.
+is_ours() {
+    local args
+    args=$(ps -p "$1" -o args= 2>/dev/null) || return 1
+    case "$args" in
+        *backend.main:app*) return 0 ;;
+        *"$PWD"*vite*) return 0 ;;
+        *vLLM-Dashboard*vite*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 echo ""
-echo "Cleaning up old processes..."
-echo "  WARNING: about to terminate processes listening on port 5173 and port $apiPort (they may be other dev services)..."
+echo "Cleaning up old vLLM-Dashboard processes..."
+echo "  (only processes whose command line matches this project are killed; other services on these ports are left running)"
 if command -v lsof &> /dev/null; then
     for port in 5173 "$apiPort"; do
-        pids=$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null | sort -u)
+        pids=$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null | sort -u || true)
         for pid in $pids; do
-            kill -9 "$pid" 2>/dev/null
-            echo "  Killed PID $pid (port $port)"
+            if is_ours "$pid"; then
+                kill -9 "$pid" 2>/dev/null || true
+                echo "  Killed PID $pid (port $port)"
+            else
+                echo "  Skipping PID $pid (port $port): not a vLLM-Dashboard process"
+            fi
         done
     done
 else
@@ -58,7 +76,7 @@ while [ $SECONDS -lt $deadline ]; do
             break
         fi
     else
-        wait "$backendPid"
+        wait "$backendPid" || true
         echo ""
         echo "  Backend process exited unexpectedly"
         break
@@ -96,7 +114,7 @@ echo "  API Docs: http://localhost:$apiPort/docs"
 echo ""
 echo "  Press Enter to stop all services..."
 
-read -r
+read -r || true
 
 echo ""
 echo "Stopping..."
@@ -104,11 +122,13 @@ echo "Stopping..."
 kill_tree() {
     local pid=$1
     local children
-    children=$(pgrep -P "$pid" 2>/dev/null)
+    children=$(pgrep -P "$pid" 2>/dev/null || true)
     for child in $children; do
         kill_tree "$child"
     done
-    kill "$pid" 2>/dev/null && echo "  Stopped PID $pid"
+    if kill "$pid" 2>/dev/null; then
+        echo "  Stopped PID $pid"
+    fi
 }
 
 kill_tree "$backendPid"
@@ -117,7 +137,9 @@ kill_tree "$frontendPid"
 
 if command -v lsof &> /dev/null; then
     for procId in $(lsof -ti tcp:5173 -sTCP:LISTEN 2>/dev/null | sort -u); do
-        kill -9 "$procId" 2>/dev/null && echo "  Stopped node PID $procId (port 5173)"
+        if is_ours "$procId" && kill -9 "$procId" 2>/dev/null; then
+            echo "  Stopped node PID $procId (port 5173)"
+        fi
     done
 fi
 

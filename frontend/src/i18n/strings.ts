@@ -79,6 +79,9 @@ export const ZH: Record<string, string> = {
   'BMC Username': 'BMC 用户名',
   'BMC Password': 'BMC 密码',
   'Save': '保存',
+  'Clear saved credentials?': '清空已保存的凭据？',
+  'The saved values for the following will be erased — you will need to enter them again: {fields}':
+    '以下已保存的值将被清空，之后需要重新填写：{fields}',
 
   'API Key Required': '需要 API 密钥',
   'The server requires an API key to access. Enter the API key to continue.':

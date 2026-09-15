@@ -7,7 +7,11 @@ export type Interp = Record<string, string | number>;
 
 function interpolate(text: string, vars?: Interp): string {
   if (!vars) return text;
-  return text.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m));
+  return text.replace(/\{(\w+)\}/g, (m, k: string) => {
+    if (!(k in vars)) return m;
+    const v = vars[k];
+    return v == null ? '' : String(v);
+  });
 }
 
 interface I18nContextValue {

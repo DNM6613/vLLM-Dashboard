@@ -36,6 +36,9 @@ class ConsoleSession:
         self._base_offset = 0
         self._total_written = 0
         self._last_send_drop_warn = 0.0
+        # Number of WebSockets currently attached. Mutated under the
+        # manager's lock (see ConsoleSessionManager.attach/detach).
+        self.active_ws = 0
 
     def _append_locked(self, data: str) -> None:
         self._buffer += data
@@ -131,6 +134,9 @@ class ConsoleSession:
 class ConsoleSessionManager:
 
     _MAX_SESSIONS = 5
+    # How long a concurrent get_or_create waits for an in-flight session
+    # creation (SSH connect can take several seconds) before giving up.
+    _CREATE_WAIT_TIMEOUT = 20.0
     _CREATING = object()
 
     def __init__(self):
@@ -142,45 +148,85 @@ class ConsoleSessionManager:
             (config.ssh_password or "").encode("utf-8")).hexdigest()[:12]
         return f"{config.host}:{config.ssh_port}:{config.ssh_username}:{pw_hash}"
 
+    def _purge_stale(self) -> None:
+        """Close and drop dead sessions. Call with the lock held."""
+        stale_keys = [
+            k for k, v in self._sessions.items()
+            if v is not self._CREATING and not v.is_alive()
+        ]
+        for k in stale_keys:
+            self._sessions[k].close()
+            del self._sessions[k]
+
+    def _evict_one_locked(self) -> bool:
+        """Free a slot by evicting the first evictable session. Call with
+        the lock held. Sessions with an attached WebSocket are never
+        evicted — refusing is preferred over killing a live console.
+        """
+        for key, s in self._sessions.items():
+            if s is self._CREATING:
+                continue
+            if s.active_ws > 0:
+                continue
+            s.close()
+            del self._sessions[key]
+            return True
+        return False
+
+    def attach(self, session: ConsoleSession) -> None:
+        with self._lock:
+            session.active_ws += 1
+
+    def detach(self, session: ConsoleSession) -> None:
+        with self._lock:
+            session.active_ws = max(0, session.active_ws - 1)
+
     def get_or_create(self, config) -> tuple[ConsoleSession | None, bool]:
         key = self._key(config)
-        with self._lock:
-            stale_keys = [
-                k for k, v in self._sessions.items()
-                if v is not self._CREATING and not v.is_alive()
-            ]
-            for k in stale_keys:
-                self._sessions[k].close()
-                del self._sessions[k]
-            session = self._sessions.get(key)
-            if session is self._CREATING:
-                return None, False
-            if session is not None and session.is_alive():
-                return session, False
-            if len(self._sessions) >= self._MAX_SESSIONS:
-                evicted = False
-                for oldest_key, s in list(self._sessions.items()):
-                    if s is self._CREATING:
-                        continue
-                    s.close()
-                    del self._sessions[oldest_key]
-                    evicted = True
-                    break
-                if not evicted:
+        deadline = time.monotonic() + self._CREATE_WAIT_TIMEOUT
+        while True:
+            with self._lock:
+                self._purge_stale()
+                session = self._sessions.get(key)
+                if session is self._CREATING:
+                    creating = True
+                elif session is not None and session.is_alive():
+                    return session, False
+                else:
+                    creating = False
+                    if (len(self._sessions) >= self._MAX_SESSIONS
+                            and not self._evict_one_locked()):
+                        return None, False
+                    self._sessions[key] = self._CREATING
+            if creating:
+                # A concurrent connection is establishing this session;
+                # wait for it instead of failing immediately.
+                if time.monotonic() >= deadline:
                     return None, False
-            self._sessions[key] = self._CREATING
+                time.sleep(0.2)
+                continue
 
-        session = self._create(config)
-        with self._lock:
-            if self._sessions.get(key) is self._CREATING:
-                if session is not None:
-                    self._sessions[key] = session
-                    return session, True
-                del self._sessions[key]
-            else:
+            session = self._create(config)
+            with self._lock:
+                if self._sessions.get(key) is self._CREATING:
+                    if session is not None:
+                        self._sessions[key] = session
+                        return session, True
+                    del self._sessions[key]
+                    return None, False
                 if session is not None:
                     session.close()
-        return None, False
+            return None, False
+
+    def get_session(self, config) -> ConsoleSession | None:
+        key = self._key(config)
+        with self._lock:
+            session = self._sessions.get(key)
+            if session is self._CREATING:
+                return None
+            if session is not None and session.is_alive():
+                return session
+        return None
 
     def _create(self, config) -> ConsoleSession | None:
         try:
@@ -267,6 +313,9 @@ async def websocket_console(websocket: WebSocket):
 
     send_fail_announced = False
 
+    # Track this WebSocket so capacity eviction never closes a live
+    # console (all return paths below are covered by the final finally).
+    console_session_manager.attach(session)
     try:
         while True:
             try:
@@ -342,3 +391,4 @@ async def websocket_console(websocket: WebSocket):
         read_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await read_task
+        console_session_manager.detach(session)

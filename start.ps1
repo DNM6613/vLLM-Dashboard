@@ -19,14 +19,28 @@ $pythonExe = "python"
 $venvPython = Join-Path $PSScriptRoot "venv\Scripts\python.exe"
 if (Test-Path $venvPython) { $pythonExe = $venvPython }
 
+# A process on our ports is only ours if its command line matches the
+# dashboard backend (uvicorn backend.main:app) or a vite dev server under
+# this project directory. Anything else is left untouched.
+function Test-IsDashboardProc([int]$procId) {
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $procId" -ErrorAction SilentlyContinue
+    if (-not $proc) { return $false }
+    $cmd = [string]$proc.CommandLine
+    return ($cmd -like '*backend.main:app*') -or ($cmd -like '*' + $PSScriptRoot + '*vite*')
+}
+
 Write-Host ""
-Write-Host "Cleaning up old processes..."
-Write-Host "  WARNING: about to terminate processes listening on port 5173 and port $apiPort (they may be other dev services)..."
+Write-Host "Cleaning up old vLLM-Dashboard processes..."
+Write-Host "  (only processes whose command line matches this project are killed; other services on these ports are left running)"
 foreach ($port in @($apiPort, 5173)) {
     $oldProcs = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique
     foreach ($oldPid in $oldProcs) {
-                Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
-                Write-Host "  Killed PID $oldPid (port $port)"
+        if (Test-IsDashboardProc $oldPid) {
+            Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
+            Write-Host "  Killed PID $oldPid (port $port)"
+        } else {
+            Write-Host "  Skipping PID $oldPid (port $port): not a vLLM-Dashboard process"
+        }
     }
 }
 Start-Sleep -Milliseconds 500
@@ -132,8 +146,12 @@ if ($frontend.Id) {
     try {
         $portProcs = Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique
         foreach ($procId in $portProcs) {
-            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
-            Write-Host "  Stopped node PID $procId (port 5173)"
+            if (Test-IsDashboardProc $procId) {
+                Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+                Write-Host "  Stopped node PID $procId (port 5173)"
+            } else {
+                Write-Host "  Skipping PID $procId (port 5173): not a vLLM-Dashboard process"
+            }
         }
     } catch {}
 }

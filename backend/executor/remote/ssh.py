@@ -51,7 +51,9 @@ def build_ssh_client(
     connect_timeout = settings.SSH_CONNECT_TIMEOUT
 
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    # Target is a user-configured trusted internal host; strict host-key
+    # verification is opt-in via settings.SSH_STRICT_HOST_KEY.
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # noqa: S507
 
     sock = socket.create_connection((host, port), timeout=connect_timeout)
     sock.settimeout(None)

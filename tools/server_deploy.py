@@ -36,7 +36,8 @@ def local_version() -> str:
 
 def connect(password: str) -> paramiko.SSHClient:
     c = paramiko.SSHClient()
-    c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    # Trusted internal dev server.
+    c.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # noqa: S507
     c.connect(SERVER, username=USER, password=password, timeout=15)
     return c
 
@@ -99,11 +100,15 @@ def deploy(c: paramiko.SSHClient) -> None:
     remote(c, f"mkdir -p {host_data_dir}")
     remote_with_rc(c, f"docker stop {CONTAINER} 2>/dev/null; "
                       f"docker rm {CONTAINER} 2>/dev/null; true")
+    # HF/pip mirrors are explicit opt-ins here (settings.py defaults are now
+    # empty = official sources). The intranet dev host needs the mirrors.
     rc, o, e = remote(
         c,
         f"docker run -d --name {CONTAINER} --network host --restart always "
         f"-v {DATA_VOL} -e API_HOST=0.0.0.0 -e API_PORT={API_PORT} "
-        f"-e STATIC_DIR=/app/static {image}",
+        f"-e STATIC_DIR=/app/static "
+        f"-e HF_ENDPOINT=https://hf-mirror.com "
+        f"-e PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ {image}",
         timeout=90,
     )
     print(o, e)

@@ -125,15 +125,17 @@ class ProcessOps:
                 ),
             }
 
-        pw = shlex.quote(self.password)
-        probe = self.execute(f"echo {pw} | sudo -S -p '' true", timeout=10)
+        # Password is written to the channel's stdin (not echoed in the
+        # command line), so it does not appear in the remote process list.
+        pw_input = self.password + "\n"
+        probe = self.execute("sudo -S -p '' true", timeout=10, stdin_data=pw_input)
         if not probe.get("success"):
             return {
                 "success": False,
                 "error": probe.get("stderr") or "Cannot reach server or sudo authentication failed",
             }
 
-        result = self.execute(f"echo {pw} | sudo -S -p '' poweroff", timeout=20)
+        result = self.execute("sudo -S -p '' poweroff", timeout=20, stdin_data=pw_input)
         if result.get("channel_open_failed"):
             return {
                 "success": False,

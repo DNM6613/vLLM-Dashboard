@@ -46,7 +46,12 @@ fi
 echo -e "\n[5/5] 构建前端（原生部署需要前端产物，否则 5174 仅 API + /docs）..."
 if [ -d "frontend" ] && command -v node &> /dev/null && command -v npm &> /dev/null; then
     (cd frontend && npm install && npm run build)
-    rm -rf static
+    if [ -f static/index.html ]; then
+        rm -rf static
+    elif [ -d static ]; then
+        echo "  ⚠ static/ 存在但缺少 index.html，已备份为 static.bak.$(date +%s)"
+        mv static "static.bak.$(date +%s)"
+    fi
     cp -r frontend/dist static
     echo "  ✓ 前端构建完成（frontend/dist -> static/，STATIC_DIR 默认指向）"
 else

@@ -17,8 +17,11 @@ class Settings(BaseSettings):
     )
 
     VLLM_PYTHON_PATH: str = ""
-    HF_ENDPOINT: str = "https://hf-mirror.com"
-    PIP_INDEX_URL: str = "https://mirrors.aliyun.com/pypi/simple/"
+    # No mirror assumed by default: the download/CLI commands only inject
+    # these when set (empty values are skipped). Point them at a mirror in
+    # .env (or container env) when the host needs one.
+    HF_ENDPOINT: str = ""
+    PIP_INDEX_URL: str = ""
 
     API_TIMEOUT: float = 10.0
     BENCHMARK_TIMEOUT: float = 60.0

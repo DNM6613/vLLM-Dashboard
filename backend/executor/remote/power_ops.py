@@ -1,4 +1,5 @@
 import logging
+import os
 import shutil
 import socket
 import subprocess
@@ -7,6 +8,14 @@ import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+def _ipmitool_env(password: str) -> dict:
+    """Subprocess env for ipmitool's -E flag: the password is read from
+    IPMI_PASSWORD instead of the -P command line, so it does not appear
+    in the local process list."""
+    env = dict(os.environ)
+    env["IPMI_PASSWORD"] = password
+    return env
 
 _bmc_diag_lock = threading.Lock()
 _bmc_diag_last: tuple[bool, bool] | None = None
@@ -49,12 +58,13 @@ class PowerOps:
             ipmitool_path, "-I", "lanplus",
             "-H", config.bmc_host,
             "-U", config.bmc_username or "admin",
-            "-P", config.bmc_password,
+            "-E",
             "chassis", "power", "on",
         ]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True,
-                                    timeout=self.BMC_POWER_TIMEOUT)
+                                    timeout=self.BMC_POWER_TIMEOUT,
+                                    env=_ipmitool_env(config.bmc_password))
         except subprocess.TimeoutExpired:
             return {"success": False, "error": "BMC power-on timeout (no response from BMC)"}
         except Exception as e:
@@ -112,13 +122,14 @@ class PowerOps:
             ipmitool_path, "-I", "lanplus",
             "-H", config.bmc_host,
             "-U", config.bmc_username or "admin",
-            "-P", config.bmc_password,
+            "-E",
             "chassis", "power", "status",
         ]
         t_ipmi = time.monotonic()
         try:
             result = subprocess.run(cmd, capture_output=True, text=True,
-                                    timeout=ipmi_timeout)
+                                    timeout=ipmi_timeout,
+                                    env=_ipmitool_env(config.bmc_password))
         except subprocess.TimeoutExpired:
             _bmc_diag(config.bmc_host, pre, pre_ms, ipmi_timeout, "timeout",
                       (time.monotonic() - t_ipmi) * 1000, False, None)

@@ -23,15 +23,42 @@ if (Test-Path (Join-Path $InstallDir "deploy.sh")) {
     Write-Host "  ✓ 发现已有安装: $InstallDir（跳过下载）" -ForegroundColor Green
 } else {
     $tmpTar = Join-Path $env:TEMP "vllm-dashboard-install.tar.gz"
+    $tmpHeaders = Join-Path $env:TEMP "vllm-dashboard-install.headers"
     Write-Host "  下载 $Repo (branch: $Branch) ..."
     $repoHost = ($Repo -replace '^https?://', '') -replace '/.*$', ''
     $curlArgs = @('-fsSL')
-    if ($repoHost -match '^(\d{1,3}\.){3}\d{1,3}$') { $curlArgs += '-k' }
-    curl.exe @curlArgs "$Repo/archive/$Branch.tar.gz" -o $tmpTar
+    if ($repoHost -match '^(\d{1,3}\.){3}\d{1,3}$') {
+        # 内网 IP 主机：TLS 校验必须显式选择，不再默认关闭
+        $caCert = $env:VLLM_DASHBOARD_CACERT
+        if ($caCert) {
+            $curlArgs += @('--cacert', $caCert)
+        } elseif ($env:VLLM_DASHBOARD_INSECURE -eq '1') {
+            Write-Host "  ⚠ VLLM_DASHBOARD_INSECURE=1：跳过 TLS 证书校验（不建议）" -ForegroundColor Yellow
+            $curlArgs += '-k'
+        } else {
+            Write-Host "  ✗ 仓库为 IP 主机：请设置 VLLM_DASHBOARD_CACERT=/path/ca.crt（推荐）" -ForegroundColor Red
+            Write-Host "    或 VLLM_DASHBOARD_INSECURE=1 跳过 TLS 校验（不建议）" -ForegroundColor Red
+            exit 1
+        }
+    }
+    curl.exe @curlArgs "$Repo/archive/$Branch.tar.gz" -o $tmpTar -D $tmpHeaders
     if ($LASTEXITCODE -ne 0) { Write-Host "  ✗ 下载失败" -ForegroundColor Red; exit 1 }
+    # 完整性校验（GitHub 提供 Archive-Sha256 头；自定义镜像源无此头则跳过）
+    $headerLine = Get-Content $tmpHeaders -ErrorAction SilentlyContinue | Where-Object { $_ -match '^Archive-Sha256:' } | Select-Object -First 1
+    if ($headerLine) {
+        $expectedSha = (($headerLine -split ':', 2)[1]).Trim().ToLower()
+        $actualSha = (Get-FileHash -Algorithm SHA256 -Path $tmpTar).Hash.ToLower()
+        if ($actualSha -ne $expectedSha) {
+            Write-Host "  ✗ Tarball SHA256 不匹配（镜像可能被篡改）" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "  ✓ SHA256 校验通过" -ForegroundColor Green
+    } else {
+        Write-Host "  ⚠ 该仓库不提供校验和，跳过完整性校验" -ForegroundColor Yellow
+    }
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     tar.exe -xzf $tmpTar -C $InstallDir --strip-components=1
-    Remove-Item $tmpTar
+    Remove-Item $tmpTar, $tmpHeaders -ErrorAction SilentlyContinue
     Write-Host "  ✓ 源码已解压到 $InstallDir" -ForegroundColor Green
 }
 Set-Location $InstallDir

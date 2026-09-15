@@ -8,9 +8,11 @@ select = ["E", "W", "F", "I", "UP", "S", "SIM", "RUF"]
 ignore = [
     "BLE001",
     "S110",
+    # S603/S604: subprocess with lists / without shell=True is used by design
+    # for the remote-execution and BMC paths.
     "S603",
     "S604",
-    "S507",
+    # S104: API_HOST=0.0.0.0 is the deployment default behind the LAN.
     "S104",
     "S108",
     "DTZ005",

@@ -74,7 +74,10 @@ async def get_server_health():
         health = await config_manager.get_health()
         return health
     except Exception as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        # Log the real error server-side; do not echo exception text
+        # (may include addresses/probe details) back to the client.
+        logger.warning("Server health check failed: %s", e)
+        raise HTTPException(status_code=503, detail="Server unreachable")
 
 @router.get("/ssh/status")
 def get_ssh_status():

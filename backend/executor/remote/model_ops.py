@@ -51,10 +51,8 @@ class ModelOps:
                 _rel = model_dir[2:]
             elif model_dir == "~":
                 _rel = ""
-            elif not model_dir.startswith("/"):
-                _rel = model_dir
             else:
-                _rel = ""
+                _rel = model_dir
             if not re.fullmatch(r'[\w./\-:@~]*', _rel):
                 return {"success": False, "models": [], "error": "Invalid model_dir", "count": 0}
             if model_dir.startswith("~/"):
@@ -62,7 +60,8 @@ class ModelOps:
             elif model_dir == "~":
                 scan_root = "$HOME"
             elif model_dir.startswith("/"):
-                scan_root = "~"
+                # Absolute path: scan it directly (was "~" — scanned HOME).
+                scan_root = shlex.quote(model_dir)
             else:
                 scan_root = f"$HOME/{model_dir}"
             scan_command = (

@@ -83,6 +83,31 @@ def _migrate_legacy_encrypted(stored: str) -> str:
         )
         return ""
 
+_CRED_FIELDS = ("ssh_password", "bmc_password", "api_key")
+
+def _fernet():
+    """Return a Fernet instance, creating the key file if it does not exist yet.
+
+    Reuses the legacy ``data/.secret_key`` so already-encrypted values keep
+    decrypting; a new key is only generated on first save.
+    """
+    from cryptography.fernet import Fernet
+    key_file = _get_legacy_secret_key_file()
+    if os.path.exists(key_file):
+        with open(key_file, "rb") as f:
+            return Fernet(f.read())
+    key = Fernet.generate_key()
+    os.makedirs(os.path.dirname(key_file), exist_ok=True)
+    with open(key_file, "wb") as f:
+        f.write(key)
+    if os.name == "posix":
+        with contextlib.suppress(OSError):
+            os.chmod(key_file, 0o600)
+    return Fernet(key)
+
+def _encrypt_credential(fernet, value: str) -> str:
+    return "enc:" + fernet.encrypt(value.encode("utf-8")).decode("utf-8")
+
 class ConfigManager:
     def __init__(self):
         current_file = os.path.abspath(__file__)
@@ -113,7 +138,7 @@ class ConfigManager:
                 return ServerConfig()
 
         if data is not None:
-            for _pw_field in ("ssh_password", "bmc_password"):
+            for _pw_field in _CRED_FIELDS:
                 _pw = data.get(_pw_field, "")
                 if isinstance(_pw, str) and _pw.startswith("enc:"):
                     data[_pw_field] = _migrate_legacy_encrypted(_pw)
@@ -158,6 +183,16 @@ class ConfigManager:
         config_dir = os.path.dirname(self.config_file)
         os.makedirs(config_dir, exist_ok=True)
         config_dict = self.config.model_dump()
+        try:
+            fernet = _fernet()
+            for field in _CRED_FIELDS:
+                value = config_dict.get(field)
+                if isinstance(value, str) and value:
+                    config_dict[field] = _encrypt_credential(fernet, value)
+        except Exception as e:
+            logger.warning(
+                "Config credential encryption failed; saving plaintext: %s", e
+            )
         tmp_file = self.config_file + ".tmp"
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(config_dict, f, indent=2, ensure_ascii=False)

@@ -41,7 +41,8 @@ class RemoteExecutor(MonitorOps, ProcessOps, PowerOps, CliOps, ModelOps):
     def _is_remote(self) -> bool:
         return self.host != "" and self.host not in ("localhost", "127.0.0.1")
 
-    def _exec_local(self, command: str, timeout: int = None) -> dict[str, Any]:
+    def _exec_local(self, command: str, timeout: int = None,
+                    stdin_data: str | None = None) -> dict[str, Any]:
         if _SHELL_META_PATTERN.search(command):
             return {
                 "success": False,
@@ -58,6 +59,7 @@ class RemoteExecutor(MonitorOps, ProcessOps, PowerOps, CliOps, ModelOps):
                 shell=False,
                 capture_output=True,
                 text=True,
+                input=stdin_data,
                 timeout=timeout if timeout else 60
             )
             return {
@@ -81,10 +83,12 @@ class RemoteExecutor(MonitorOps, ProcessOps, PowerOps, CliOps, ModelOps):
                 "returncode": -1
             }
 
-    def _exec_remote(self, command: str, timeout: int = None) -> dict[str, Any]:
+    def _exec_remote(self, command: str, timeout: int = None,
+                     stdin_data: str | None = None) -> dict[str, Any]:
         actual_timeout = timeout if timeout else settings.SSH_CMD_TIMEOUT
         try:
-            stdout_text, stderr_text, returncode = self._open_and_exec(command, actual_timeout)
+            stdout_text, stderr_text, returncode = self._open_and_exec(
+                command, actual_timeout, stdin_data)
             return {
                 "success": returncode == 0,
                 "stdout": stdout_text,
@@ -114,7 +118,8 @@ class RemoteExecutor(MonitorOps, ProcessOps, PowerOps, CliOps, ModelOps):
                 "returncode": -1
             }
 
-    def _open_and_exec(self, command: str, actual_timeout: int) -> tuple[str, str, int]:
+    def _open_and_exec(self, command: str, actual_timeout: int,
+                       stdin_data: str | None = None) -> tuple[str, str, int]:
         ssh = ssh_pool.get(self.host, self.port, self.username, self.password, self.key_path)
         evicted = False
         fresh = None
@@ -132,6 +137,11 @@ class RemoteExecutor(MonitorOps, ProcessOps, PowerOps, CliOps, ModelOps):
                 fresh = ssh_pool.get(self.host, self.port, self.username, self.password, self.key_path)
                 _stdin, stdout, stderr = fresh.exec_command(command, timeout=actual_timeout)
                 open_done = True
+            if stdin_data is not None:
+                # Feed stdin (e.g. a sudo password) over the channel so it
+                # never appears in the remote command line / process list.
+                _stdin.write(stdin_data.encode("utf-8"))
+                _stdin.close()
             try:
                 stdout_text = stdout.read().decode('utf-8')
                 stderr_text = stderr.read().decode('utf-8')
@@ -153,10 +163,11 @@ class RemoteExecutor(MonitorOps, ProcessOps, PowerOps, CliOps, ModelOps):
             else:
                 ssh_pool.release(ssh, self.host, self.port, self.username)
 
-    def execute(self, command: str, timeout: int = None) -> dict[str, Any]:
+    def execute(self, command: str, timeout: int = None,
+                stdin_data: str | None = None) -> dict[str, Any]:
         if self._is_remote():
-            return self._exec_remote(command, timeout)
-        return self._exec_local(command, timeout)
+            return self._exec_remote(command, timeout, stdin_data)
+        return self._exec_local(command, timeout, stdin_data)
 
     _DQ_ESCAPE_RE = re.compile(r'([\\$`"])')
 
@@ -177,6 +188,8 @@ class RemoteExecutor(MonitorOps, ProcessOps, PowerOps, CliOps, ModelOps):
             venv_path = venv_name
         elif venv_name.startswith("~/"):
             venv_path = venv_name
+        elif venv_name == "~":
+            venv_path = "$HOME"
         else:
             venv_path = f"$HOME/{venv_name}"
 

@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from ..config.model_launch_config import launch_config_manager
 from ..config.remote_client import config_manager, get_auth_headers, get_http_client
 from ..config.settings import settings
+from ..console.session_manager import console_session_manager
 from ..controller.state_machine import StateMachine
 from ..executor.remote.process_ops import (
     _STOP_SELF_SENTINEL,
@@ -29,11 +30,34 @@ state_machine = StateMachine()
 
 _ENV_KEY_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 
+def _strip_shell_comment(line: str) -> str:
+    """Drop a shell comment (``#`` at word start) while honoring quotes.
+
+    shlex.split does not treat ``#`` as a comment, so a trailing
+    ``# comment`` would otherwise fold into the value. A ``#`` only starts
+    a comment when it is at the beginning of the line or preceded by
+    whitespace, and never inside single/double quotes.
+    """
+    in_single = False
+    in_double = False
+    for i, ch in enumerate(line):
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif ch == "#" and not in_single and not in_double:
+            if i == 0 or line[i - 1].isspace():
+                return line[:i].rstrip()
+    return line
+
 def _parse_env_vars(env_vars: str) -> list[tuple[str, str]]:
     parsed: list[list[str]] = []
     for raw_line in env_vars.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
+            continue
+        line = _strip_shell_comment(line)
+        if not line:
             continue
         try:
             tokens = shlex.split(line)
@@ -104,7 +128,6 @@ async def _sync_status_once(timeout: float, track_current: bool = False,
     config = config_manager.get_config()
     client = get_http_client()
     auth_headers = get_auth_headers(config)
-    api_reachable = True
     try:
         response = await client.get(
             config.get_api_url('/v1/models'),
@@ -114,7 +137,6 @@ async def _sync_status_once(timeout: float, track_current: bool = False,
         response.raise_for_status()
         remote_models = response.json().get("data", [])
     except Exception as e:
-        api_reachable = False
         remote_models = []
         if warn_unreachable:
             logger.warning(f"Remote vLLM API unreachable, model status may be stale: {e}")
@@ -155,7 +177,12 @@ async def _sync_status_once(timeout: float, track_current: bool = False,
                 state_machine.clear_current_model(model.id)
                 changed += 1
         elif model.status == ModelStatus.RUNNING:
-            if (api_reachable or strict_present is False) and not is_running:
+            # Only drop RUNNING when there is positive evidence the model is
+            # gone: the API returned a non-empty model list that lacks this
+            # model, or the process probe found no vLLM process. A transient
+            # empty list (API reachable but returning no models) is not
+            # sufficient — that used to flip RUNNING models to STOPPED.
+            if not is_running and (remote_model_ids or strict_present is False):
                 state_machine.update_model_status(model.id, ModelStatus.STOPPED)
                 state_machine.clear_current_model(model.id)
                 changed += 1
@@ -242,16 +269,18 @@ def _build_stop_wait_command(model_path: str) -> str:
     )
 
 async def _wait_for_remote_stop(executor, max_wait: int = 8, model_path: str = "") -> bool:
-    poll_interval = 1
-    elapsed = 0
+    # Wall-clock deadline: SSH round-trips are not instantaneous, so counting
+    # logical iterations let the real wait exceed max_wait. Check first (the
+    # stop command already ran), then poll every second until the deadline.
+    deadline = time.monotonic() + max_wait
     cmd = _build_stop_wait_command(model_path)
-    while elapsed < max_wait:
-        await asyncio.sleep(poll_interval)
-        elapsed += poll_interval
+    while True:
         check = await asyncio.to_thread(executor.execute, cmd)
         if check["success"] and "CLEAN" in check["stdout"]:
             return True
-    return False
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(1)
 
 BENCHMARK_PROMPT = ("The quick brown fox jumps over the lazy dog. "
                     "This is a test of the model's generation speed.")
@@ -526,6 +555,31 @@ def get_download_status(log_file: str) -> dict:
         "message": "Download complete"
     }
 
+async def _unset_launch_env_vars(model_id: str) -> None:
+    """Unset the environment variables declared in the model's launch config in the
+    persistent console PTY — the same shell where the start command's `export`s live."""
+    config = launch_config_manager.load_config(model_id)
+    if not config:
+        return
+    try:
+        parsed_env = _parse_env_vars(config.get("env_vars", ""))
+    except ValueError as e:
+        logger.warning(f"Failed to parse launch env vars for unset (model {model_id}): {e}")
+        return
+    keys = [k for k, _v in parsed_env]
+    if not keys:
+        return
+    session = await asyncio.to_thread(
+        console_session_manager.get_session, config_manager.get_config()
+    )
+    if session is None:
+        return
+    cmd = "unset " + " ".join(keys) + "\n"
+    if session.send_command(cmd):
+        logger.info(f"Unset {len(keys)} launch env var(s) in console session for model {model_id}")
+    else:
+        logger.warning(f"Failed to send unset command to console session for model {model_id}")
+
 async def stop_model(model_id: str) -> dict:
     executor = get_remote_executor()
 
@@ -548,6 +602,8 @@ async def stop_model(model_id: str) -> dict:
     if model and stopped:
         state_machine.update_model_status(model_id, ModelStatus.STOPPED)
         state_machine.clear_current_model(model_id)
+
+    await _unset_launch_env_vars(model_id)
 
     result = {"status": "success" if stopped else "timeout", "stopped": stopped}
     if not stopped and stop_result.get("error"):
