@@ -72,7 +72,7 @@ export const ZH: Record<string, string> = {
   'SSH Password': 'SSH 密码',
   'activated before download/run: source ~/{venv}/bin/activate':
     '下载/运行前激活：source ~/{venv}/bin/activate',
-  'vLLM Venv Name': 'vLLM 虚拟环境名',
+  'Python Venv Directory': 'Python 虚拟环境目录',
   'SSH Port': 'SSH 端口',
   'SSH Key Path': 'SSH 密钥路径',
   'API Port': 'API 端口',

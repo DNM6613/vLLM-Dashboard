@@ -139,8 +139,8 @@ export function ServerConfigModal({ config, onConfigChange, onSave, saving, mess
                 <input id="srv-ssh-port" type="text" inputMode="numeric" value={sshPortDraft} onChange={(e) => { const v = e.target.value.replace(/\D/g, ''); setSshPortDraft(v); const p = parsePort(v); if (p !== null) onConfigChange({ ...config, ssh_port: p }); }} className={FIELD_CLASS} placeholder="22" />
               </div>
               <div title={t('activated before download/run: source ~/{venv}/bin/activate', { venv: config.venv_name })}>
-                <label htmlFor="srv-venv-name" className="block text-xs text-text-muted mb-1">{t('vLLM Venv Name')}</label>
-                <input id="srv-venv-name" type="text" value={config.venv_name} onChange={(e) => onConfigChange({ ...config, venv_name: e.target.value })} className={FIELD_CLASS} />
+                <label htmlFor="srv-venv-name" className="block text-xs text-text-muted mb-1">{t('Python Venv Directory')}</label>
+                <input id="srv-venv-name" type="text" value={config.venv_name} onChange={(e) => onConfigChange({ ...config, venv_name: e.target.value })} className={FIELD_CLASS} placeholder=".venv" />
               </div>
             </div>
           </section>
