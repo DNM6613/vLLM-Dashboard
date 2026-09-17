@@ -217,8 +217,8 @@ export const ZH: Record<string, string> = {
   'no PyPI source reachable': '没有可达的 PyPI 源',
   'driver not installed': '驱动未安装',
   'not installed (optional — vLLM ships its own runtime)': '未安装（可选 — vLLM 自带其运行时）',
-  'Open kernel modules need a recent kernel; prefer the closed server driver for production.':
-    'Open 内核模块需要较新的内核；生产环境建议闭源 server 驱动。',
+  'Open kernel modules need a recent kernel; on Blackwell GPUs the open kernel module is the only supported one.':
+    'Open 内核模块需要较新的内核；Blackwell GPU 仅支持 Open 内核模块。',
   'No working NVIDIA driver detected — apply one in the GPU Driver tab.':
     '未检测到可用的 NVIDIA 驱动 — 请在显卡驱动 Tab 中安装。',
   'Below the vLLM recommended minimum driver 550.': '低于 vLLM 推荐的最低驱动 550。',
@@ -363,7 +363,7 @@ export const ZH: Record<string, string> = {
   'Risks and Limitations': '风险与限制',
   'Risk 1: driver change requires reboot': '风险 1：更换驱动必须重启服务器才能生效',
   'Risk 2: version mismatch': '风险 2：驱动 / CUDA / vLLM 版本必须匹配，不匹配会导致启动失败',
-  'Risk 3: open kernel driver': '风险 3：open kernel 驱动需要较新的内核，生产环境建议闭源 server 驱动',
+  'Risk 3: open kernel driver': '风险 3：open kernel 驱动需要较新的内核；Blackwell GPU 仅支持 open 内核模块',
   'Risk 4: CUDA 13.0': '风险 4：CUDA 13.0 需要驱动 ≥ 560，且 vLLM 对 CUDA 13 的支持仍在跟进',
   'Risk 5: driver purge': '风险 5：应用驱动前会 --purge 全部 nvidia-* 包，不可部分回退',
 };

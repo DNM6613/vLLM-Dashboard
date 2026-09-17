@@ -96,7 +96,7 @@ async def get_preflight():
     add("os", "OS", "ok" if result.get("os") else "fail", result.get("os") or "unknown")
     add("kernel", "Kernel", "ok" if result.get("kernel") else "fail",
         result.get("kernel") or "unknown",
-        "Open kernel modules need a recent kernel; prefer the closed server driver for production."
+        "Open kernel modules need a recent kernel; on Blackwell GPUs the open kernel module is the only supported one."
         if not result.get("kernel") else "")
 
     if result.get("gpu_missing"):
