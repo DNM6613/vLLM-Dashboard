@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { errMsgLocalized, useModelStore } from '../stores/model';
 import { checkCliTools, downloadModel, getDownloadStatus, getInstallStatus, installCliTool, stopDownload } from '../api/models';
 import type { CliStatus } from '../types';
@@ -27,15 +27,10 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
   const [hfMirror, setHfMirror] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
-  const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
-  const clearDownloadNotice = useCallback(() => setDownloadNotice(null), []);
   const [activeDownloadName, setActiveDownloadName] = useState('');
   const [downloadSizeBytes, setDownloadSizeBytes] = useState(0);
   const [downloadTotalSizeBytes, setDownloadTotalSizeBytes] = useState(0);
   const [downloadStalledSecs, setDownloadStalledSecs] = useState<number | null>(null);
-  const [downloadLog, setDownloadLog] = useState('');
-  const [showDownloadLog, setShowDownloadLog] = useState(false);
-  const [downloadRepo, setDownloadRepo] = useState('');
   const downloadRepoRef = useRef('');
   const cancelRequestedRef = useRef(false);
   const [cliStatus, setCliStatus] = useState<CliStatus | null>(null);
@@ -121,16 +116,13 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
     const repoName = downloadModelName.trim();
     const savePathForDownload = downloadModelSavePath.trim();
     downloadRepoRef.current = repoName;
-    setDownloadRepo(repoName);
     cancelRequestedRef.current = false;
     setDownloading(true);
     setDownloadProgress(0);
     setDownloadSizeBytes(0);
     setDownloadTotalSizeBytes(0);
     setDownloadStalledSecs(null);
-    setDownloadLog('');
     setActiveDownloadName(repoName);
-    setDownloadNotice(null);
     setShowDownloadModal(false);
     try {
       const result = await downloadModel(repoName, savePathForDownload, hfMirror);
@@ -141,7 +133,7 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
       const maxPolls = 1200;
       const logFile = result.log_file;
       const stopPolling = () => {
-        setDownloadNotice(tRef.current('Download status polling stopped after 1 hour — the download may still be running in the background. Check the model list or backend logs for its real status.'));
+        showToast(tRef.current('Download status polling stopped after 1 hour — the download may still be running in the background. Check the model list or backend logs for its real status.'));
         setDownloading(false); setDownloadProgress(0); setDownloadStalledSecs(null); setActiveDownloadName(''); fetchModels();
       };
       const pollDownload = async () => {
@@ -149,7 +141,6 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
         try {
           const status = await getDownloadStatus(logFile, repoName, savePathForDownload, hfMirror);
           if (!isMountedRef.current) return;
-          setDownloadLog(status.log ?? '');
           setDownloadSizeBytes(status.size_bytes ?? 0);
           setDownloadTotalSizeBytes(status.total_size ?? 0);
           if (status.status === 'downloading') {
@@ -170,14 +161,13 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
             const reason = status.reason?.slice(0, 300);
             showToast(tRef.current('Download failed') + (reason ? `\n${reason}` : ''));
             setDownloadStalledSecs(null);
-            setDownloadNotice(tRef.current('Download failed'));
             setDownloading(false); setDownloadProgress(0); setActiveDownloadName('');
             fetchModels();
           } else if (status.status === 'stopped') {
             const wasCancelled = cancelRequestedRef.current;
             cancelRequestedRef.current = false;
             setDownloadStalledSecs(null);
-            if (!wasCancelled) setDownloadNotice(tRef.current('Download stopped before completion'));
+            if (!wasCancelled) showToast(tRef.current('Download stopped before completion'));
             setDownloading(false); setDownloadProgress(0); setActiveDownloadName('');
             fetchModels();
           } else {
@@ -226,12 +216,6 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
     downloadSizeBytes,
     downloadTotalSizeBytes,
     downloadStalledSecs,
-    downloadLog,
-    showDownloadLog,
-    setShowDownloadLog,
-    downloadRepo,
-    downloadNotice,
-    clearDownloadNotice,
     activeDownloadName,
     cliStatus,
     checkingCli,

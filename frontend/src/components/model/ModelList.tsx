@@ -26,7 +26,6 @@ interface ModelListProps {
   onOpenDownload: () => void;
   onOpenBenchmark: () => void;
   download: DownloadProgressInfo | null;
-  onViewDownloadLog: () => void;
   onCancelDownload: () => void;
 }
 
@@ -34,7 +33,7 @@ export const ModelList = memo(function ModelList({
   models, loading, refreshing, scanMessage, error, starting, deletingId, stoppingId,
   sshConnected, benchmarkResults,
   onRefresh, onStart, onStop, onOpenLaunchConfig, onDelete, onOpenDownload, onOpenBenchmark,
-  download, onViewDownloadLog, onCancelDownload,
+  download, onCancelDownload,
 }: ModelListProps) {
   const { t } = useI18n();
   const opInFlight = deletingId !== null || stoppingId !== null;
@@ -84,32 +83,35 @@ export const ModelList = memo(function ModelList({
       )}
       <div className="divide-y divide-border">
         {download && (
-          <div className="p-4 bg-accent/5">
-            <div className="flex items-center gap-2 min-w-0">
-              <Loader2 className="w-4 h-4 animate-spin text-accent shrink-0" />
-              <span className="font-medium truncate">{download.name}</span>
-              {download.stalledSecs != null && (
-                <span className="text-xs text-warning flex items-center gap-1 shrink-0">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  {t('Download stalled (no progress for {mins} min)', { mins: Math.floor(download.stalledSecs / 60) })}
+          <div className="p-4 bg-accent/5 flex items-center justify-between">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-accent shrink-0" />
+                <span className="font-medium truncate">{download.name}</span>
+                {download.stalledSecs != null && (
+                  <span className="text-xs text-warning flex items-center gap-1 shrink-0">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    {t('Download stalled (no progress for {mins} min)', { mins: Math.floor(download.stalledSecs / 60) })}
+                  </span>
+                )}
+                <span className="text-xs font-mono text-text-muted ml-auto shrink-0">
+                  {formatSize(download.sizeBytes)}{download.totalSizeBytes > 0 ? ` / ${formatSize(download.totalSizeBytes)}` : ''} · {download.progress}%
                 </span>
-              )}
-              <span className="text-xs font-mono text-text-muted ml-auto shrink-0">
-                {formatSize(download.sizeBytes)}{download.totalSizeBytes > 0 ? ` / ${formatSize(download.totalSizeBytes)}` : ''} · {download.progress}%
-              </span>
+              </div>
+              <ProgressBar
+                value={download.progress}
+                color={download.stalledSecs != null ? 'bg-warning' : 'bg-accent'}
+                className="mt-1"
+              />
             </div>
-            <ProgressBar
-              value={download.progress}
-              color={download.stalledSecs != null ? 'bg-warning' : 'bg-accent'}
-              className="mt-2"
-            />
-            <div className="flex items-center gap-4 mt-2">
-              <button onClick={onViewDownloadLog} className="text-xs text-text-muted hover:text-text transition-colors">
-                {t('View log')}
-              </button>
-              <button onClick={onCancelDownload} className="text-xs text-danger hover:underline transition-colors">
-                {t('Cancel download')}
-              </button>
+            <div className="flex items-center gap-1 ml-4 shrink-0">
+              <IconButton
+                size="sm"
+                ariaLabel={t('Cancel download')}
+                onClick={onCancelDownload}
+              >
+                <Square className="w-4 h-4 text-danger" />
+              </IconButton>
             </div>
           </div>
         )}

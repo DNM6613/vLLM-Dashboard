@@ -38,14 +38,11 @@ export const ZH: Record<string, string> = {
   'Models': '模型',
   'Model Download': '模型下载',
   'Model Download (SSH disconnected)': '模型下载（SSH 未连接）',
-  'Download log': '下载日志',
-  'View log': '查看日志',
   'Cancel download': '取消下载',
   'Download stalled (no progress for {mins} min)': '下载卡住（{mins} 分钟无进展）',
   'Download stopped before completion': '下载未完成即停止（进程已退出）',
   'Download cancelled': '下载已取消',
   'Cancel download failed': '取消下载失败',
-  'No log output yet': '暂无日志输出',
   'Benchmark': '测速',
   'Benchmark (SSH disconnected)': '测速（SSH 未连接）',
   'Refresh': '刷新',
@@ -164,9 +161,6 @@ export const ZH: Record<string, string> = {
   'Shut down the AI server?': '确定关闭 AI 服务器？',
   'The machine will power off and vLLM will be stopped. You will need to power it back on to use it again.':
     '机器将断电，vLLM 停止，需重新上电后才能再次使用。',
-  'Server is powered off': '服务器已关机',
-  'Server is starting up': '服务器正在启动',
-  'Server SSH not connected': '服务器SSH未连接',
 
   'Console': '控制台',
   '[WebSocket] Reconnect limit reached. Check the AI server and network.':

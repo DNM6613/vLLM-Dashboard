@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Settings, Power, Loader2, Sun, Moon, X } from 'lucide-react';
+import { Settings, Power, Loader2, Sun, Moon } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { useTheme } from '../hooks/useTheme';
 import { invalidateHardwareFetch, invalidateSoftwareFetch, useHardwareStore } from '../stores/hardware';
@@ -24,16 +24,19 @@ import { ModelList } from '../components/model/ModelList';
 import { ModelStatusCard } from '../components/model/ModelStatusCard';
 import { ServerConfigModal } from '../components/modals/ServerConfigModal';
 import { DownloadModal } from '../components/modals/DownloadModal';
-import { DownloadLogModal } from '../components/modals/DownloadLogModal';
 import { LaunchConfigModal } from '../components/modals/LaunchConfigModal';
 import { BenchmarkModal } from '../components/modals/BenchmarkModal';
-import { ServerOffOverlay } from '../components/ServerOffOverlay';
 import { terminalReset } from '../utils/terminalSink';
 import { useSettledFlag } from '../hooks/useSettledFlag';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { IconButton } from '../components/ui/IconButton';
-import { TopStack } from '../components/ui/TopStack';
 import { showToast } from '../components/ui/toast';
+
+// After clicking power-on the button keeps spinning for this long (unless
+// the server comes up sooner): the backend reports success as soon as the
+// machine answers on the network, which is well before the OS is usable, so
+// a fixed wait window tells the user to keep waiting.
+const POWER_ON_WAIT_MS = 99 * 1000;
 
 export function HomePage() {
   const { t, lang, toggleLang } = useI18n();
@@ -65,7 +68,7 @@ export function HomePage() {
 
   const { connectConsole, startConsoleForModel, sendConsoleInput, sendConsoleResize } = useConsoleWebSocket();
   const { refreshing, scanMessage, starting, showLaunchConfigModal, setShowLaunchConfigModal, launchConfigModelName, launchConfigModelPath, launchCommand, setLaunchCommand, launchEnvVars, setLaunchEnvVars, savingLaunchConfig, handleRefresh, handleStartModel, handleStopModel, handleOpenLaunchConfig, handleSaveLaunchConfig, handleDeleteModel, deletingId, stoppingId, deleteRequest, confirmDelete, cancelDelete, stopRequest, confirmStop, cancelStop } = useModelManager({ startConsoleForModel, sshConnected, connectConsole });
-  const { showDownloadModal, setShowDownloadModal, downloadModelName, setDownloadModelName, downloadModelSavePath, setDownloadModelSavePath, hfMirror, setHfMirror, downloading, downloadProgress, downloadSizeBytes, downloadTotalSizeBytes, downloadStalledSecs, downloadLog, showDownloadLog, setShowDownloadLog, downloadRepo, downloadNotice, clearDownloadNotice, activeDownloadName, cliStatus, checkingCli, installingCli, installMessage, handleInstallCli, handleDownloadModel, handleCancelDownload } = useModelDownload({ defaultSavePath: serverConfig.model_save_path ?? '', onSavePathPersisted: (path: string) => setServerConfig((c) => ({ ...c, model_save_path: path })) });
+  const { showDownloadModal, setShowDownloadModal, downloadModelName, setDownloadModelName, downloadModelSavePath, setDownloadModelSavePath, hfMirror, setHfMirror, downloading, downloadProgress, downloadSizeBytes, downloadTotalSizeBytes, downloadStalledSecs, activeDownloadName, cliStatus, checkingCli, installingCli, installMessage, handleInstallCli, handleDownloadModel, handleCancelDownload } = useModelDownload({ defaultSavePath: serverConfig.model_save_path ?? '', onSavePathPersisted: (path: string) => setServerConfig((c) => ({ ...c, model_save_path: path })) });
 
   const downloadProgressInfo = downloading
     ? {
@@ -107,49 +110,37 @@ export function HomePage() {
     terminalReset();
   }, [powerOffShown]);
 
-  const [powerOnPending, setPowerOnPending] = useState(false);
-  const powerOnTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clearPowerOnTimeout = useCallback(() => {
-    if (powerOnTimeoutRef.current) {
-      clearTimeout(powerOnTimeoutRef.current);
-      powerOnTimeoutRef.current = null;
+  const [powerOnWaiting, setPowerOnWaiting] = useState(false);
+  const powerOnWaitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearPowerOnWait = useCallback(() => {
+    if (powerOnWaitRef.current) {
+      clearTimeout(powerOnWaitRef.current);
+      powerOnWaitRef.current = null;
     }
   }, []);
   const handlePowerOnClick = useCallback(async () => {
-    setPowerOnPending(true);
-    clearPowerOnTimeout();
-    powerOnTimeoutRef.current = setTimeout(() => {
-      powerOnTimeoutRef.current = null;
-      setPowerOnPending(false);
-    }, 10 * 60 * 1000);
+    setPowerOnWaiting(true);
+    clearPowerOnWait();
+    powerOnWaitRef.current = setTimeout(() => {
+      powerOnWaitRef.current = null;
+      setPowerOnWaiting(false);
+    }, POWER_ON_WAIT_MS);
     try {
       await handlePowerOnServer();
     } catch (e: unknown) {
-      clearPowerOnTimeout();
-      setPowerOnPending(false);
+      clearPowerOnWait();
+      setPowerOnWaiting(false);
       const reason = errMsgLocalized(e);
       showToast(`${t('Power-on failed')}${reason ? `: ${reason}` : ''}`, 'error');
     }
-  }, [handlePowerOnServer, clearPowerOnTimeout, t]);
+  }, [handlePowerOnServer, clearPowerOnWait, t]);
   useEffect(() => {
     if (serverOn) {
-      clearPowerOnTimeout();
-      setPowerOnPending(false);
+      clearPowerOnWait();
+      setPowerOnWaiting(false);
     }
-  }, [serverOn, clearPowerOnTimeout]);
-  useEffect(() => clearPowerOnTimeout, [clearPowerOnTimeout]);
-
-  // Power state derived from all signals, most reliable first. Actual
-  // reachability (SSH/API) is ground truth; a BMC "on" is trusted only when
-  // it just answered (powerFresh); while a power-on is in flight we never
-  // claim "off" — the machine may well be booting (the BMC is often the
-  // flakiest link, so it must not override what the machine itself says).
-  const powerState: 'on' | 'starting' | 'off' | 'unknown' =
-    serverOn ? 'on'
-      : powerOnPending ? 'starting'
-      : (bmcStatus.power === 'on' && bmcStatus.powerFresh) ? 'starting'
-      : bmcStatus.power === 'off' ? 'off'
-      : 'unknown';
+  }, [serverOn, clearPowerOnWait]);
+  useEffect(() => clearPowerOnWait, [clearPowerOnWait]);
 
   useEffect(() => {
     fetchHardwareMetrics().catch((err) => { console.error('Initial load error:', err); });
@@ -161,7 +152,7 @@ export function HomePage() {
 
   return (
     <div className="min-h-screen bg-bg mx-auto">
-      <div className={`sticky top-0 ${powerOffShown ? 'z-[95]' : 'z-40'} px-4 md:px-6 py-3 md:py-4 bg-bg/80 backdrop-blur border-b border-border`}>
+      <div className="sticky top-0 z-40 px-4 md:px-6 py-3 md:py-4 bg-bg/80 backdrop-blur border-b border-border">
         <div className="flex flex-wrap items-center justify-between gap-y-2">
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold">vLLM-Dashboard</h1>
@@ -214,43 +205,16 @@ export function HomePage() {
                 <IconButton
                   ariaLabel={serverOn ? t('Power OFF') : t('Power ON')}
                   onClick={() => (serverOn ? requestShutdownServer() : handlePowerOnClick())}
-                  disabled={shuttingDown || powerOning || (!serverOn && !bmcStatus.connected)}
+                  disabled={shuttingDown || powerOning || powerOnWaiting || (!serverOn && !bmcStatus.connected)}
                   className={serverOn ? 'text-danger' : 'text-success'}
                 >
-                  {shuttingDown || powerOning ? <Loader2 className="w-5 h-5 animate-spin" /> : <Power className="w-5 h-5" />}
+                  {shuttingDown || powerOning || powerOnWaiting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Power className="w-5 h-5" />}
                 </IconButton>
               )}
             </div>
           </div>
         </div>
       </div>
-
-      <TopStack>
-        {downloadNotice && !downloading && (
-          <div className="top-stack-item pointer-events-auto flex items-center gap-2 bg-bg-card rounded-lg px-4 py-2 border border-danger/30 shadow-lg text-xs text-danger max-w-[80vw]">
-            <span className="truncate">{downloadNotice}</span>
-            {downloadLog && (
-              <button
-                onClick={() => setShowDownloadLog(true)}
-                className="shrink-0 px-1.5 py-0.5 rounded hover:bg-bg-hover transition-colors text-text-muted"
-              >
-                {t('View log')}
-              </button>
-            )}
-            <button
-              onClick={clearDownloadNotice}
-              aria-label={t('Close')}
-              className="p-1 rounded hover:bg-bg-hover transition-colors text-text-muted"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
-      </TopStack>
-
-      {powerOffShown && (
-        <ServerOffOverlay state={powerState === 'off' ? 'off' : powerState === 'starting' ? 'starting' : 'unknown'} />
-      )}
 
       <div className="mt-6 px-4 md:px-6 flex flex-col lg:flex-row gap-6">
         <div className="flex-1 min-w-0 space-y-6">
@@ -276,7 +240,6 @@ export function HomePage() {
               onOpenDownload={openDownloadModal}
               onOpenBenchmark={openBenchmarkModal}
               download={downloadProgressInfo}
-              onViewDownloadLog={() => setShowDownloadLog(true)}
               onCancelDownload={handleCancelDownload}
             />
           </div>
@@ -313,15 +276,6 @@ export function HomePage() {
           onInstallCli={handleInstallCli}
           onDownload={handleDownloadModel}
           onClose={() => setShowDownloadModal(false)}
-        />
-      )}
-
-      {showDownloadLog && (
-        <DownloadLogModal
-          modelRepo={downloadRepo}
-          log={downloadLog}
-          downloading={downloading}
-          onClose={() => setShowDownloadLog(false)}
         />
       )}
 
