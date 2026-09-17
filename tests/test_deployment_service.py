@@ -219,7 +219,9 @@ class TestValidationHelpers(unittest.TestCase):
         self.assertEqual(ds._suggest_error("something else entirely"), "")
 
     def test_compat_tables(self):
-        self.assertEqual(ds.CUDA_MIN_DRIVER, {"12.9": 550, "13.0": 560})
+        # NVIDIA CUDA Toolkit release notes (Linux x86_64): CUDA 12.9 >= 575,
+        # CUDA 13.0 GA >= 580
+        self.assertEqual(ds.CUDA_MIN_DRIVER, {"12.9": 575, "13.0": 580})
         self.assertEqual(ds.VLLM_MIN_DRIVER, 550)
         self.assertEqual(ds.DRIVER_MIN_CUDA[610], "12.8")
 

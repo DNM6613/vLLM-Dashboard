@@ -364,7 +364,7 @@ export const ZH: Record<string, string> = {
   'Risk 1: driver change requires reboot': '风险 1：更换驱动必须重启服务器才能生效',
   'Risk 2: version mismatch': '风险 2：驱动 / CUDA / vLLM 版本必须匹配，不匹配会导致启动失败',
   'Risk 3: open kernel driver': '风险 3：open kernel 驱动需要较新的内核；Blackwell GPU 仅支持 open 内核模块',
-  'Risk 4: CUDA 13.0': '风险 4：CUDA 13.0 需要驱动 ≥ 560，且 vLLM 对 CUDA 13 的支持仍在跟进',
+  'Risk 4: CUDA 13.0': '风险 4：CUDA 13.0 需要驱动 ≥ 580；vLLM 官方提供 CUDA 13（cu130）二进制，默认 cu129',
   'Risk 5: driver purge': '风险 5：应用驱动前会 --purge 全部 nvidia-* 包，不可部分回退',
 };
 

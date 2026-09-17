@@ -46,8 +46,9 @@ TASKS_FILE = os.path.join(DATA_DIR, "deployment_tasks.json")
 LOG_DIR = os.path.join(DATA_DIR, "deployment_logs")
 
 # ---- compatibility rules (spec) -------------------------------------------
-# Minimum driver major per CUDA version.
-CUDA_MIN_DRIVER: dict[str, int] = {"12.9": 550, "13.0": 560}
+# Minimum driver major per CUDA version — NVIDIA CUDA Toolkit release notes
+# (Linux x86_64): CUDA 12.9 >= 575.57.08, CUDA 13.0 GA >= 580.65.06.
+CUDA_MIN_DRIVER: dict[str, int] = {"12.9": 575, "13.0": 580}
 # vLLM recommended minimum driver.
 VLLM_MIN_DRIVER = 550
 # Drivers whose release line requires a newer CUDA floor (driver-tab warning).
