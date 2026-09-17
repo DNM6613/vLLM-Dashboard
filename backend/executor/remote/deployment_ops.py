@@ -125,9 +125,22 @@ NET_PROBES = (
 # ~/.cargo/bin (cargo) — neither is on the PATH of the non-interactive,
 # non-login shell that executor.execute() uses, so a bare `uv` fails with
 # "command not found" even though uv is installed. Prepend the common
-# install dirs to PATH for every command that invokes uv (the same reason
-# the nvcc probe below runs under `bash -lc`).
+# install dirs to PATH for every command that invokes uv.
 UV_PATH_PREFIX = 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"; '
+
+# nvcc is usually NOT on the PATH of non-interactive shells (the toolkit
+# install does not always ship a /etc/profile.d entry, and ~/.profile does
+# not add /usr/local/cuda/bin), and `nvcc -V` reports "release X.Y" — not
+# "CUDA Version X" — so resolve the binary from the standard install
+# locations and match the real output format. Prints the version number or
+# NO_NVCC.
+CUDA_VERSION_PROBE = (
+    'NVCC="$(command -v nvcc 2>/dev/null || true)"; '
+    '[ -n "$NVCC" ] || for p in /usr/local/cuda/bin/nvcc /usr/local/cuda-*/bin/nvcc; do '
+    '[ -x "$p" ] && NVCC="$p" && break; done; '
+    'if [ -n "$NVCC" ]; then "$NVCC" -V 2>/dev/null | grep -oE "release [0-9]+[.][0-9]+" | head -n 1 | cut -d" " -f2; '
+    'else echo NO_NVCC; fi'
+)
 
 
 def build_preflight_command() -> str:
@@ -143,7 +156,7 @@ def build_preflight_command() -> str:
         "echo '== OS =='; (lsb_release -ds 2>/dev/null || grep PRETTY /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '\"') ; "
         "echo '== KERNEL =='; uname -r; "
         "echo '== GPU =='; nvidia-smi --query-gpu=index,name,driver_version,memory.total --format=csv,noheader 2>/dev/null || echo NO_NVIDIA_SMI; "
-        "echo '== CUDA =='; bash -lc 'nvcc -V 2>/dev/null | grep -o \"CUDA Version [0-9.]*\" || echo NO_NVCC'; "
+        "echo '== CUDA =='; " + CUDA_VERSION_PROBE + "; "
         "echo '== PYTHON =='; python3 --version 2>&1 || echo NO_PYTHON; "
         "echo '== UV =='; " + UV_PATH_PREFIX + "uv --version 2>/dev/null || echo NO_UV; "
         "echo '== DISK =='; df -P / 2>/dev/null | awk 'NR==2 {print $4\"\\t\"$6}'; "
@@ -247,7 +260,8 @@ class DeploymentOps:
                     })
         # Sentinel values (NO_NVCC / NO_UV) must never leak to the UI: the
         # backend always emits a stable, translatable English string.
-        cuda_raw = (sections.get("CUDA", "") or "").replace("CUDA Version", "").strip()
+        # CUDA_VERSION_PROBE already prints the bare version number.
+        cuda_raw = (sections.get("CUDA", "") or "").strip()
         if not cuda_raw or cuda_raw == "NO_NVCC":
             cuda_raw = "not installed (optional — vLLM ships its own runtime)"
 

@@ -27,7 +27,9 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
   const [activeTab, setActiveTab] = useState<TabId>('driver');
   const [driverPick, setDriverPick] = useState('');
   const [cudaPick, setCudaPick] = useState('');
-  const [cudaInstallSystem, setCudaInstallSystem] = useState(false);
+  // Matches the backend default (system CUDA Toolkit = robust default; see
+  // _default_state). The effect below resyncs from persisted state on load.
+  const [cudaInstallSystem, setCudaInstallSystem] = useState(true);
   const [conflictBusy, setConflictBusy] = useState(false);
   const [selectedConflicts, setSelectedConflicts] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement | null>(null);

@@ -53,13 +53,13 @@ export function CudaTab({
       <div className="border border-border rounded-lg p-3 bg-bg-hover/30 text-xs space-y-1">
         <div className="flex items-center gap-1.5 text-text">
           <Info className="w-3.5 h-3.5 shrink-0" />
-          {t('vLLM has two CUDA runtime modes:')}
+          {t('vLLM ships its own CUDA runtime and works for most models, but some models need the system CUDA Toolkit (nvcc) to compile kernels at startup:')}
         </div>
         <div className="pl-5 text-text-muted">
-          {t('1. System-wide CUDA Toolkit (install cuda-toolkit on this machine)')}
+          {t('1. System CUDA Toolkit (recommended — most robust; covers the runtime-compiled scenarios)')}
         </div>
         <div className="pl-5 text-text-muted">
-          {t('2. vLLM built-in CUDA Runtime (ships with vLLM, recommended for most scenarios)')}
+          {t('2. Built-in CUDA Runtime only (lightweight; some models fail to start without nvcc)')}
         </div>
         <div className="pl-5 text-warning">
           {t('Installing CUDA Toolkit here means the system-level toolkit; the vLLM tab can still pick either runtime.')}
@@ -162,7 +162,7 @@ export function CudaTab({
             className="accent-sky-400"
           />
           <span>
-            {t('Install system CUDA Toolkit')}
+            {t('Install system CUDA Toolkit (recommended — most robust)')}
             <span className="block text-text-muted pl-4">
               {t('apt install from the NVIDIA repo + PATH / LD_LIBRARY_PATH environment (persisted)')}
             </span>
@@ -177,7 +177,7 @@ export function CudaTab({
             className="accent-sky-400"
           />
           <span>
-            {t('Skip system CUDA (recommended — vLLM ships its own CUDA runtime)')}
+            {t('Skip system CUDA (vLLM built-in runtime; may fail without nvcc)')}
             <span className="block text-text-muted pl-4">
               {t('Only the version selection is saved; the vLLM tab uses the built-in runtime')}
             </span>

@@ -433,21 +433,23 @@ class TestStateEndpoint(unittest.TestCase):
 
 
 class TestDriversEndpoint(unittest.TestCase):
-    def _get_drivers(self, installed_packages):
+    def _get_drivers(self, installed_packages, drivers=None):
         from fastapi.testclient import TestClient
 
         from backend.main import app
-        executor = MagicMock()
-        executor.get_driver_list.return_value = {
-            "success": True,
-            "gpu_models": ["GB206 [GeForce RTX 5060 Ti]"],
-            "drivers": [
+        if drivers is None:
+            drivers = [
                 {"package": "nvidia-driver-595", "version": 595, "tags": []},
                 {"package": "nvidia-driver-595-open", "version": 595, "tags": []},
                 {"package": "nvidia-driver-595-server", "version": 595, "tags": []},
                 {"package": "nvidia-driver-595-server-open", "version": 595, "tags": []},
                 {"package": "nvidia-driver-580-server", "version": 580, "tags": []},
-            ],
+            ]
+        executor = MagicMock()
+        executor.get_driver_list.return_value = {
+            "success": True,
+            "gpu_models": ["GB206 [GeForce RTX 5060 Ti]"],
+            "drivers": drivers,
             "current_driver": "595.91.07",
             "installed_packages": installed_packages,
         }
@@ -480,6 +482,72 @@ class TestDriversEndpoint(unittest.TestCase):
         body = self._get_drivers([])
         self.assertFalse(any(r["installed"] for r in body["drivers"]))
         self.assertEqual(body["current_major"], 595)
+
+    def test_sorted_newest_version_first(self):
+        # ubuntu-drivers devices output order is unstable run-to-run; the
+        # endpoint must impose a deterministic order: newest major first,
+        # versionless rows last, package name breaks ties
+        rows = [
+            {"package": "nvidia-driver-open", "version": None, "tags": []},
+            {"package": "nvidia-driver-595-server", "version": 595, "tags": []},
+            {"package": "xserver-xorg-video-nouveau", "version": None,
+             "tags": [], "nouveau": True},
+            {"package": "nvidia-driver-595", "version": 595, "tags": []},
+            {"package": "nvidia-driver-580-server", "version": 580, "tags": []},
+            {"package": "nvidia-driver-595-open", "version": 595, "tags": []},
+        ]
+        body = self._get_drivers([], drivers=rows)
+        self.assertEqual(
+            [r["package"] for r in body["drivers"]],
+            [
+                "nvidia-driver-595",
+                "nvidia-driver-595-open",
+                "nvidia-driver-595-server",
+                "nvidia-driver-580-server",
+                "nvidia-driver-open",
+                "xserver-xorg-video-nouveau",
+            ],
+        )
+
+
+class TestCudaEndpoint(unittest.TestCase):
+    """current_toolkit: the probe now emits a bare nvcc version or the
+    NO_NVCC sentinel — the sentinel must never reach the UI."""
+
+    def _get_cuda(self, nvcc_stdout: str):
+        from fastapi.testclient import TestClient
+
+        from backend.main import app
+        executor = MagicMock()
+        executor.get_driver_list.return_value = {
+            "success": True,
+            "current_driver": "595.91.07",
+        }
+        executor.execute.return_value = {
+            "success": True, "stdout": nvcc_stdout, "stderr": "", "returncode": 0}
+        config = MagicMock()
+        config.host = "10.131.1.7"
+        state = MagicMock()
+        state.get.return_value = ds._default_state()
+        with patch.object(api_dep, "get_remote_executor", return_value=executor), \
+             patch.object(api_dep, "config_manager") as cm, \
+             patch.object(ds, "deployment_state", state):
+            cm.get_config.return_value = config
+            client = TestClient(app)
+            resp = client.get("/api/v1/deployment/cuda")
+        self.assertEqual(resp.status_code, 200)
+        return resp.json()
+
+    def test_toolkit_version_parsed(self):
+        body = self._get_cuda("13.0\n")
+        self.assertEqual(body["current_toolkit"], "13.0")
+        self.assertEqual(body["driver_major"], 595)
+        # flipped robust default
+        self.assertTrue(body["install_system"])
+
+    def test_no_nvcc_sentinel_becomes_empty(self):
+        body = self._get_cuda("NO_NVCC\n")
+        self.assertEqual(body["current_toolkit"], "")
 
 
 class TestGetPreflight(unittest.TestCase):
@@ -522,7 +590,9 @@ class TestGetPreflight(unittest.TestCase):
             res["cuda"], "not installed (optional — vLLM ships its own runtime)")
 
     def test_cuda_version_parsed(self):
-        res = self._probe(self._stdout(cuda="CUDA Version 12.9"))
+        # the probe emits a bare version (nvcc -V reports "release X.Y",
+        # never the "CUDA Version" banner — that belongs to nvidia-smi)
+        res = self._probe(self._stdout(cuda="12.9"))
         self.assertEqual(res["cuda"], "12.9")
 
     def test_preflight_command_extends_path_for_uv(self):

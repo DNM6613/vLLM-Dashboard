@@ -34,7 +34,7 @@ from typing import Any
 
 from ..config.remote_client import config_manager
 from ..config.server_config import has_parent_path_segment
-from ..executor.remote.deployment_ops import UV_PATH_PREFIX
+from ..executor.remote.deployment_ops import CUDA_VERSION_PROBE, UV_PATH_PREFIX
 from ..executor.remote_executor import get_remote_executor
 
 logger = logging.getLogger(__name__)
@@ -128,7 +128,11 @@ def _default_state() -> dict[str, Any]:
         "selected": {
             "driver": "",
             "cuda": "",
-            "cuda_install_system": False,
+            # System CUDA Toolkit is the robust default: it provides nvcc for
+            # JIT/AOT kernel compilation that some models require at startup.
+            # The vLLM built-in runtime alone covers most cases but can fail
+            # to start models that need the compiler.
+            "cuda_install_system": True,
             "vllm_version": "",
             "vllm_runtime": "builtin",
         },
@@ -699,14 +703,18 @@ def _run_cuda(ctx: TaskContext, version: str, pkg: str) -> None:
         )
         ctx.run_long(env_script, timeout=120)
     with ctx.step(3):
-        verify = ctx.exec("bash -lc 'nvcc -V 2>&1'", timeout=30)
-        if not verify.get("success") or "CUDA Version" not in (verify.get("stdout") or ""):
+        # CUDA_VERSION_PROBE prints the version nvcc actually reports
+        # ("release X.Y") — the old check looked for "CUDA Version", which
+        # nvcc -V never prints, so every install failed verification.
+        verify = ctx.exec(CUDA_VERSION_PROBE, timeout=30)
+        found = (verify.get("stdout") or "").strip()
+        if not verify.get("success") or found in ("", "NO_NVCC"):
             raise DeploymentError(
                 f"nvcc verification failed: {(verify.get('stdout') or verify.get('stderr')).strip()}"
             )
-        deployment_state.set_snapshot("cuda", installed_version=version,
+        deployment_state.set_snapshot("cuda", installed_version=found,
                                       toolkit_path="/usr/local/cuda")
-    ctx.log(f"CUDA toolkit {version} installed and verified.")
+    ctx.log(f"CUDA toolkit {found or version} installed and verified.")
 
 
 def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,

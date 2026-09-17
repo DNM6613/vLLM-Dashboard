@@ -269,11 +269,12 @@ export const ZH: Record<string, string> = {
   'This is the currently installed driver.': '这是当前已安装的驱动。',
 
   'Locked: finish the GPU driver deployment first.': '已锁定：请先完成显卡驱动部署。',
-  'vLLM has two CUDA runtime modes:': 'vLLM 有两种 CUDA Runtime 模式：',
-  '1. System-wide CUDA Toolkit (install cuda-toolkit on this machine)':
-    '1. 系统级 CUDA Toolkit（在本机安装 cuda-toolkit）',
-  '2. vLLM built-in CUDA Runtime (ships with vLLM, recommended for most scenarios)':
-    '2. vLLM 内置 CUDA Runtime（随 vLLM 分发，多数场景推荐）',
+  'vLLM ships its own CUDA runtime and works for most models, but some models need the system CUDA Toolkit (nvcc) to compile kernels at startup:':
+    'vLLM 自带 CUDA Runtime，多数模型可直接运行；但部分模型启动时需要系统 CUDA Toolkit（nvcc）编译内核：',
+  '1. System CUDA Toolkit (recommended — most robust; covers the runtime-compiled scenarios)':
+    '1. 系统级 CUDA Toolkit（推荐 — 最稳妥，覆盖需运行时编译的场景）',
+  '2. Built-in CUDA Runtime only (lightweight; some models fail to start without nvcc)':
+    '2. 仅内置 CUDA Runtime（轻量；缺少 nvcc 时部分模型无法启动）',
   'Installing CUDA Toolkit here means the system-level toolkit; the vLLM tab can still pick either runtime.':
     '此处安装的是系统级 CUDA Toolkit；vLLM Tab 仍可选择任一 Runtime。',
   'Currently installed system toolkit: CUDA {version}': '当前系统工具包：CUDA {version}',
@@ -285,11 +286,11 @@ export const ZH: Record<string, string> = {
   'Custom CUDA version (for testing)': '自定义 CUDA 版本（测试用）',
   'Current driver {major} cannot use CUDA {ver} — go back to the GPU Driver tab and upgrade the driver first.':
     '当前驱动 {major} 无法使用 CUDA {ver} — 请返回显卡驱动 Tab 先升级驱动。',
-  'Install system CUDA Toolkit': '安装系统 CUDA Toolkit',
+  'Install system CUDA Toolkit (recommended — most robust)': '安装系统 CUDA Toolkit（推荐 — 最稳妥）',
   'apt install from the NVIDIA repo + PATH / LD_LIBRARY_PATH environment (persisted)':
     '从 NVIDIA 源 apt 安装 + PATH / LD_LIBRARY_PATH 环境（持久化）',
-  'Skip system CUDA (recommended — vLLM ships its own CUDA runtime)':
-    '跳过系统 CUDA（推荐 — vLLM 自带 CUDA runtime）',
+  'Skip system CUDA (vLLM built-in runtime; may fail without nvcc)':
+    '跳过系统 CUDA（vLLM 内置 Runtime；缺少 nvcc 时可能失败）',
   'Only the version selection is saved; the vLLM tab uses the built-in runtime':
     '仅保存版本选择；vLLM Tab 将使用内置 Runtime',
   'Selected: CUDA {ver}': '已选择：CUDA {ver}',

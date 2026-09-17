@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from ..config.remote_client import config_manager
+from ..executor.remote.deployment_ops import CUDA_VERSION_PROBE
 from ..executor.remote_executor import get_remote_executor
 from ..service import deployment_service as ds
 from ..service.deployment_service import (
@@ -69,6 +70,14 @@ def _disk_free_gb(disk: list[str]) -> float | None:
         return int(disk[0]) / (1024 * 1024)
     except (ValueError, IndexError):
         return None
+
+
+def _driver_sort_key(row: dict[str, Any]) -> tuple[bool, int, str]:
+    """Newest major version first, versionless rows last, package name breaks
+    ties. `ubuntu-drivers devices` output order is NOT stable run-to-run, so
+    without an explicit sort the 5s polling visibly shuffles the list."""
+    version = row.get("version")
+    return (version is None, -(version or 0), row.get("package", ""))
 
 
 @router.get("/preflight")
@@ -179,6 +188,7 @@ async def get_drivers():
         if row.get("nouveau"):
             row["note"] = "nouveau is a fallback driver with poor performance — not suitable for vLLM"
         rows.append(row)
+    rows.sort(key=_driver_sort_key)
     pending = ds.task_manager.pending_driver_task()
     return {
         "gpu_models": info.get("gpu_models", []),
@@ -227,13 +237,12 @@ async def get_cuda():
     driver_major = ds._major_driver_version(info.get("current_driver", ""))
     state = ds.deployment_state.get()
     result = await _probe_in_thread(
-        lambda: executor.execute(
-            "bash -lc 'nvcc -V 2>/dev/null | grep -o \"CUDA Version [0-9.]*\"' | head -n 1",
-            20,
-        ),
+        lambda: executor.execute(CUDA_VERSION_PROBE, 20),
         30,
     )
-    toolkit = (result.get("stdout") or "").strip().replace("CUDA Version", "").strip()
+    toolkit = (result.get("stdout") or "").strip()
+    if toolkit == "NO_NVCC":
+        toolkit = ""
     return {
         "versions": list(_CUDA_VERSIONS),
         "min_driver": ds.CUDA_MIN_DRIVER,
