@@ -46,8 +46,11 @@ export interface PowerOnResult {
   powered_on: boolean;
 }
 
+// The backend verifies the power-on through BMC status AND a network/SSH
+// probe of the target, retrying until one confirms (up to ~120s), so this
+// needs a longer budget than the default 30s.
 export const powerOnServer = async (): Promise<PowerOnResult> => {
-  const response = await api.post<PowerOnResult>('/config/server/poweron');
+  const response = await api.post<PowerOnResult>('/config/server/poweron', null, { timeout: 150000 });
   return response.data;
 };
 

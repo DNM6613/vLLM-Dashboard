@@ -57,8 +57,29 @@ export const downloadModel = async (modelRepo: string, modelSavePath: string = '
   return response.data;
 };
 
-export const getDownloadStatus = async (logFile: string): Promise<{ status: string; log: string; message: string; progress?: number; reason?: string }> => {
-  const response = await api.get('/models/download/status', { params: { log_file: logFile } });
+export const getDownloadStatus = async (
+  logFile: string,
+  repo: string = '',
+  savePath: string = '',
+  hfMirror: boolean = true
+): Promise<{
+  status: string;
+  log: string;
+  message: string;
+  progress?: number;
+  reason?: string;
+  size_bytes?: number;
+  total_size?: number;
+  stalled_secs?: number;
+}> => {
+  const response = await api.get('/models/download/status', {
+    params: { log_file: logFile, repo, save_path: savePath, hf_mirror: hfMirror },
+  });
+  return response.data;
+};
+
+export const stopDownload = async (modelRepo: string): Promise<{ status: string; killed: boolean; no_process: boolean }> => {
+  const response = await api.post('/models/download/stop', null, { params: { model_repo: modelRepo } });
   return response.data;
 };
 

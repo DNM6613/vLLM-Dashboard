@@ -23,7 +23,7 @@ export function useServerConfig() {
   const [sshConnected, setSshConnected] = useState(false);
   const sshFailStreakRef = useRef(0);
   const [apiConnected, setApiConnected] = useState(false);
-  const [bmcStatus, setBmcStatus] = useState<BmcStatus>({ configured: false, connected: false, power: null });
+  const [bmcStatus, setBmcStatus] = useState<BmcStatus>({ configured: false, connected: false, power: null, powerFresh: false });
   const bmcFirstFailAtRef = useRef<number | null>(null);
   const bmcPrevPowerRef = useRef<BmcStatus['power']>(null);
   const [bmcProbed, setBmcProbed] = useState(false);
@@ -107,11 +107,14 @@ export function useServerConfig() {
     const rawConnected = status.connected;
     setBmcStatus((prev) => {
       const connected = rawConnected || (prev.connected && !sustainedDown);
+      // `power` is sticky (last known value) so a brief BMC outage does not
+      // flap the UI; `powerFresh` marks whether the value came from a probe
+      // that just succeeded, so "on" claims are only trusted when fresh.
       const power = rawConnected ? status.power : prev.power;
       const configured = probeFailed ? prev.configured : status.configured;
-      const next: BmcStatus = { ...status, connected, power, configured };
+      const next: BmcStatus = { ...status, connected, power, configured, powerFresh: rawConnected };
       return prev.configured === next.configured && prev.connected === next.connected &&
-        prev.power === next.power && prev.error === next.error
+        prev.power === next.power && prev.powerFresh === next.powerFresh && prev.error === next.error
         ? prev
         : next;
     });
@@ -212,8 +215,6 @@ export function useServerConfig() {
     }
   }, []);
 
-  const powerOff = bmcStatus.power === 'off';
-
   const bmcConfigured = bmcStatus.configured || (serverConfig.bmc_host !== '' && !bmcProbed);
 
   return {
@@ -223,8 +224,10 @@ export function useServerConfig() {
     configMessage,
     showServerConfig,
     setShowServerConfig,
-    sshConnected: !powerOff && sshConnected,
-    apiConnected: !powerOff && apiConnected,
+    // Raw reachability, ungated by BMC state: a stale 'off' from an
+    // unreachable BMC must not hide a machine that is actually up and serving.
+    sshConnected,
+    apiConnected,
     bmcStatus: bmcConfigured ? { ...bmcStatus, configured: true } : bmcStatus,
     serverVersion,
     shuttingDown,

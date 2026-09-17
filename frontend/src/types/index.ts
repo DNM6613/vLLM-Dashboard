@@ -78,7 +78,18 @@ export interface BmcStatus {
   configured: boolean;
   connected: boolean;
   power: 'on' | 'off' | null;
+  /** True when `power` comes from a probe that just succeeded (not a sticky
+   *  last-known value held while the BMC is unreachable). */
+  powerFresh?: boolean;
   error?: string;
+}
+
+export interface DownloadProgressInfo {
+  name: string;
+  progress: number;
+  sizeBytes: number;
+  totalSizeBytes: number;
+  stalledSecs: number | null;
 }
 
 export interface CliStatus {

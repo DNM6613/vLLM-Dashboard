@@ -1,10 +1,11 @@
 import { memo } from 'react';
-import { Folder, FolderDown, RefreshCw, Loader2, Play, Square, Settings, Trash2, Gauge, HardDrive, AlertCircle } from 'lucide-react';
+import { Folder, FolderDown, RefreshCw, Loader2, Play, Square, Settings, Trash2, Gauge, HardDrive, AlertCircle, AlertTriangle } from 'lucide-react';
 import { formatSize, fmtNum } from '../../utils/format';
 import { ModelStatus } from '../../types';
-import type { ModelInfo, BenchmarkResult } from '../../types';
+import type { ModelInfo, BenchmarkResult, DownloadProgressInfo } from '../../types';
 import { useI18n } from '../../i18n';
 import { IconButton } from '../ui/IconButton';
+import { ProgressBar } from '../ui/ProgressBar';
 
 interface ModelListProps {
   models: ModelInfo[];
@@ -24,12 +25,16 @@ interface ModelListProps {
   onDelete: (modelId: string, modelName: string) => void;
   onOpenDownload: () => void;
   onOpenBenchmark: () => void;
+  download: DownloadProgressInfo | null;
+  onViewDownloadLog: () => void;
+  onCancelDownload: () => void;
 }
 
 export const ModelList = memo(function ModelList({
   models, loading, refreshing, scanMessage, error, starting, deletingId, stoppingId,
   sshConnected, benchmarkResults,
   onRefresh, onStart, onStop, onOpenLaunchConfig, onDelete, onOpenDownload, onOpenBenchmark,
+  download, onViewDownloadLog, onCancelDownload,
 }: ModelListProps) {
   const { t } = useI18n();
   const opInFlight = deletingId !== null || stoppingId !== null;
@@ -78,6 +83,36 @@ export const ModelList = memo(function ModelList({
         </div>
       )}
       <div className="divide-y divide-border">
+        {download && (
+          <div className="p-4 bg-accent/5">
+            <div className="flex items-center gap-2 min-w-0">
+              <Loader2 className="w-4 h-4 animate-spin text-accent shrink-0" />
+              <span className="font-medium truncate">{download.name}</span>
+              {download.stalledSecs != null && (
+                <span className="text-xs text-warning flex items-center gap-1 shrink-0">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  {t('Download stalled (no progress for {mins} min)', { mins: Math.floor(download.stalledSecs / 60) })}
+                </span>
+              )}
+              <span className="text-xs font-mono text-text-muted ml-auto shrink-0">
+                {formatSize(download.sizeBytes)}{download.totalSizeBytes > 0 ? ` / ${formatSize(download.totalSizeBytes)}` : ''} · {download.progress}%
+              </span>
+            </div>
+            <ProgressBar
+              value={download.progress}
+              color={download.stalledSecs != null ? 'bg-warning' : 'bg-accent'}
+              className="mt-2"
+            />
+            <div className="flex items-center gap-4 mt-2">
+              <button onClick={onViewDownloadLog} className="text-xs text-text-muted hover:text-text transition-colors">
+                {t('View log')}
+              </button>
+              <button onClick={onCancelDownload} className="text-xs text-danger hover:underline transition-colors">
+                {t('Cancel download')}
+              </button>
+            </div>
+          </div>
+        )}
         {models.length === 0 && (
           <div className="p-8 text-center text-text-muted">
             {loading ? <Loader2 className="w-6 h-6 animate-spin mx-auto" /> : !sshConnected ? t('Waiting for SSH connection...') : t('No models found. Click refresh to scan.')}

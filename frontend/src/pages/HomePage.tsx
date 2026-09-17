@@ -3,7 +3,7 @@ import { Settings, Power, Loader2, Sun, Moon, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { useTheme } from '../hooks/useTheme';
 import { invalidateHardwareFetch, invalidateSoftwareFetch, useHardwareStore } from '../stores/hardware';
-import { useModelStore } from '../stores/model';
+import { useModelStore, errMsgLocalized } from '../stores/model';
 import { useServerConfig } from '../hooks/useServerConfig';
 import { useHardwareWebSocket } from '../hooks/useHardwareWebSocket';
 import { useModelStatusStore } from '../stores/modelStatus';
@@ -24,6 +24,7 @@ import { ModelList } from '../components/model/ModelList';
 import { ModelStatusCard } from '../components/model/ModelStatusCard';
 import { ServerConfigModal } from '../components/modals/ServerConfigModal';
 import { DownloadModal } from '../components/modals/DownloadModal';
+import { DownloadLogModal } from '../components/modals/DownloadLogModal';
 import { LaunchConfigModal } from '../components/modals/LaunchConfigModal';
 import { BenchmarkModal } from '../components/modals/BenchmarkModal';
 import { ServerOffOverlay } from '../components/ServerOffOverlay';
@@ -32,6 +33,7 @@ import { useSettledFlag } from '../hooks/useSettledFlag';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { IconButton } from '../components/ui/IconButton';
 import { TopStack } from '../components/ui/TopStack';
+import { showToast } from '../components/ui/toast';
 
 export function HomePage() {
   const { t, lang, toggleLang } = useI18n();
@@ -63,7 +65,17 @@ export function HomePage() {
 
   const { connectConsole, startConsoleForModel, sendConsoleInput, sendConsoleResize } = useConsoleWebSocket();
   const { refreshing, scanMessage, starting, showLaunchConfigModal, setShowLaunchConfigModal, launchConfigModelName, launchConfigModelPath, launchCommand, setLaunchCommand, launchEnvVars, setLaunchEnvVars, savingLaunchConfig, handleRefresh, handleStartModel, handleStopModel, handleOpenLaunchConfig, handleSaveLaunchConfig, handleDeleteModel, deletingId, stoppingId, deleteRequest, confirmDelete, cancelDelete, stopRequest, confirmStop, cancelStop } = useModelManager({ startConsoleForModel, sshConnected, connectConsole });
-  const { showDownloadModal, setShowDownloadModal, downloadModelName, setDownloadModelName, downloadModelSavePath, setDownloadModelSavePath, hfMirror, setHfMirror, downloading, downloadProgress, downloadNotice, clearDownloadNotice, activeDownloadName, cliStatus, checkingCli, installingCli, installMessage, handleInstallCli, handleDownloadModel } = useModelDownload({ defaultSavePath: serverConfig.model_save_path ?? '', onSavePathPersisted: (path: string) => setServerConfig((c) => ({ ...c, model_save_path: path })) });
+  const { showDownloadModal, setShowDownloadModal, downloadModelName, setDownloadModelName, downloadModelSavePath, setDownloadModelSavePath, hfMirror, setHfMirror, downloading, downloadProgress, downloadSizeBytes, downloadTotalSizeBytes, downloadStalledSecs, downloadLog, showDownloadLog, setShowDownloadLog, downloadRepo, downloadNotice, clearDownloadNotice, activeDownloadName, cliStatus, checkingCli, installingCli, installMessage, handleInstallCli, handleDownloadModel, handleCancelDownload } = useModelDownload({ defaultSavePath: serverConfig.model_save_path ?? '', onSavePathPersisted: (path: string) => setServerConfig((c) => ({ ...c, model_save_path: path })) });
+
+  const downloadProgressInfo = downloading
+    ? {
+        name: activeDownloadName,
+        progress: downloadProgress,
+        sizeBytes: downloadSizeBytes,
+        totalSizeBytes: downloadTotalSizeBytes,
+        stalledSecs: downloadStalledSecs,
+      }
+    : null;
 
   const openDownloadModal = useCallback(() => setShowDownloadModal(true), [setShowDownloadModal]);
   const openBenchmarkModal = useCallback(() => setShowBenchmarkModal(true), [setShowBenchmarkModal]);
@@ -112,11 +124,13 @@ export function HomePage() {
     }, 10 * 60 * 1000);
     try {
       await handlePowerOnServer();
-    } catch {
+    } catch (e: unknown) {
       clearPowerOnTimeout();
       setPowerOnPending(false);
+      const reason = errMsgLocalized(e);
+      showToast(`${t('Power-on failed')}${reason ? `: ${reason}` : ''}`, 'error');
     }
-  }, [handlePowerOnServer, clearPowerOnTimeout]);
+  }, [handlePowerOnServer, clearPowerOnTimeout, t]);
   useEffect(() => {
     if (serverOn) {
       clearPowerOnTimeout();
@@ -124,6 +138,18 @@ export function HomePage() {
     }
   }, [serverOn, clearPowerOnTimeout]);
   useEffect(() => clearPowerOnTimeout, [clearPowerOnTimeout]);
+
+  // Power state derived from all signals, most reliable first. Actual
+  // reachability (SSH/API) is ground truth; a BMC "on" is trusted only when
+  // it just answered (powerFresh); while a power-on is in flight we never
+  // claim "off" — the machine may well be booting (the BMC is often the
+  // flakiest link, so it must not override what the machine itself says).
+  const powerState: 'on' | 'starting' | 'off' | 'unknown' =
+    serverOn ? 'on'
+      : powerOnPending ? 'starting'
+      : (bmcStatus.power === 'on' && bmcStatus.powerFresh) ? 'starting'
+      : bmcStatus.power === 'off' ? 'off'
+      : 'unknown';
 
   useEffect(() => {
     fetchHardwareMetrics().catch((err) => { console.error('Initial load error:', err); });
@@ -200,16 +226,17 @@ export function HomePage() {
       </div>
 
       <TopStack>
-        {downloading && (
-          <div className="top-stack-item pointer-events-auto flex items-center gap-3 bg-bg-card rounded-lg px-4 py-2 border border-accent/30 shadow-lg">
-            <Loader2 className="w-4 h-4 animate-spin text-accent" />
-            <span className="text-sm text-text">{t('Downloading {name}...', { name: activeDownloadName })}</span>
-            <span className="text-sm font-mono text-accent ml-auto">{downloadProgress}%</span>
-          </div>
-        )}
         {downloadNotice && !downloading && (
           <div className="top-stack-item pointer-events-auto flex items-center gap-2 bg-bg-card rounded-lg px-4 py-2 border border-danger/30 shadow-lg text-xs text-danger max-w-[80vw]">
             <span className="truncate">{downloadNotice}</span>
+            {downloadLog && (
+              <button
+                onClick={() => setShowDownloadLog(true)}
+                className="shrink-0 px-1.5 py-0.5 rounded hover:bg-bg-hover transition-colors text-text-muted"
+              >
+                {t('View log')}
+              </button>
+            )}
             <button
               onClick={clearDownloadNotice}
               aria-label={t('Close')}
@@ -221,7 +248,9 @@ export function HomePage() {
         )}
       </TopStack>
 
-      {powerOffShown && <ServerOffOverlay starting={powerOnPending} bmcConfigured={bmcStatus.configured} />}
+      {powerOffShown && (
+        <ServerOffOverlay state={powerState === 'off' ? 'off' : powerState === 'starting' ? 'starting' : 'unknown'} />
+      )}
 
       <div className="mt-6 px-4 md:px-6 flex flex-col lg:flex-row gap-6">
         <div className="flex-1 min-w-0 space-y-6">
@@ -246,6 +275,9 @@ export function HomePage() {
               onDelete={handleDeleteModel}
               onOpenDownload={openDownloadModal}
               onOpenBenchmark={openBenchmarkModal}
+              download={downloadProgressInfo}
+              onViewDownloadLog={() => setShowDownloadLog(true)}
+              onCancelDownload={handleCancelDownload}
             />
           </div>
         </div>
@@ -281,6 +313,15 @@ export function HomePage() {
           onInstallCli={handleInstallCli}
           onDownload={handleDownloadModel}
           onClose={() => setShowDownloadModal(false)}
+        />
+      )}
+
+      {showDownloadLog && (
+        <DownloadLogModal
+          modelRepo={downloadRepo}
+          log={downloadLog}
+          downloading={downloading}
+          onClose={() => setShowDownloadLog(false)}
         />
       )}
 

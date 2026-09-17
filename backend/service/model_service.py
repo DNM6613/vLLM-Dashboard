@@ -15,6 +15,7 @@ from ..config.remote_client import config_manager, get_auth_headers, get_http_cl
 from ..config.settings import settings
 from ..console.session_manager import console_session_manager
 from ..controller.state_machine import StateMachine
+from ..executor.remote.model_ops import DL_PROBE_SENTINEL, DL_PROCESS_PATTERN
 from ..executor.remote.process_ops import (
     _STOP_SELF_SENTINEL,
     _VLLM_MAIN_PATTERN,
@@ -219,26 +220,41 @@ def _match_served_id(model: ModelInfo, remote_ids: set[str]) -> str | None:
 def _match_model_name(model: ModelInfo, remote_ids: set[str]) -> bool:
     return _match_served_id(model, remote_ids) is not None
 
-_DL_PROBE_SENTINEL = "VDB_DL_PROBE_SENTINEL"
-_DL_PROCESS_PATTERN = r"hf download|huggingface-cli download"
+# A running download whose log has not grown for this long is treated as
+# stalled (the process is alive but the log is no longer advancing — typically
+# a hung network read that `hf` is not recovering from).
+DL_STALL_THRESHOLD_SECS = 180
 
-def _build_download_status_command(log_file: str) -> str:
+def _build_download_status_command(log_file: str, repo: str = "") -> str:
     safe_log = shlex.quote(log_file)
+    pid_file = shlex.quote(log_file + ".pid")
+    # Match the download process for this specific repo so a second concurrent
+    # download is not mistaken for this one.
+    repo_filter = f"| grep -F {shlex.quote(repo)} " if repo else ""
     dl_pids = (
         "ps -eo pid=,args= 2>/dev/null "
-        f"| grep -v '{_DL_PROBE_SENTINEL}' "
-        f"| grep -E '{_DL_PROBE_SENTINEL}|{_DL_PROCESS_PATTERN}' "
+        f"| grep -v '{DL_PROBE_SENTINEL}' "
+        f"| grep -E '{DL_PROBE_SENTINEL}|{DL_PROCESS_PATTERN}' "
+        f"{repo_filter}"
         "| awk '{print $1}' "
         "| head -1"
+    )
+    # The pid file (written when the download started) is authoritative: it
+    # names the exact wrapper process and survives a backend restart. The
+    # ps|grep fallback covers a missing/stale pid file.
+    pid_expr = (
+        f"PF={pid_file}; WP=$(cat \"$PF\" 2>/dev/null); "
+        f"if [ -n \"$WP\" ] && kill -0 \"$WP\" 2>/dev/null; then echo \"$WP\"; "
+        f"else {dl_pids}; fi"
     )
     return (
         f"if [ -f {safe_log} ]; then "
         f"echo EXISTS; "
         f"echo \"SIZE=$(wc -c < {safe_log} 2>/dev/null)\"; "
         f"echo \"MTIME=$(stat -c %Y {safe_log} 2>/dev/null)\"; "
-        f"echo \"PID=$({dl_pids})\"; "
+        f"echo \"PID=$({pid_expr})\"; "
         f"echo '---TAIL---'; "
-        f"tail -50 {safe_log}; "
+        f"tail -200 {safe_log}; "
         f"else echo NOT_FOUND; fi"
     )
 
@@ -464,9 +480,34 @@ async def start_model(model_id: str) -> dict:
         "command": full_command
     }
 
-def get_download_status(log_file: str) -> dict:
+# Repo -> (fetched_at, total_bytes); the HF API total is stable, so a long
+# TTL keeps status polling (every ~3s) from hammering the API.
+DL_TOTAL_TTL_SECS = 3600
+_dl_total_cache: dict[str, tuple[float, int]] = {}
+# log_file -> (pid, last_size_bytes, ts of last growth). Byte growth is the
+# stall signal: the `hf` CLI only appends one line per *file* to a redirected
+# log, so the log mtime is silent for minutes while a large file transfers.
+# The pid resets the baseline so a re-download of the same repo (new process,
+# smaller size) is not mistaken for a stall.
+_dl_growth: dict[str, tuple[str, int, float]] = {}
+
+def _get_download_total(executor, model_repo: str, hf_mirror: bool) -> int:
+    now = time.time()
+    entry = _dl_total_cache.get(model_repo)
+    if entry is not None and now - entry[0] < DL_TOTAL_TTL_SECS:
+        return entry[1]
+    total = 0
+    try:
+        total = int(executor.get_download_total_size(model_repo, hf_mirror).get("total_bytes", 0) or 0)
+    except Exception as e:
+        logger.warning(f"Failed to fetch total size for {model_repo}: {e}")
+    _dl_total_cache[model_repo] = (now, total)
+    return total
+
+def get_download_status(log_file: str, repo: str = "", save_path: str = "",
+                        hf_mirror: bool = True) -> dict:
     executor = get_remote_executor()
-    cmd = _build_download_status_command(log_file)
+    cmd = _build_download_status_command(log_file, repo)
     result = executor.execute(cmd)
     if not result["success"]:
         return {
@@ -498,6 +539,20 @@ def get_download_status(log_file: str) -> dict:
             pid = line[4:].strip()
     is_running = pid.isdigit()
 
+    # Real on-disk bytes of the download target — makes progress/stall visible
+    # even when the CLI's textual progress is misleading or truncated.
+    size_bytes = 0
+    if repo:
+        try:
+            size_bytes = executor.get_download_size(repo, save_path).get("size_bytes", 0)
+        except Exception as e:
+            logger.warning(f"Failed to read download size for {repo}: {e}")
+
+    # Repo total (HF API usedStorage): denominator for byte-accurate progress.
+    # The CLI's textual % is a *file count* ratio — 16 small files reach
+    # "89%" in seconds while the remaining 3 x 10GB files take 10 more minutes.
+    total_size = _get_download_total(executor, repo, hf_mirror) if repo else 0
+
     has_fatal_error = False
     for line in log_content.split("\n"):
         if ("ERROR: hf not found" in line or
@@ -509,29 +564,67 @@ def get_download_status(log_file: str) -> dict:
             has_fatal_error = True
             break
 
-    if re.search(r'/models--[\w.()-]+/snapshots/[\w]+', log_content):
-        return {
-            "status": "complete",
-            "log": log_content,
-            "message": "Download complete"
-        }
+    complete_marker = bool(re.search(r'/models--[\w.()-]+/snapshots/[\w]+', log_content))
 
     progress_matches = re.findall(r'(\d+(?:\.\d+)?)\s*%', log_content)
     parsed_progress = float(progress_matches[-1]) if progress_matches else None
 
-    if is_running:
+    def _progress() -> float:
+        # Byte ratio first (truthful), textual % second (file count — only
+        # meaningful when the total is unknown), elapsed-time estimate last.
+        if total_size > 0 and size_bytes > 0:
+            return min(99.0, size_bytes / total_size * 100.0)
         if parsed_progress is not None:
-            progress = min(99, parsed_progress)
-        elif log_mtime > 0:
+            return min(99.0, parsed_progress)
+        if log_mtime > 0:
             elapsed = max(1, time.time() - log_mtime)
-            progress = min(95, max(5, (elapsed / 1800) * 100))
+            return min(95.0, max(5.0, (elapsed / 1800) * 100.0))
+        return 5.0
+
+    if is_running:
+        # Stall detection on byte growth, not log mtime: the `hf` CLI writes
+        # one line per *file* to a redirected log, so the log sits silent for
+        # minutes while a large file transfers — that is not a stall.
+        now = time.time()
+        prev = _dl_growth.get(log_file)
+        if prev is None or pid != prev[0] or size_bytes > prev[1]:
+            _dl_growth[log_file] = (pid, size_bytes, now)
+            stalled_secs = 0
+        elif size_bytes > 0:
+            stalled_secs = int(now - prev[2])
         else:
-            progress = 5
+            # No bytes on disk yet (file list resolution): fall back to the
+            # log mtime so a hung pre-transfer phase is still caught.
+            stalled_secs = int(now - log_mtime) if log_mtime > 0 else 0
+        progress = _progress()
+        if stalled_secs > DL_STALL_THRESHOLD_SECS:
+            return {
+                "status": "stalled",
+                "progress": round(progress, 1),
+                "log": log_content,
+                "size_bytes": size_bytes,
+                "total_size": total_size,
+                "stalled_secs": stalled_secs,
+                "message": f"Download stalled ({int(stalled_secs // 60)} min without byte progress)"
+            }
         return {
             "status": "downloading",
             "progress": round(progress, 1),
-            "log": log_content[-500:],
-            "message": f"Downloading... ({log_size / 1024:.1f}KB)"
+            "log": log_content,
+            "size_bytes": size_bytes,
+            "total_size": total_size,
+            "message": f"Downloading... ({log_size / 1024:.1f}KB log)"
+        }
+
+    _dl_growth.pop(log_file, None)
+
+    if complete_marker:
+        return {
+            "status": "complete",
+            "log": log_content,
+            "size_bytes": size_bytes,
+            "total_size": total_size,
+            "message": "Download complete"
         }
 
     if has_fatal_error:
@@ -545,14 +638,31 @@ def get_download_status(log_file: str) -> dict:
         return {
             "status": "failed",
             "log": log_content,
+            "size_bytes": size_bytes,
+            "total_size": total_size,
             "message": "Download failed",
             "reason": reason
         }
 
+    # Process exited with no completion marker and no detected fatal error:
+    # the download was interrupted (kill, crash, network drop). Do not report
+    # "complete" — the model may be partial.
     return {
-        "status": "complete",
+        "status": "stopped",
         "log": log_content,
-        "message": "Download complete"
+        "size_bytes": size_bytes,
+        "total_size": total_size,
+        "message": "Download stopped before completion"
+    }
+
+
+def stop_download(repo: str) -> dict:
+    executor = get_remote_executor()
+    result = executor.stop_download(repo)
+    return {
+        "status": "success",
+        "killed": result.get("killed", False),
+        "no_process": result.get("no_process", False),
     }
 
 async def _unset_launch_env_vars(model_id: str) -> None:

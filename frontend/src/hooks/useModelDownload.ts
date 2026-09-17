@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { errMsgLocalized, useModelStore } from '../stores/model';
-import { checkCliTools, downloadModel, getDownloadStatus, getInstallStatus, installCliTool } from '../api/models';
+import { checkCliTools, downloadModel, getDownloadStatus, getInstallStatus, installCliTool, stopDownload } from '../api/models';
 import type { CliStatus } from '../types';
 import { useI18n } from '../i18n';
 import { showToast } from '../components/ui/toast';
@@ -30,6 +30,14 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
   const clearDownloadNotice = useCallback(() => setDownloadNotice(null), []);
   const [activeDownloadName, setActiveDownloadName] = useState('');
+  const [downloadSizeBytes, setDownloadSizeBytes] = useState(0);
+  const [downloadTotalSizeBytes, setDownloadTotalSizeBytes] = useState(0);
+  const [downloadStalledSecs, setDownloadStalledSecs] = useState<number | null>(null);
+  const [downloadLog, setDownloadLog] = useState('');
+  const [showDownloadLog, setShowDownloadLog] = useState(false);
+  const [downloadRepo, setDownloadRepo] = useState('');
+  const downloadRepoRef = useRef('');
+  const cancelRequestedRef = useRef(false);
   const [cliStatus, setCliStatus] = useState<CliStatus | null>(null);
   const [checkingCli, setCheckingCli] = useState(false);
   const [installingCli, setInstallingCli] = useState(false);
@@ -111,51 +119,76 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
     if (downloading) return;
     if (!downloadModelName.trim()) return;
     const repoName = downloadModelName.trim();
+    const savePathForDownload = downloadModelSavePath.trim();
+    downloadRepoRef.current = repoName;
+    setDownloadRepo(repoName);
+    cancelRequestedRef.current = false;
     setDownloading(true);
     setDownloadProgress(0);
+    setDownloadSizeBytes(0);
+    setDownloadTotalSizeBytes(0);
+    setDownloadStalledSecs(null);
+    setDownloadLog('');
     setActiveDownloadName(repoName);
     setDownloadNotice(null);
     setShowDownloadModal(false);
     try {
-      const result = await downloadModel(repoName, downloadModelSavePath.trim(), hfMirror);
+      const result = await downloadModel(repoName, savePathForDownload, hfMirror);
       setDownloadModelName('');
       setDownloadModelSavePath('');
       if (result.model_save_path) onSavePathPersisted(result.model_save_path);
       let pollCount = 0;
       const maxPolls = 1200;
       const logFile = result.log_file;
+      const stopPolling = () => {
+        setDownloadNotice(tRef.current('Download status polling stopped after 1 hour — the download may still be running in the background. Check the model list or backend logs for its real status.'));
+        setDownloading(false); setDownloadProgress(0); setDownloadStalledSecs(null); setActiveDownloadName(''); fetchModels();
+      };
       const pollDownload = async () => {
         pollCount++;
         try {
-          const status = await getDownloadStatus(logFile);
+          const status = await getDownloadStatus(logFile, repoName, savePathForDownload, hfMirror);
           if (!isMountedRef.current) return;
+          setDownloadLog(status.log ?? '');
+          setDownloadSizeBytes(status.size_bytes ?? 0);
+          setDownloadTotalSizeBytes(status.total_size ?? 0);
           if (status.status === 'downloading') {
+            setDownloadStalledSecs(null);
             setDownloadProgress(Math.round(status.progress ?? 0));
             if (pollCount < maxPolls) downloadPollTimeoutRef.current = setTimeout(pollDownload, 3000);
-            else {
-              setDownloadNotice(tRef.current('Download status polling stopped after 1 hour — the download may still be running in the background. Check the model list or backend logs for its real status.'));
-              setDownloading(false); setDownloadProgress(0); setActiveDownloadName(''); fetchModels();
-            }
+            else stopPolling();
+          } else if (status.status === 'stalled') {
+            setDownloadStalledSecs(status.stalled_secs ?? 0);
+            setDownloadProgress(Math.round(status.progress ?? 0));
+            if (pollCount < maxPolls) downloadPollTimeoutRef.current = setTimeout(pollDownload, 3000);
+            else stopPolling();
           } else if (status.status === 'complete') {
-            setDownloadProgress(100); setDownloading(false);
+            setDownloadProgress(100); setDownloadStalledSecs(null); setDownloading(false);
             setTimeout(() => { if (isMountedRef.current) { setDownloadProgress(0); setActiveDownloadName(''); } }, 2000);
             scanModels().then(() => fetchModels());
           } else if (status.status === 'failed') {
             const reason = status.reason?.slice(0, 300);
             showToast(tRef.current('Download failed') + (reason ? `\n${reason}` : ''));
+            setDownloadStalledSecs(null);
+            setDownloadNotice(tRef.current('Download failed'));
+            setDownloading(false); setDownloadProgress(0); setActiveDownloadName('');
+            fetchModels();
+          } else if (status.status === 'stopped') {
+            const wasCancelled = cancelRequestedRef.current;
+            cancelRequestedRef.current = false;
+            setDownloadStalledSecs(null);
+            if (!wasCancelled) setDownloadNotice(tRef.current('Download stopped before completion'));
             setDownloading(false); setDownloadProgress(0); setActiveDownloadName('');
             fetchModels();
           } else {
+            setDownloadStalledSecs(null);
             setDownloading(false); setDownloadProgress(0); setActiveDownloadName('');
             fetchModels();
           }
         } catch {
           if (!isMountedRef.current) return;
           if (pollCount < maxPolls) downloadPollTimeoutRef.current = setTimeout(pollDownload, 3000);
-          else {
-            setDownloadNotice(tRef.current('Download status polling stopped after 1 hour — the download may still be running in the background. Check the model list or backend logs for its real status.'));
-            setDownloading(false); setDownloadProgress(0); setActiveDownloadName(''); fetchModels();
-          }
+          else stopPolling();
         }
       };
       downloadPollTimeoutRef.current = setTimeout(pollDownload, 3000);
@@ -163,6 +196,19 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
       const msg = errMsgLocalized(e);
       showToast(tRef.current('Download request failed') + (msg ? `: ${msg}` : ''));
       setDownloading(false); setDownloadProgress(0); setActiveDownloadName('');
+    }
+  };
+
+  const handleCancelDownload = async () => {
+    const repo = downloadRepoRef.current;
+    if (!repo || cancelRequestedRef.current) return;
+    cancelRequestedRef.current = true;
+    try {
+      await stopDownload(repo);
+      if (isMountedRef.current) showToast(tRef.current('Download cancelled'));
+    } catch {
+      cancelRequestedRef.current = false;
+      if (isMountedRef.current) showToast(tRef.current('Cancel download failed'));
     }
   };
 
@@ -177,6 +223,13 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
     setHfMirror,
     downloading,
     downloadProgress,
+    downloadSizeBytes,
+    downloadTotalSizeBytes,
+    downloadStalledSecs,
+    downloadLog,
+    showDownloadLog,
+    setShowDownloadLog,
+    downloadRepo,
     downloadNotice,
     clearDownloadNotice,
     activeDownloadName,
@@ -186,5 +239,6 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
     installMessage,
     handleInstallCli,
     handleDownloadModel,
+    handleCancelDownload,
   };
 }

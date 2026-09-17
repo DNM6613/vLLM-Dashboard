@@ -95,13 +95,14 @@ def save_launch_config(config: dict):
     return {"success": True}
 
 @router.get("/download/status")
-def get_download_status(log_file: str = Query(...)):
+def get_download_status(log_file: str = Query(...), repo: str = Query(""),
+                        save_path: str = Query(""), hf_mirror: bool = Query(True)):
     if not re.fullmatch(r'/tmp/model_download_[\w.\-:@~]+\.log', log_file):
         raise HTTPException(status_code=400, detail="Invalid log file path")
     if not posixpath.normpath(log_file).startswith('/tmp/model_download_'):
         raise HTTPException(status_code=400, detail="Invalid log file path")
 
-    return model_service.get_download_status(log_file)
+    return model_service.get_download_status(log_file, repo, save_path, hf_mirror)
 
 @router.post("/stop")
 async def stop_model(model_id: str = Query(...)):
@@ -125,6 +126,12 @@ def download_model(model_repo: str = Query(...), model_save_path: str = Query(""
             raise HTTPException(status_code=400, detail="Invalid model_save_path")
 
     return model_service.download_model(model_repo, model_save_path, hf_mirror)
+
+@router.post("/download/stop")
+def stop_download(model_repo: str = Query(...)):
+    if not re.fullmatch(r'[\w.\-:@~/]+', model_repo):
+        raise HTTPException(status_code=400, detail="Invalid model_repo")
+    return model_service.stop_download(model_repo)
 
 @router.get("/cli-status")
 def check_cli_tools():
