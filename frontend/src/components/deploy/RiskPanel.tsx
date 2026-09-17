@@ -5,7 +5,7 @@ const RISK_KEYS = [
   'Risk 1: driver change requires reboot',
   'Risk 2: version mismatch',
   'Risk 3: open kernel driver',
-  'Risk 4: CUDA 13.0',
+  'Risk 4: CUDA 13.x',
   'Risk 5: driver purge',
 ];
 

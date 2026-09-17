@@ -159,7 +159,6 @@ export interface VllmApplyPayload {
   python_version: string;
   source_build: boolean;
   flashinfer: boolean;
-  mtp: boolean;
   nccl: boolean;
   rust_frontend: boolean;
   auto_register_service: boolean;

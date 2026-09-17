@@ -47,12 +47,18 @@ LOG_DIR = os.path.join(DATA_DIR, "deployment_logs")
 
 # ---- compatibility rules (spec) -------------------------------------------
 # Minimum driver major per CUDA version — NVIDIA CUDA Toolkit release notes
-# (Linux x86_64): CUDA 12.9 >= 575.57.08, CUDA 13.0 GA >= 580.65.06.
-CUDA_MIN_DRIVER: dict[str, int] = {"12.9": 575, "13.0": 580}
-# vLLM recommended minimum driver.
-VLLM_MIN_DRIVER = 550
-# Drivers whose release line requires a newer CUDA floor (driver-tab warning).
-DRIVER_MIN_CUDA: dict[int, str] = {610: "12.8"}
+# sub-version compatibility table (Linux x86_64): the whole 13.x series
+# requires driver >= 580 (no maximum driver; drivers stay backward
+# compatible with older toolkits).
+CUDA_MIN_DRIVER: dict[str, int] = {"13.3": 580, "13.4": 580}
+# Minimum driver for vLLM's default install: the PyPI wheel is compiled with
+# CUDA 12.9, whose minimum driver is 575.51.03 (NVIDIA CUDA release notes);
+# vLLM's docs state no independent driver floor of their own.
+VLLM_MIN_DRIVER = 575
+# Driver -> minimum CUDA floor. NVIDIA documents drivers as backward
+# compatible with older toolkits (no maximum driver per toolkit), so this
+# stays empty; the binding direction is CUDA -> driver (CUDA_MIN_DRIVER).
+DRIVER_MIN_CUDA: dict[int, str] = {}
 
 # ---- input validation ------------------------------------------------------
 DRIVER_PKG_RE = re.compile(r"^nvidia-driver-\d{3,4}(-[a-z0-9]+)*$")
@@ -679,15 +685,20 @@ def _run_driver(ctx: TaskContext, package: str, target_major: int | None) -> Non
 
 
 def _run_cuda(ctx: TaskContext, version: str, pkg: str) -> None:
+    # Documented apt flow (NVIDIA CUDA installation guide): install the
+    # signed cuda-keyring package, which registers the repo itself. Repo
+    # directory is ubuntu<VERSION_ID without dot> (e.g. ubuntu2604); the repo
+    # arch directory is x86_64/arm64 — note dpkg reports amd64, so map it.
+    # The repo host geo-redirects (301) to a CDN (nvidia.cn in China), so
+    # curl must follow redirects. The former ubuntu.pkgs.nvidia.com host no
+    # longer resolves (verified on the AI server 2026-09-18).
     repo_script = (
-        'UBU=$(lsb_release -cs 2>/dev/null || { . /etc/os-release && echo "$VERSION_CODENAME"; }); '
-        '[ -n "$UBU" ] || { echo "cannot detect Ubuntu codename" >&2; exit 1; }; '
-        "sudo install -d /etc/apt/keyrings; "
-        "sudo curl -fsSL https://ubuntu.pkgs.nvidia.com/cuda/ubuntu-dist/$UBU/Release.key "
-        "-o /etc/apt/keyrings/cuda-vdb.asc; "
-        "sudo tee /etc/apt/sources.list.d/cuda-vdb.list >/dev/null <<VDBEOF\n"
-        "deb [signed-by=/etc/apt/keyrings/cuda-vdb.asc] https://ubuntu.pkgs.nvidia.com/cuda/ubuntu-dist/$UBU/ /\n"
-        "VDBEOF\n"
+        "DISTRO=ubuntu$(. /etc/os-release && echo \"$VERSION_ID\" | tr -d '.'); "
+        "ARCH=$(dpkg --print-architecture); [ \"$ARCH\" = amd64 ] && ARCH=x86_64; "
+        "[ \"$DISTRO\" != ubuntu ] || { echo 'cannot detect Ubuntu version' >&2; exit 1; }; "
+        "sudo curl -fsSL -o /tmp/cuda-keyring.deb "
+        "https://developer.download.nvidia.com/compute/cuda/repos/$DISTRO/$ARCH/cuda-keyring_1.1-1_all.deb; "
+        "sudo dpkg -i /tmp/cuda-keyring.deb && sudo rm -f /tmp/cuda-keyring.deb; "
         "sudo apt-get update -y"
     )
     with ctx.step(0):
@@ -748,10 +759,16 @@ def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
         )
     elif payload.get("runtime_mode") == "system":
         cuda_version = (payload.get("cuda_version") or "").strip()
-        torch_index = (
-            f" --extra-index-url https://download.pytorch.org/whl/cu{cuda_version.replace('.', '')}"
-            if cuda_version else ""
-        )
+        # Torch wheels ship per CUDA family (cu129, cu130, ...), not per
+        # toolkit minor version. Verified 2026-09-18: /whl/cu133 is an S3
+        # AccessDenied page and /whl/cu134 serves a generic fallback listing,
+        # so every 13.x selection maps to cu130 — the only real CUDA 13
+        # index (vLLM's docs use cu130 for CUDA 13 as well).
+        if cuda_version:
+            family = "cu130" if cuda_version.startswith("13") else f"cu{cuda_version.replace('.', '')}"
+            torch_index = f" --extra-index-url https://download.pytorch.org/whl/{family}"
+        else:
+            torch_index = ""
         install = (
             UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} {spec} torch{torch_index}".replace("  ", " ")
         )
@@ -762,7 +779,13 @@ def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
     if payload.get("flashinfer"):
         deps.append(UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} flashinfer-python")
     if payload.get("nccl"):
-        deps.append(UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} nvidia-nccl-cu12")
+        # nvidia-nccl follows the effective torch/CUDA family: cu13 only in
+        # system-runtime mode with a CUDA 13.x selection (cu13 exists on
+        # PyPI); the built-in runtime stays on the default cu12 family.
+        use_cu13 = (payload.get("runtime_mode") == "system"
+                    and str(payload.get("cuda_version") or "").startswith("13"))
+        nccl_pkg = "nvidia-nccl-cu13" if use_cu13 else "nvidia-nccl-cu12"
+        deps.append(UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} {nccl_pkg}")
     return prepare, install, deps
 
 
@@ -784,11 +807,9 @@ def _run_vllm(ctx: TaskContext, payload: dict[str, Any], venv_path: str,
     with ctx.step(3):
         for dep_cmd in deps:
             ctx.run_long(dep_cmd, timeout=1800)
-        if payload.get("mtp"):
-            ctx.log("MTP speculative decoding is built into vLLM — no extra dependency.")
         if payload.get("rust_frontend"):
             ctx.log("Rust frontend ships inside the vLLM main package — no separate install.")
-        if not deps and not payload.get("mtp") and not payload.get("rust_frontend"):
+        if not deps and not payload.get("rust_frontend"):
             ctx.log("No optional dependencies selected.")
     with ctx.step(4):
         verify = ctx.exec(

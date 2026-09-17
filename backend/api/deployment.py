@@ -27,7 +27,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/deployment", tags=["deployment"])
 
-_CUDA_VERSIONS = ["12.9", "13.0"]
+# Offered toolkits. The target OS (Ubuntu 26.04) NVIDIA repo only carries the
+# 13.3/13.4 toolkits — verified 2026-09-18 by listing ubuntu2604/x86_64
+# Packages (no 12.x, no 13-0). Other versions can still be entered via the
+# "Custom CUDA version (for testing)" field.
+_CUDA_VERSIONS = ["13.3", "13.4"]
 
 
 def _error_to_http(e: DeploymentError) -> HTTPException:
@@ -124,9 +128,10 @@ async def get_preflight():
         m = re.match(r"^(\d+)\.(\d+)", python)
         if m:
             py_major = (int(m.group(1)), int(m.group(2)))
-    py_ok = bool(py_major) and py_major >= (3, 9)
+    # vLLM 0.29.0 requires_python: >=3.10,<3.15 (PyPI metadata).
+    py_ok = bool(py_major) and (3, 10) <= py_major < (3, 15)
     add("python", "Python", "ok" if py_ok else "fail", python or "not found",
-        "" if py_ok else "Python 3.9+ is required for vLLM.")
+        "" if py_ok else "Python 3.10+ (<3.15) is required for vLLM.")
 
     uv_ok = not result.get("uv_missing", False)
     add("uv", "uv", "ok" if uv_ok else "fail", result.get("uv") or "not found",
@@ -299,7 +304,7 @@ async def apply_vllm(body: dict[str, Any]):
     _require_remote()
     allowed = {
         "version", "runtime_mode", "env_mode", "venv_name", "python_version",
-        "source_build", "flashinfer", "mtp", "nccl", "rust_frontend",
+        "source_build", "flashinfer", "nccl", "rust_frontend",
         "auto_register_service", "cuda_version",
     }
     payload = {k: body[k] for k in allowed if k in body}
@@ -455,11 +460,11 @@ async def conflict_cleanup(body: dict[str, Any]):
 async def get_templates():
     return {"templates": [
         {"id": "A", "name": "Production stable",
-         "driver": "nvidia-driver-595-server-open", "cuda": "12.9",
-         "cuda_install_system": False, "vllm_version": "0.29.0", "vllm_runtime": "builtin"},
+         "driver": "nvidia-driver-595-server-open", "cuda": "13.3",
+         "cuda_install_system": True, "vllm_version": "0.29.0", "vllm_runtime": "builtin"},
         {"id": "B", "name": "Cutting edge",
-         "driver": "nvidia-driver-610-open", "cuda": "13.0",
-         "cuda_install_system": False, "vllm_version": "latest", "vllm_runtime": "builtin"},
+         "driver": "nvidia-driver-610-open", "cuda": "13.4",
+         "cuda_install_system": True, "vllm_version": "latest", "vllm_runtime": "builtin"},
     ]}
 
 

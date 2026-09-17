@@ -219,11 +219,14 @@ class TestValidationHelpers(unittest.TestCase):
         self.assertEqual(ds._suggest_error("something else entirely"), "")
 
     def test_compat_tables(self):
-        # NVIDIA CUDA Toolkit release notes (Linux x86_64): CUDA 12.9 >= 575,
-        # CUDA 13.0 GA >= 580
-        self.assertEqual(ds.CUDA_MIN_DRIVER, {"12.9": 575, "13.0": 580})
-        self.assertEqual(ds.VLLM_MIN_DRIVER, 550)
-        self.assertEqual(ds.DRIVER_MIN_CUDA[610], "12.8")
+        # NVIDIA CUDA Toolkit release notes, sub-version compatibility table
+        # (Linux x86_64): the whole 13.x series requires driver >= 580 (no
+        # maximum driver). vLLM's default wheel is built with CUDA 12.9
+        # (min driver 575), so VLLM_MIN_DRIVER stays 575. DRIVER_MIN_CUDA
+        # stays empty: drivers are backward compatible with older toolkits.
+        self.assertEqual(ds.CUDA_MIN_DRIVER, {"13.3": 580, "13.4": 580})
+        self.assertEqual(ds.VLLM_MIN_DRIVER, 575)
+        self.assertEqual(ds.DRIVER_MIN_CUDA, {})
 
 
 class TestDeploymentState(unittest.TestCase):
@@ -422,7 +425,7 @@ class TestStateEndpoint(unittest.TestCase):
         return resp.json()
 
     def test_unlocked_when_driver_and_cuda_selected(self):
-        body = self._get_state("580.65.06", selected_cuda="12.9")
+        body = self._get_state("580.65.06", selected_cuda="13.3")
         self.assertEqual(body["current_driver_major"], 580)
         self.assertFalse(body["locks"]["cuda"])
         self.assertFalse(body["locks"]["vllm"])
@@ -552,6 +555,51 @@ class TestCudaEndpoint(unittest.TestCase):
         self.assertEqual(body["current_toolkit"], "")
 
 
+class TestPreflightPythonBounds(unittest.TestCase):
+    """vLLM 0.29.0 requires_python is >=3.10,<3.15 (PyPI metadata) — the
+    preflight check must enforce that range, not the old 3.9+ floor."""
+
+    def _preflight(self, python: str) -> dict[str, dict]:
+        from fastapi.testclient import TestClient
+
+        from backend.main import app
+        executor = MagicMock()
+        executor.get_preflight.return_value = {
+            "success": True,
+            "os": "Ubuntu 26.04.1 LTS",
+            "kernel": "7.0.0-31-generic",
+            "gpus": [{"index": "0", "name": "GB206 [GeForce RTX 5060 Ti]",
+                      "driver": "595.91.07", "memory": "16310 MiB"}],
+            "gpu_missing": False,
+            "cuda": "13.0",
+            "python": python,
+            "uv": "0.12.15",
+            "uv_missing": False,
+            "disk": ["796981740", "/"],
+            "driver_tool": True,
+            "net": {"https://pypi.org/simple/": "200"},
+        }
+        config = MagicMock()
+        config.host = "10.131.1.7"
+        with patch.object(api_dep, "get_remote_executor", return_value=executor), \
+             patch.object(api_dep, "config_manager") as cm:
+            cm.get_config.return_value = config
+            client = TestClient(app)
+            resp = client.get("/api/v1/deployment/preflight")
+        self.assertEqual(resp.status_code, 200)
+        return {i["key"]: i for i in resp.json()["items"]}
+
+    def test_below_310_fails(self):
+        self.assertEqual(self._preflight("3.9.19")["python"]["status"], "fail")
+
+    def test_310_to_314_ok(self):
+        for v in ("3.10.12", "3.12.7", "3.14.4"):
+            self.assertEqual(self._preflight(v)["python"]["status"], "ok", v)
+
+    def test_315_and_above_fails(self):
+        self.assertEqual(self._preflight("3.15.0")["python"]["status"], "fail")
+
+
 class TestGetPreflight(unittest.TestCase):
     """Sentinel discipline: NO_NVCC / NO_UV / "command not found" must never
     reach the UI — the backend emits stable, translatable English strings."""
@@ -638,6 +686,49 @@ class TestGetVllmEnv(unittest.TestCase):
         res = types.MethodType(ops.DeploymentOps.get_vllm_env, fake)()
         self.assertEqual(res["uv"], "")
         self.assertTrue(res["uv_missing"])
+
+
+class TestBuildVllmInstallCommands(unittest.TestCase):
+    def _deps(self, **kw) -> list[str]:
+        payload = {"env_mode": "existing", "venv_name": ".vllm",
+                   "version": "latest", "runtime_mode": "builtin"}
+        payload.update(kw)
+        _, _, deps = ds._build_vllm_install_commands(
+            payload, "$HOME/.vllm", {"pypi": ""})
+        return deps
+
+    def test_nccl_follows_effective_torch_family(self):
+        # built-in runtime keeps the default cu12 family even when the CUDA
+        # tab selected a 13.x toolkit
+        deps = self._deps(nccl=True, cuda_version="13.3")
+        self.assertEqual(len(deps), 1)
+        self.assertIn("nvidia-nccl-cu12", deps[0])
+        # system runtime with CUDA 13.x picks the cu13 family (exists on PyPI)
+        deps = self._deps(nccl=True, runtime_mode="system", cuda_version="13.3")
+        self.assertIn("nvidia-nccl-cu13", deps[0])
+        # system runtime with CUDA 12.x (custom field) stays on cu12
+        deps = self._deps(nccl=True, runtime_mode="system", cuda_version="12.9")
+        self.assertIn("nvidia-nccl-cu12", deps[0])
+
+    def test_system_torch_index_maps_to_cuda_family(self):
+        # torch wheels are published per CUDA family, not per toolkit minor
+        # version: /whl/cu133 is an S3 AccessDenied page and /whl/cu134 is a
+        # generic fallback listing, so every 13.x selection must use cu130.
+        base = {"env_mode": "existing", "venv_name": ".vllm",
+                "version": "latest", "runtime_mode": "system"}
+        for ver, want in (("13.3", "whl/cu130"), ("13.4", "whl/cu130"),
+                          ("12.9", "whl/cu129")):
+            _, install, _ = ds._build_vllm_install_commands(
+                {**base, "cuda_version": ver}, "$HOME/.vllm", {"pypi": ""})
+            self.assertIn(want, install)
+        # built-in runtime carries no torch index at all
+        _, install, _ = ds._build_vllm_install_commands(
+            {**base, "runtime_mode": "builtin", "cuda_version": "13.3"},
+            "$HOME/.vllm", {"pypi": ""})
+        self.assertNotIn("download.pytorch.org", install)
+
+    def test_no_nccl_no_deps(self):
+        self.assertEqual(self._deps(nccl=False, flashinfer=False), [])
 
 
 class TestProbeInThread(unittest.TestCase):

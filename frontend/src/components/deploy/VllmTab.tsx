@@ -26,7 +26,6 @@ export function VllmTab({
   const [venvName, setVenvName] = useState('');
   const [pyVersion, setPyVersion] = useState('');
   const [flashinfer, setFlashinfer] = useState(false);
-  const [mtp, setMtp] = useState(false);
   const [nccl, setNccl] = useState(false);
   const [rustFrontend, setRustFrontend] = useState(false);
   const [autoRegister, setAutoRegister] = useState(false);
@@ -52,10 +51,14 @@ export function VllmTab({
   const mirrorFlag = pypiMirror ? ` --index-url ${pypiMirror}` : '';
   const effRuntime: 'builtin' | 'system' =
     runtime === 'system' && !cudaInstallSystem ? 'builtin' : runtime;
+  // torch wheels ship per CUDA family, not per toolkit minor: every 13.x → cu130
+  const torchIndex = (cudaVersion || '13.3').startsWith('13')
+    ? 'cu130'
+    : `cu${(cudaVersion || '13.3').replace('.', '')}`;
   const previewCmd = sourceBuild
     ? `git clone --depth 1 <vllm repo> /tmp/vllm-src-vdb\nuv pip install${mirrorFlag} --python ~/${effVenv}/bin/python -e /tmp/vllm-src-vdb`
     : effRuntime === 'system'
-      ? `uv pip install${mirrorFlag} --python ~/${effVenv}/bin/python ${spec} torch --extra-index-url https://download.pytorch.org/whl/cu${(cudaVersion || '12.9').replace('.', '')}`
+      ? `uv pip install${mirrorFlag} --python ~/${effVenv}/bin/python ${spec} torch --extra-index-url https://download.pytorch.org/whl/${torchIndex}`
       : `uv pip install${mirrorFlag} --python ~/${effVenv}/bin/python ${spec}`;
 
   const handleApply = async () => {
@@ -68,7 +71,6 @@ export function VllmTab({
       python_version: pyVersion,
       source_build: sourceBuild,
       flashinfer,
-      mtp,
       nccl,
       rust_frontend: rustFrontend,
       auto_register_service: autoRegister,
@@ -213,10 +215,6 @@ export function VllmTab({
         <label className="flex items-center gap-2 text-xs cursor-pointer">
           <input type="checkbox" checked={flashinfer} onChange={(e) => setFlashinfer(e.target.checked)} className="accent-sky-400" />
           FlashInfer
-        </label>
-        <label className="flex items-center gap-2 text-xs cursor-pointer">
-          <input type="checkbox" checked={mtp} onChange={(e) => setMtp(e.target.checked)} className="accent-sky-400" />
-          {t('MTP speculative decoding dependencies')}
         </label>
         <label className="flex items-center gap-2 text-xs cursor-pointer">
           <input type="checkbox" checked={nccl} onChange={(e) => setNccl(e.target.checked)} className="accent-sky-400" />
