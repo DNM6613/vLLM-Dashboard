@@ -203,6 +203,37 @@ export const ZH: Record<string, string> = {
   'Network': '网络',
   'HF mirror': 'HF 镜像',
 
+  // Preflight values / details — exact English source strings from the
+  // backend /preflight endpoint (values embedding live data use the
+  // {n} / {hosts} templates via displayPreflightValue).
+  'available': '可用',
+  'not found': '未找到',
+  'unknown': '未知',
+  'reachable': '可达',
+  'unreachable': '不可达',
+  'recommended': '推荐',
+  '{n} GB free': '{n} GB 可用',
+  'reachable: {hosts}': '可达：{hosts}',
+  'no PyPI source reachable': '没有可达的 PyPI 源',
+  'driver not installed': '驱动未安装',
+  'not installed (optional — vLLM ships its own runtime)': '未安装（可选 — vLLM 自带其运行时）',
+  'Open kernel modules need a recent kernel; prefer the closed server driver for production.':
+    'Open 内核模块需要较新的内核；生产环境建议闭源 server 驱动。',
+  'No working NVIDIA driver detected — apply one in the GPU Driver tab.':
+    '未检测到可用的 NVIDIA 驱动 — 请在显卡驱动 Tab 中安装。',
+  'Below the vLLM recommended minimum driver 550.': '低于 vLLM 推荐的最低驱动 550。',
+  'Python 3.9+ is required for vLLM.': 'vLLM 需要 Python 3.9+。',
+  'Install uv first: curl -LsSf https://astral.sh/uv/install.sh | sh':
+    '请先安装 uv：curl -LsSf https://astral.sh/uv/install.sh | sh',
+  '5 GB free space is the minimum for driver/CUDA/vLLM packages.':
+    '驱动 / CUDA / vLLM 软件包至少需要 5 GB 可用空间。',
+  'The GPU Driver tab requires ubuntu-drivers (Ubuntu only).':
+    '显卡驱动 Tab 需要 ubuntu-drivers（仅支持 Ubuntu）。',
+  'Configure a reachable mirror in the Mirror Sources panel.': '请在镜像源面板中配置可达的镜像。',
+  'Model downloads may be slow/blocked.': '模型下载可能缓慢或被阻断。',
+  'nouveau is a fallback driver with poor performance — not suitable for vLLM':
+    'nouveau 是性能较差的回退驱动 — 不适合 vLLM',
+
   'Detected GPU: {gpus}': '检测到 GPU：{gpus}',
   'none': '无',
   'Driver {pkg} installed — reboot the server to activate it.':

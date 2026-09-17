@@ -118,7 +118,7 @@ export function DriverTab({ data, picked, onPick, onApply, onReboot, busy }: Dri
                 <td className="px-3 py-2 font-mono">
                   {row.package}
                   {row.installed && <span className="ml-2 text-success text-[11px]">{t('Installed')}</span>}
-                  {row.note && <div className="text-warning/80 font-sans mt-0.5">{row.note}</div>}
+                  {row.note && <div className="text-warning/80 font-sans mt-0.5">{t(row.note)}</div>}
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex flex-wrap gap-1">

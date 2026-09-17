@@ -34,6 +34,7 @@ from typing import Any
 
 from ..config.remote_client import config_manager
 from ..config.server_config import has_parent_path_segment
+from ..executor.remote.deployment_ops import UV_PATH_PREFIX
 from ..executor.remote_executor import get_remote_executor
 
 logger = logging.getLogger(__name__)
@@ -718,7 +719,7 @@ def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
 
     if payload.get("env_mode") == "new":
         py_args = f" --python {py_version}" if PY_VER_RE.fullmatch(py_version) else ""
-        prepare = f"uv venv{py_args} {venv_path}"
+        prepare = f"{UV_PATH_PREFIX}uv venv{py_args} {venv_path}"
     else:
         prepare = (
             f"test -d {venv_path} && test -x {py_bin} || "
@@ -728,10 +729,13 @@ def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
     version = (payload.get("version") or "latest").strip()
     spec = "vllm" if version in ("", "latest") else f"vllm=={version}"
 
+    # Every branch below invokes uv, so each carries UV_PATH_PREFIX — a
+    # bare `uv` fails in the non-login SSH shell when uv lives in
+    # ~/.local/bin (see deployment_ops.UV_PATH_PREFIX).
     if payload.get("source_build"):
         install = (
-            "git clone --depth 1 https://gh-proxy.com/https://github.com/vllm-project/vllm.git /tmp/vllm-src-vdb "
-            f"&& uv pip install {index_args} --python {py_bin} -e /tmp/vllm-src-vdb".replace("  ", " ")
+            UV_PATH_PREFIX + "git clone --depth 1 https://gh-proxy.com/https://github.com/vllm-project/vllm.git /tmp/vllm-src-vdb "
+            + f"&& uv pip install {index_args} --python {py_bin} -e /tmp/vllm-src-vdb".replace("  ", " ")
         )
     elif payload.get("runtime_mode") == "system":
         cuda_version = (payload.get("cuda_version") or "").strip()
@@ -740,16 +744,16 @@ def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
             if cuda_version else ""
         )
         install = (
-            f"uv pip install {index_args} --python {py_bin} {spec} torch{torch_index}".replace("  ", " ")
+            UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} {spec} torch{torch_index}".replace("  ", " ")
         )
     else:
-        install = f"uv pip install {index_args} --python {py_bin} {spec}"
+        install = UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} {spec}"
 
     deps: list[str] = []
     if payload.get("flashinfer"):
-        deps.append(f"uv pip install {index_args} --python {py_bin} flashinfer-python")
+        deps.append(UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} flashinfer-python")
     if payload.get("nccl"):
-        deps.append(f"uv pip install {index_args} --python {py_bin} nvidia-nccl-cu12")
+        deps.append(UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} nvidia-nccl-cu12")
     return prepare, install, deps
 
 
@@ -842,7 +846,7 @@ def _run_rollback_vllm(ctx: TaskContext, target_version: str, venv_path: str,
         else:
             ctx.log(f"warning: stop_vllm: {stop.get('error')}")
     with ctx.step(1):
-        ctx.run_long(f"uv pip install {index_args} --python {py_bin} vllm=={target_version}".replace("  ", " "),
+        ctx.run_long((UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} vllm=={target_version}").replace("  ", " "),
                      timeout=7200)
     with ctx.step(2):
         verify = ctx.exec(

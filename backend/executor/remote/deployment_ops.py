@@ -121,6 +121,15 @@ NET_PROBES = (
     "https://modelscope.cn/",
 )
 
+# uv is normally installed to ~/.local/bin (standalone installer) or
+# ~/.cargo/bin (cargo) — neither is on the PATH of the non-interactive,
+# non-login shell that executor.execute() uses, so a bare `uv` fails with
+# "command not found" even though uv is installed. Prepend the common
+# install dirs to PATH for every command that invokes uv (the same reason
+# the nvcc probe below runs under `bash -lc`).
+UV_PATH_PREFIX = 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"; '
+
+
 def build_preflight_command() -> str:
     """One SSH round-trip: OS / kernel / GPU / CUDA / Python / uv / disk /
     ubuntu-drivers / network, each section bracketed by `== NAME ==` markers
@@ -136,7 +145,7 @@ def build_preflight_command() -> str:
         "echo '== GPU =='; nvidia-smi --query-gpu=index,name,driver_version,memory.total --format=csv,noheader 2>/dev/null || echo NO_NVIDIA_SMI; "
         "echo '== CUDA =='; bash -lc 'nvcc -V 2>/dev/null | grep -o \"CUDA Version [0-9.]*\" || echo NO_NVCC'; "
         "echo '== PYTHON =='; python3 --version 2>&1 || echo NO_PYTHON; "
-        "echo '== UV =='; uv --version 2>&1 || echo NO_UV; "
+        "echo '== UV =='; " + UV_PATH_PREFIX + "uv --version 2>/dev/null || echo NO_UV; "
         "echo '== DISK =='; df -P / 2>/dev/null | awk 'NR==2 {print $4\"\\t\"$6}'; "
         "echo '== DRIVER_TOOL =='; which ubuntu-drivers 2>/dev/null || echo NO_UBUNTU_DRIVERS; "
         "echo '== NET =='; " + net_probe + "; "
@@ -236,15 +245,28 @@ class DeploymentOps:
                         "driver": parts[2] if len(parts) > 2 else "",
                         "memory": parts[3] if len(parts) > 3 else "",
                     })
+        # Sentinel values (NO_NVCC / NO_UV) must never leak to the UI: the
+        # backend always emits a stable, translatable English string.
+        cuda_raw = (sections.get("CUDA", "") or "").replace("CUDA Version", "").strip()
+        if not cuda_raw or cuda_raw == "NO_NVCC":
+            cuda_raw = "not installed (optional — vLLM ships its own runtime)"
+
+        # A "command not found" line means uv is genuinely missing (the probe
+        # already extends PATH); extract the version number when present.
+        uv_raw = (sections.get("UV", "") or "").strip()
+        m = re.search(r"(\d+\.\d+\.\d+)", uv_raw)
+        uv_version = m.group(1) if m else ""
+
         return {
             "success": True,
             "os": sections.get("OS", ""),
             "kernel": sections.get("KERNEL", ""),
             "gpus": gpus,
             "gpu_missing": "NO_NVIDIA_SMI" in (sections.get("GPU", "") or ""),
-            "cuda": (sections.get("CUDA", "") or "").replace("CUDA Version", "").strip(),
+            "cuda": cuda_raw,
             "python": (sections.get("PYTHON", "") or "").replace("Python", "").strip(),
-            "uv": (sections.get("UV", "") or "").replace("uv ", "").strip(),
+            "uv": uv_version,
+            "uv_missing": not uv_version,
             "disk": (sections.get("DISK", "") or "").split("\t"),
             "driver_tool": (sections.get("DRIVER_TOOL", "") or "").strip() != "NO_UBUNTU_DRIVERS",
             "net": net,
@@ -259,8 +281,8 @@ class DeploymentOps:
         activate_cmd = self._get_activate_cmd()
         vllm_probe = f"{activate_cmd}(vllm --version 2>/dev/null || echo NO_VLLM)"
         cmd = (
-            "echo '== UV =='; uv --version 2>&1 || echo NO_UV; "
-            "echo '== PYTHONS =='; uv python list --only-installed 2>/dev/null | head -n 20; "
+            f"echo '== UV =='; {UV_PATH_PREFIX}uv --version 2>/dev/null || echo NO_UV; "
+            f"echo '== PYTHONS =='; {UV_PATH_PREFIX}uv python list --only-installed 2>/dev/null | head -n 20; "
             "echo '== VENVS =='; find $HOME -maxdepth 3 -name pyvenv.cfg -not -path '*/node_modules/*' 2>/dev/null | head -n 20; "
             f"echo '== VLLM =='; {vllm_probe}; "
             "echo '== END =='; echo DONE"
@@ -295,10 +317,16 @@ class DeploymentOps:
                     vllm_version = m.group(1)
                     break
 
+        # Same sentinel discipline as get_preflight: never surface raw
+        # "command not found" / NO_UV markers, only a version or missing.
+        uv_raw = (sections.get("UV", "") or "").strip()
+        m = re.search(r"(\d+\.\d+\.\d+)", uv_raw)
+        uv_version = m.group(1) if m else ""
+
         return {
             "success": True,
-            "uv": (sections.get("UV", "") or "").replace("uv ", "").strip(),
-            "uv_missing": "NO_UV" in (sections.get("UV", "") or ""),
+            "uv": uv_version,
+            "uv_missing": not uv_version,
             "pythons": pythons,
             "venvs": venvs,
             "vllm_version": vllm_version,

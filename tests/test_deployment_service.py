@@ -482,6 +482,92 @@ class TestDriversEndpoint(unittest.TestCase):
         self.assertEqual(body["current_major"], 595)
 
 
+class TestGetPreflight(unittest.TestCase):
+    """Sentinel discipline: NO_NVCC / NO_UV / "command not found" must never
+    reach the UI — the backend emits stable, translatable English strings."""
+
+    def _probe(self, stdout: str):
+        import types
+
+        return types.MethodType(
+            ops.DeploymentOps.get_preflight, _FakeExecutor(stdout))()
+
+    def _stdout(self, cuda: str = "NO_NVCC", uv: str = "NO_UV") -> str:
+        return (
+            "== OS ==\nUbuntu 26.04.1 LTS\n"
+            "== KERNEL ==\n7.0.0-31-generic\n"
+            "== GPU ==\n0, GB206 [GeForce RTX 5060 Ti], 595.91.07, 16310 MiB\n"
+            f"== CUDA ==\n{cuda}\n"
+            "== PYTHON ==\nPython 3.14.4\n"
+            f"== UV ==\n{uv}\n"
+            "== DISK ==\n796981740\t/\n"
+            "== DRIVER_TOOL ==\n/usr/bin/ubuntu-drivers\n"
+            "== NET ==\nNET https://pypi.org/simple/ 200\n"
+            "== END ==\nDONE"
+        )
+
+    def test_uv_found_reports_version_only(self):
+        res = self._probe(self._stdout(uv="uv 0.12.15 (x86_64-unknown-linux-gnu)"))
+        self.assertEqual(res["uv"], "0.12.15")
+        self.assertFalse(res["uv_missing"])
+
+    def test_uv_command_not_found_is_flagged_missing(self):
+        res = self._probe(self._stdout(uv="bash: line 1: uv: command not found\nNO_UV"))
+        self.assertEqual(res["uv"], "")
+        self.assertTrue(res["uv_missing"])
+
+    def test_cuda_no_nvcc_becomes_translatable_value(self):
+        res = self._probe(self._stdout(cuda="NO_NVCC"))
+        self.assertEqual(
+            res["cuda"], "not installed (optional — vLLM ships its own runtime)")
+
+    def test_cuda_version_parsed(self):
+        res = self._probe(self._stdout(cuda="CUDA Version 12.9"))
+        self.assertEqual(res["cuda"], "12.9")
+
+    def test_preflight_command_extends_path_for_uv(self):
+        self.assertIn(ops.UV_PATH_PREFIX, ops.build_preflight_command())
+
+
+class _FakeVllmExecutor:
+    """Fake executor that records commands (for the vllm env probe)."""
+
+    def __init__(self, stdout: str):
+        self._stdout = stdout
+        self.commands: list[str] = []
+
+    def execute(self, command, timeout=None, stdin_data=None):
+        self.commands.append(command)
+        return {"success": True, "stdout": self._stdout, "stderr": "", "returncode": 0}
+
+    def _get_activate_cmd(self) -> str:
+        return ""
+
+
+class TestGetVllmEnv(unittest.TestCase):
+    def test_uv_probe_extends_path_and_parses_version(self):
+        import types
+
+        fake = _FakeVllmExecutor(
+            "== UV ==\nuv 0.12.15 (x86_64-unknown-linux-gnu)\n== END ==\nDONE")
+        res = types.MethodType(ops.DeploymentOps.get_vllm_env, fake)()
+        self.assertEqual(res["uv"], "0.12.15")
+        self.assertFalse(res["uv_missing"])
+        # every uv invocation must carry the PATH extension
+        self.assertTrue(
+            all(ops.UV_PATH_PREFIX in c for c in fake.commands),
+            f"commands missing {ops.UV_PATH_PREFIX!r}: {fake.commands}")
+
+    def test_uv_missing_flag_when_command_not_found(self):
+        import types
+
+        fake = _FakeVllmExecutor(
+            "== UV ==\nNO_UV\n== END ==\nDONE")
+        res = types.MethodType(ops.DeploymentOps.get_vllm_env, fake)()
+        self.assertEqual(res["uv"], "")
+        self.assertTrue(res["uv_missing"])
+
+
 class TestProbeInThread(unittest.TestCase):
     """Wall-clock guard: a blocked SSH probe must surface as HTTP 504.
 
