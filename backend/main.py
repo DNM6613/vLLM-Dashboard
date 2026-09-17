@@ -14,7 +14,13 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from uvicorn.config import LOGGING_CONFIG as _UVICORN_LOGGING_CONFIG
 
 from . import __version__
-from .api import hardware_router, model_status_router, models_router, server_config_router
+from .api import (
+    deployment_router,
+    hardware_router,
+    model_status_router,
+    models_router,
+    server_config_router,
+)
 from .config.remote_client import config_manager
 from .config.settings import settings
 from .console.session_manager import console_session_manager, websocket_console
@@ -73,6 +79,7 @@ app.include_router(model_status_router)
 app.include_router(models_router)
 app.include_router(hardware_router)
 app.include_router(server_config_router)
+app.include_router(deployment_router)
 
 app.add_api_websocket_route("/ws/hardware", websocket_hardware)
 app.add_api_websocket_route("/ws/console", websocket_console)

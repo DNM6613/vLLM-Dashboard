@@ -8,6 +8,7 @@ from typing import Any
 from ..config.server_config import has_parent_path_segment
 from ..config.settings import settings
 from .remote.cli_ops import CliOps
+from .remote.deployment_ops import DeploymentOps
 from .remote.model_ops import ModelOps
 from .remote.monitor_ops import MonitorOps
 from .remote.power_ops import PowerOps
@@ -29,7 +30,7 @@ def get_remote_executor() -> "RemoteExecutor":
         port=config.ssh_port
     )
 
-class RemoteExecutor(MonitorOps, ProcessOps, PowerOps, CliOps, ModelOps):
+class RemoteExecutor(MonitorOps, ProcessOps, PowerOps, CliOps, ModelOps, DeploymentOps):
 
     def __init__(self, host: str = "", username: str = "", password: str = "", key_path: str = "", port: int = 22):
         self.host = host

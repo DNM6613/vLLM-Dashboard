@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react';
-import { Settings, Key, Save, Loader2, Terminal, Globe, Radio, Power } from 'lucide-react';
+import { Settings, Settings2, Key, Save, Loader2, Terminal, Globe, Radio, Power } from 'lucide-react';
 import type { ServerConfig } from '../../types';
 import { useI18n } from '../../i18n';
 import { Button } from '../ui/Button';
@@ -13,6 +13,7 @@ interface ServerConfigModalProps {
   saving: boolean;
   message: { type: 'success' | 'error'; text: string } | null;
   onClose: () => void;
+  onOpenDeployEnv: () => void;
 }
 
 const CRED_FIELDS = ['ssh_password', 'api_key', 'bmc_password'] as const;
@@ -26,7 +27,7 @@ const CRED_LABEL_KEY: Record<CredField, string> = {
 
 const FIELD_CLASS = 'w-full px-3 py-1.5 bg-bg rounded-lg border border-border text-text focus:border-accent focus:outline-none font-mono text-sm';
 
-export function ServerConfigModal({ config, onConfigChange, onSave, saving, message, onClose }: ServerConfigModalProps) {
+export function ServerConfigModal({ config, onConfigChange, onSave, saving, message, onClose, onOpenDeployEnv }: ServerConfigModalProps) {
   const { t } = useI18n();
   const [sshPortDraft, setSshPortDraft] = useState(String(config.ssh_port));
   const [apiPortDraft, setApiPortDraft] = useState(String(config.port));
@@ -95,6 +96,11 @@ export function ServerConfigModal({ config, onConfigChange, onSave, saving, mess
         icon={<Settings className="w-5 h-5" />}
         maxWidth="max-w-xl"
         onClose={onClose}
+        headerAction={
+          <Button size="sm" onClick={onOpenDeployEnv}>
+            <Settings2 className="w-3.5 h-3.5" /> {t('Environment Deployment')}
+          </Button>
+        }
         footer={
           <>
             <Button onClick={onClose}>{t('Cancel')}</Button>

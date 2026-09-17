@@ -9,11 +9,13 @@ interface ModalProps {
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  /** Optional action rendered on the title row, left of the close button. */
+  headerAction?: ReactNode;
 }
 
 const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
-export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, footer }: ModalProps) {
+export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, footer, headerAction }: ModalProps) {
   const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const onCloseRef = useRef(onClose);
@@ -68,14 +70,17 @@ export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, f
       >
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-medium flex items-center gap-2 text-base">{icon}{title}</h3>
-          <button
-            data-modal-close
-            onClick={onClose}
-            aria-label={t('Close')}
-            className="p-1 rounded-lg hover:bg-bg-hover transition-colors text-text-muted"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {headerAction}
+            <button
+              data-modal-close
+              onClick={onClose}
+              aria-label={t('Close')}
+              className="p-1 rounded-lg hover:bg-bg-hover transition-colors text-text-muted"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
         {children}
         {footer && <div className="flex justify-end mt-4 gap-2">{footer}</div>}

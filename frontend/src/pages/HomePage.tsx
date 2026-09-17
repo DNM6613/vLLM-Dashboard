@@ -5,6 +5,7 @@ import { useTheme } from '../hooks/useTheme';
 import { invalidateHardwareFetch, invalidateSoftwareFetch, useHardwareStore } from '../stores/hardware';
 import { useModelStore, errMsgLocalized } from '../stores/model';
 import { useServerConfig } from '../hooks/useServerConfig';
+import { useTasks } from '../hooks/useTasks';
 import { useHardwareWebSocket } from '../hooks/useHardwareWebSocket';
 import { useModelStatusStore } from '../stores/modelStatus';
 import { useConsoleWebSocket } from '../hooks/useConsoleWebSocket';
@@ -23,9 +24,11 @@ import { ConsolePanel } from '../components/console/ConsolePanel';
 import { ModelList } from '../components/model/ModelList';
 import { ModelStatusCard } from '../components/model/ModelStatusCard';
 import { ServerConfigModal } from '../components/modals/ServerConfigModal';
+import { DeployEnvModal } from '../components/modals/DeployEnvModal';
 import { DownloadModal } from '../components/modals/DownloadModal';
 import { LaunchConfigModal } from '../components/modals/LaunchConfigModal';
 import { BenchmarkModal } from '../components/modals/BenchmarkModal';
+import { TaskCenterDrawer } from '../components/TaskCenterDrawer';
 import { terminalReset } from '../utils/terminalSink';
 import { useSettledFlag } from '../hooks/useSettledFlag';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
@@ -69,6 +72,9 @@ export function HomePage() {
   const { connectConsole, startConsoleForModel, sendConsoleInput, sendConsoleResize } = useConsoleWebSocket();
   const { refreshing, scanMessage, starting, showLaunchConfigModal, setShowLaunchConfigModal, launchConfigModelName, launchConfigModelPath, launchCommand, setLaunchCommand, launchEnvVars, setLaunchEnvVars, savingLaunchConfig, handleRefresh, handleStartModel, handleStopModel, handleOpenLaunchConfig, handleSaveLaunchConfig, handleDeleteModel, deletingId, stoppingId, deleteRequest, confirmDelete, cancelDelete, stopRequest, confirmStop, cancelStop } = useModelManager({ startConsoleForModel, sshConnected, connectConsole });
   const { showDownloadModal, setShowDownloadModal, downloadModelName, setDownloadModelName, downloadModelSavePath, setDownloadModelSavePath, hfMirror, setHfMirror, downloading, downloadProgress, downloadSizeBytes, downloadTotalSizeBytes, downloadStalledSecs, activeDownloadName, cliStatus, checkingCli, installingCli, installMessage, handleInstallCli, handleDownloadModel, handleCancelDownload } = useModelDownload({ defaultSavePath: serverConfig.model_save_path ?? '', onSavePathPersisted: (path: string) => setServerConfig((c) => ({ ...c, model_save_path: path })) });
+
+  const [showDeployEnv, setShowDeployEnv] = useState(false);
+  const tasks = useTasks();
 
   const downloadProgressInfo = downloading
     ? {
@@ -258,8 +264,13 @@ export function HomePage() {
           saving={savingConfig}
           message={configMessage}
           onClose={() => setShowServerConfig(false)}
+          onOpenDeployEnv={() => setShowDeployEnv(true)}
         />
       )}
+
+      {showDeployEnv && <DeployEnvModal onClose={() => setShowDeployEnv(false)} />}
+
+      <TaskCenterDrawer tasks={tasks} />
 
       {showDownloadModal && (
         <DownloadModal
