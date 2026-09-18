@@ -727,27 +727,6 @@ class TestGetVllmEnv(unittest.TestCase):
 
 
 class TestBuildVllmInstallCommands(unittest.TestCase):
-    def _deps(self, **kw) -> list[str]:
-        payload = {"env_mode": "existing", "venv_name": ".vllm",
-                   "version": "latest", "runtime_mode": "builtin"}
-        payload.update(kw)
-        _, _, deps = ds._build_vllm_install_commands(
-            payload, "$HOME/.vllm", {"pypi": ""})
-        return deps
-
-    def test_nccl_follows_effective_torch_family(self):
-        # built-in runtime keeps the default cu12 family even when the CUDA
-        # tab selected a 13.x toolkit
-        deps = self._deps(nccl=True, cuda_version="13.3")
-        self.assertEqual(len(deps), 1)
-        self.assertIn("nvidia-nccl-cu12", deps[0])
-        # system runtime with CUDA 13.x picks the cu13 family (exists on PyPI)
-        deps = self._deps(nccl=True, runtime_mode="system", cuda_version="13.3")
-        self.assertIn("nvidia-nccl-cu13", deps[0])
-        # system runtime with CUDA 12.x (custom field) stays on cu12
-        deps = self._deps(nccl=True, runtime_mode="system", cuda_version="12.9")
-        self.assertIn("nvidia-nccl-cu12", deps[0])
-
     def test_system_torch_index_maps_to_cuda_version(self):
         # torch wheels are published per CUDA toolkit version: cu131/cu133
         # do not exist (S3 AccessDenied) and cu134 ships no torch wheels;
@@ -758,24 +737,21 @@ class TestBuildVllmInstallCommands(unittest.TestCase):
         for ver, want in (("13.0", "whl/cu130"), ("13.2", "whl/cu132"),
                           ("13.1", "whl/cu130"), ("13.3", "whl/cu130"),
                           ("13.4", "whl/cu130"), ("12.9", "whl/cu129")):
-            _, install, _ = ds._build_vllm_install_commands(
+            _, install = ds._build_vllm_install_commands(
                 {**base, "cuda_version": ver}, "$HOME/.vllm", {"pypi": ""})
             self.assertIn(want, install)
         # the 13.x index follows the effective CUDA — skip-install: the
         # toolkit already on the server wins over the selection
-        _, install, _ = ds._build_vllm_install_commands(
+        _, install = ds._build_vllm_install_commands(
             {**base, "cuda_version": "13.0", "effective_cuda": "13.2"},
             "$HOME/.vllm", {"pypi": ""})
         self.assertIn("whl/cu132", install)
         # built-in runtime pins the cu129 index explicitly — the PyPI default
         # torch build is not named after its CUDA version
-        _, install, _ = ds._build_vllm_install_commands(
+        _, install = ds._build_vllm_install_commands(
             {**base, "runtime_mode": "builtin", "cuda_version": "13.3"},
             "$HOME/.vllm", {"pypi": ""})
         self.assertIn(" torch --extra-index-url https://download.pytorch.org/whl/cu129", install)
-
-    def test_no_nccl_no_deps(self):
-        self.assertEqual(self._deps(nccl=False, flashinfer=False), [])
 
 
 class TestProbeInThread(unittest.TestCase):

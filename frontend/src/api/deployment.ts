@@ -144,8 +144,6 @@ export interface VllmApplyPayload {
   venv_name: string;
   python_version: string;
   source_build: boolean;
-  flashinfer: boolean;
-  nccl: boolean;
   auto_register_service: boolean;
   cuda_version?: string;
 }

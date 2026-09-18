@@ -802,8 +802,8 @@ def _run_cuda(ctx: TaskContext, version: str, pkg: str) -> None:
 
 
 def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
-                                 mirrors: dict[str, Any]) -> tuple[str, str, list[str]]:
-    """Return (prepare_cmd, install_cmd, optional_dep_cmds)."""
+                                 mirrors: dict[str, Any]) -> tuple[str, str]:
+    """Return (prepare_cmd, install_cmd)."""
     py_bin = f"{venv_path}/bin/python"
     mirror = (mirrors.get("pypi") or "").strip()
     index_args = f"--index-url {mirror}" if mirror else ""
@@ -861,24 +861,13 @@ def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
             " --extra-index-url https://download.pytorch.org/whl/cu129".replace("  ", " ")
         )
 
-    deps: list[str] = []
-    if payload.get("flashinfer"):
-        deps.append(UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} flashinfer-python")
-    if payload.get("nccl"):
-        # nvidia-nccl follows the effective torch/CUDA family: cu13 only in
-        # system-runtime mode with a CUDA 13.x selection (cu13 exists on
-        # PyPI); the built-in runtime stays on the default cu12 family.
-        use_cu13 = (payload.get("runtime_mode") == "system"
-                    and str(payload.get("cuda_version") or "").startswith("13"))
-        nccl_pkg = "nvidia-nccl-cu13" if use_cu13 else "nvidia-nccl-cu12"
-        deps.append(UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} {nccl_pkg}")
-    return prepare, install, deps
+    return prepare, install
 
 
 def _run_vllm(ctx: TaskContext, payload: dict[str, Any], venv_path: str,
               previous_version: str) -> None:
     mirrors = deployment_state.get()["mirrors"]
-    prepare, install, deps = _build_vllm_install_commands(payload, venv_path, mirrors)
+    prepare, install = _build_vllm_install_commands(payload, venv_path, mirrors)
 
     with ctx.step(0):
         stop = ctx.executor.stop_vllm(force=False)
@@ -891,11 +880,6 @@ def _run_vllm(ctx: TaskContext, payload: dict[str, Any], venv_path: str,
     with ctx.step(2):
         ctx.run_long(install, timeout=7200)
     with ctx.step(3):
-        for dep_cmd in deps:
-            ctx.run_long(dep_cmd, timeout=1800)
-        if not deps:
-            ctx.log("No optional dependencies selected.")
-    with ctx.step(4):
         verify = ctx.exec(
             f"bash -lc 'source {venv_path}/bin/activate 2>/dev/null; "
             f"vllm --version 2>&1 | head -n 3; python -c \"import vllm; print(vllm.__version__)\"'",
@@ -913,8 +897,8 @@ def _run_vllm(ctx: TaskContext, payload: dict[str, Any], venv_path: str,
                                       venv=payload.get("venv_name", ""))
         ctx.log(f"vLLM {version} verified in {venv_path}.")
 
-    if payload.get("auto_register_service") and len(ctx.task.steps) > 5:
-        with ctx.step(5):
+    if payload.get("auto_register_service") and len(ctx.task.steps) > 4:
+        with ctx.step(4):
             sup_script = (
                 "sudo mkdir -p /var/log/vllm; "
                 "sudo tee /etc/supervisor/conf.d/vllm-vdb.conf >/dev/null <<'VDBEOF'\n"
@@ -1079,7 +1063,7 @@ def start_vllm_task(payload: dict[str, Any]) -> Task:
     venv_path = _resolve_venv_path(venv_name)
     title = (f"Install vLLM {version}" if version != "latest" else "Install vLLM (latest)")
     steps = ["Stop vLLM service", "Prepare Python environment", "Install vLLM",
-             "Install optional dependencies", "Verify version"]
+             "Verify version"]
     if payload.get("auto_register_service"):
         steps.append("Write supervisor template")
     task = task_manager.create("vllm", title, steps)

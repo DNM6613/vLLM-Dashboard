@@ -4,8 +4,6 @@ import type { ModelRuntimeStatus } from '../types';
 
 export interface ModelStatusStore {
   model: ModelRuntimeStatus | null;
-  setModel: (status: ModelRuntimeStatus | null) => void;
-  clearModel: () => void;
   fetchModelStatus: () => Promise<void>;
 }
 
@@ -13,13 +11,6 @@ let _msFetchReqId = 0;
 
 export const useModelStatusStore = create<ModelStatusStore>((set) => ({
   model: null,
-
-  setModel: (status) => set({ model: status }),
-
-  clearModel: () => {
-    _msFetchReqId++;
-    set({ model: null });
-  },
 
   fetchModelStatus: async () => {
     const reqId = ++_msFetchReqId;

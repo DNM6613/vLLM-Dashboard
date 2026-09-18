@@ -24,8 +24,6 @@ export function VllmTab({
   const [envMode, setEnvMode] = useState<'new' | 'existing'>('new');
   const [venvName, setVenvName] = useState('');
   const [pyVersion, setPyVersion] = useState('');
-  const [flashinfer, setFlashinfer] = useState(false);
-  const [nccl, setNccl] = useState(false);
   const [autoRegister, setAutoRegister] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [sourceBuild, setSourceBuild] = useState(false);
@@ -84,8 +82,6 @@ export function VllmTab({
       venv_name: effVenv,
       python_version: pyVersion,
       source_build: sourceBuild,
-      flashinfer,
-      nccl,
       auto_register_service: autoRegister,
       cuda_version: cudaVersion,
     });
@@ -215,19 +211,6 @@ export function VllmTab({
             </select>
           </div>
         )}
-      </div>
-
-      {/* optional dependencies */}
-      <div className="space-y-1.5 border border-border rounded-lg p-3">
-        <div className="text-xs font-medium">{t('Optional dependencies')}</div>
-        <label className="flex items-center gap-2 text-xs cursor-pointer">
-          <input type="checkbox" checked={flashinfer} onChange={(e) => setFlashinfer(e.target.checked)} className="accent-sky-400" />
-          FlashInfer
-        </label>
-        <label className="flex items-center gap-2 text-xs cursor-pointer">
-          <input type="checkbox" checked={nccl} onChange={(e) => setNccl(e.target.checked)} className="accent-sky-400" />
-          NCCL ({t('cluster multi-GPU communication')})
-        </label>
       </div>
 
       {/* advanced */}

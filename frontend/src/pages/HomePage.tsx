@@ -153,7 +153,12 @@ export function HomePage() {
   }, [fetchHardwareMetrics]);
 
   useEffect(() => {
-    fetchModelStatus().catch((err) => { console.error('Initial model status error:', err); });
+    // Polled over HTTP rather than the hardware WS: the WS frame cadence
+    // stalls while deployment probes hold the shared SSH connection lock.
+    const poll = () => fetchModelStatus().catch((err) => { console.error('Model status poll error:', err); });
+    void poll();
+    const timer = setInterval(poll, 5000);
+    return () => clearInterval(timer);
   }, [fetchModelStatus]);
 
   return (

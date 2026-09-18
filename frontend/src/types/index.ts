@@ -214,7 +214,6 @@ export interface MetricsPayload {
   cpu: CPUInfo | null;
   memory: MemoryInfo | null;
   disk: DiskInfo | null;
-  model?: ModelRuntimeStatus | null;
   timestamp: number;
   error?: string;
 }
