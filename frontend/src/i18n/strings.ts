@@ -274,8 +274,6 @@ export const ZH: Record<string, string> = {
     '1. 系统级 CUDA Toolkit（推荐 — 最稳妥，覆盖需运行时编译的场景）',
   '2. Built-in CUDA Runtime only (lightweight; some models fail to start without nvcc)':
     '2. 仅内置 CUDA Runtime（轻量；缺少 nvcc 时部分模型无法启动）',
-  'The vLLM runtime is interlocked with the CUDA version: CUDA 13.x requires the system CUDA runtime (cu130); the built-in runtime is the CUDA 12.9 (cu129) wheel — a mismatch fails at model startup.':
-    'vLLM 的 Runtime 与 CUDA 版本互锁：CUDA 13.x 必须使用系统 CUDA Runtime（cu130）；内置 Runtime 为 CUDA 12.9（cu129）轮子包——不匹配会导致模型无法启动。',
   'Currently installed system toolkit: CUDA {version}': '当前系统工具包：CUDA {version}',
   'CUDA version': 'CUDA 版本',
   'Minimum driver': '最低驱动',

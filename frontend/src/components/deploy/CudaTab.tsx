@@ -63,9 +63,6 @@ export function CudaTab({
         <div className="pl-5 text-text-muted">
           {t('2. Built-in CUDA Runtime only (lightweight; some models fail to start without nvcc)')}
         </div>
-        <div className="pl-5 text-warning">
-          {t('The vLLM runtime is interlocked with the CUDA version: CUDA 13.x requires the system CUDA runtime (cu130); the built-in runtime is the CUDA 12.9 (cu129) wheel — a mismatch fails at model startup.')}
-        </div>
       </div>
 
       {info.current_toolkit && (
