@@ -48,23 +48,25 @@ export function TaskCenterDrawer({ tasks }: TaskCenterDrawerProps) {
 
   return (
     <>
-      {/* floating toggle */}
-      <button
-        onClick={() => (drawerOpen ? closeDrawer() : openDrawer())}
-        className="fixed bottom-5 right-5 z-40 flex items-center gap-2 px-3.5 py-2 rounded-full bg-bg-card border border-border shadow-lg text-sm text-text hover:bg-bg-hover transition-colors"
-        aria-label={t('Task center')}
-      >
-        {activeCount > 0 ? (
-          <Loader2 className="w-4 h-4 text-accent animate-spin" />
-        ) : (
-          <span className={`w-2.5 h-2.5 rounded-full ${activeCount > 0 ? 'bg-accent' : 'bg-text-muted'}`} />
-        )}
-        {t('Task center')}
-        {activeCount > 0 && (
-          <span className="ml-1 px-1.5 py-0.5 rounded-full bg-accent text-bg text-[11px] font-semibold">{activeCount}</span>
-        )}
-        {drawerOpen ? <PanelRightClose className="w-3.5 h-3.5" /> : null}
-      </button>
+      {/* floating toggle — hidden while there are no deployment tasks */}
+      {list.length > 0 && (
+        <button
+          onClick={() => (drawerOpen ? closeDrawer() : openDrawer())}
+          className="fixed bottom-5 right-5 z-40 flex items-center gap-2 px-3.5 py-2 rounded-full bg-bg-card border border-border shadow-lg text-sm text-text hover:bg-bg-hover transition-colors"
+          aria-label={t('Task center')}
+        >
+          {activeCount > 0 ? (
+            <Loader2 className="w-4 h-4 text-accent animate-spin" />
+          ) : (
+            <span className={`w-2.5 h-2.5 rounded-full ${activeCount > 0 ? 'bg-accent' : 'bg-text-muted'}`} />
+          )}
+          {t('Task center')}
+          {activeCount > 0 && (
+            <span className="ml-1 px-1.5 py-0.5 rounded-full bg-accent text-bg text-[11px] font-semibold">{activeCount}</span>
+          )}
+          {drawerOpen ? <PanelRightClose className="w-3.5 h-3.5" /> : null}
+        </button>
+      )}
 
       {drawerOpen && (
         <aside className="fixed top-0 right-0 h-full w-full max-w-md z-30 bg-bg-card border-l border-border shadow-2xl flex flex-col">
