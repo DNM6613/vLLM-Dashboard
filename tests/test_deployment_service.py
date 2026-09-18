@@ -219,12 +219,15 @@ class TestValidationHelpers(unittest.TestCase):
         self.assertEqual(ds._suggest_error("something else entirely"), "")
 
     def test_compat_tables(self):
-        # NVIDIA CUDA Toolkit release notes, sub-version compatibility table
-        # (Linux x86_64): the whole 13.x series requires driver >= 580 (no
-        # maximum driver). vLLM's default wheel is built with CUDA 12.9
-        # (min driver 575), so VLLM_MIN_DRIVER stays 575. DRIVER_MIN_CUDA
-        # stays empty: drivers are backward compatible with older toolkits.
-        self.assertEqual(ds.CUDA_MIN_DRIVER, {"13.3": 580, "13.4": 580})
+        # NVIDIA CUDA Toolkit release notes (Linux x86_64): CUDA 12.9 GA
+        # >= 575; the whole 13.x series requires >= 580, no maximum driver.
+        # vLLM's default wheel is built with CUDA 12.9, so VLLM_MIN_DRIVER
+        # stays 575. DRIVER_MIN_CUDA stays empty: drivers are backward
+        # compatible with older toolkits.
+        self.assertEqual(ds.CUDA_MIN_DRIVER, {
+            "12.9": 575, "13.0": 580, "13.1": 580,
+            "13.2": 580, "13.3": 580, "13.4": 580,
+        })
         self.assertEqual(ds.VLLM_MIN_DRIVER, 575)
         self.assertEqual(ds.DRIVER_MIN_CUDA, {})
 
@@ -554,6 +557,18 @@ class TestCudaEndpoint(unittest.TestCase):
         body = self._get_cuda("NO_NVCC\n")
         self.assertEqual(body["current_toolkit"], "")
 
+    def test_offered_versions_and_min_driver(self):
+        body = self._get_cuda("13.0\n")
+        # 12.9–13.4 are all offered: the ubuntu2604 repo only carries
+        # 13.3/13.4, but the 2404-repo toolkits install cleanly on the
+        # 26.04 target (user-verified 2026-09-18: 12.9/13.0).
+        self.assertEqual(body["versions"],
+                         ["12.9", "13.0", "13.1", "13.2", "13.3", "13.4"])
+        self.assertEqual(body["min_driver"], {
+            "12.9": 575, "13.0": 580, "13.1": 580,
+            "13.2": 580, "13.3": 580, "13.4": 580,
+        })
+
 
 class TestPreflightPythonBounds(unittest.TestCase):
     """vLLM 0.29.0 requires_python is >=3.10,<3.15 (PyPI metadata) — the
@@ -716,8 +731,8 @@ class TestBuildVllmInstallCommands(unittest.TestCase):
         # generic fallback listing, so every 13.x selection must use cu130.
         base = {"env_mode": "existing", "venv_name": ".vllm",
                 "version": "latest", "runtime_mode": "system"}
-        for ver, want in (("13.3", "whl/cu130"), ("13.4", "whl/cu130"),
-                          ("12.9", "whl/cu129")):
+        for ver, want in (("13.1", "whl/cu130"), ("13.3", "whl/cu130"),
+                          ("13.4", "whl/cu130"), ("12.9", "whl/cu129")):
             _, install, _ = ds._build_vllm_install_commands(
                 {**base, "cuda_version": ver}, "$HOME/.vllm", {"pypi": ""})
             self.assertIn(want, install)

@@ -47,10 +47,12 @@ LOG_DIR = os.path.join(DATA_DIR, "deployment_logs")
 
 # ---- compatibility rules (spec) -------------------------------------------
 # Minimum driver major per CUDA version — NVIDIA CUDA Toolkit release notes
-# sub-version compatibility table (Linux x86_64): the whole 13.x series
-# requires driver >= 580 (no maximum driver; drivers stay backward
-# compatible with older toolkits).
-CUDA_MIN_DRIVER: dict[str, int] = {"13.3": 580, "13.4": 580}
+# (Linux x86_64): CUDA 12.9 GA >= 575.51.03; the whole 13.x series requires
+# driver >= 580 (13.0 GA >= 580.65.06; the sub-version compatibility table
+# lists no maximum driver — drivers stay backward compatible).
+CUDA_MIN_DRIVER: dict[str, int] = {
+    "12.9": 575, "13.0": 580, "13.1": 580, "13.2": 580, "13.3": 580, "13.4": 580,
+}
 # Minimum driver for vLLM's default install: the PyPI wheel is compiled with
 # CUDA 12.9, whose minimum driver is 575.51.03 (NVIDIA CUDA release notes);
 # vLLM's docs state no independent driver floor of their own.
@@ -692,12 +694,21 @@ def _run_cuda(ctx: TaskContext, version: str, pkg: str) -> None:
     # The repo host geo-redirects (301) to a CDN (nvidia.cn in China), so
     # curl must follow redirects. The former ubuntu.pkgs.nvidia.com host no
     # longer resolves (verified on the AI server 2026-09-18).
+    #
+    # Keyring distro: the ubuntu2604 repo only carries the 13.3/13.4
+    # toolkits (no 12.x, no 13.0–13.2), so on a 26.04 target the ubuntu2404
+    # keyring is used for the rest — verified 2026-09-18: 12.9/13.0 install
+    # cleanly on 26.04 from the ubuntu2404 repo. Other Ubuntu releases use
+    # their own keyring (the ubuntu2404 repo carries 12.9–13.4).
     repo_script = (
+        f"VER={version}; "
         "DISTRO=ubuntu$(. /etc/os-release && echo \"$VERSION_ID\" | tr -d '.'); "
         "ARCH=$(dpkg --print-architecture); [ \"$ARCH\" = amd64 ] && ARCH=x86_64; "
         "[ \"$DISTRO\" != ubuntu ] || { echo 'cannot detect Ubuntu version' >&2; exit 1; }; "
+        "KEYD=$DISTRO; if [ \"$DISTRO\" = ubuntu2604 ]; then "
+        "case \"$VER\" in 13.3|13.4) ;; *) KEYD=ubuntu2404;; esac; fi; "
         "sudo curl -fsSL -o /tmp/cuda-keyring.deb "
-        "https://developer.download.nvidia.com/compute/cuda/repos/$DISTRO/$ARCH/cuda-keyring_1.1-1_all.deb; "
+        "https://developer.download.nvidia.com/compute/cuda/repos/$KEYD/$ARCH/cuda-keyring_1.1-1_all.deb; "
         "sudo dpkg -i /tmp/cuda-keyring.deb && sudo rm -f /tmp/cuda-keyring.deb; "
         "sudo apt-get update -y"
     )
