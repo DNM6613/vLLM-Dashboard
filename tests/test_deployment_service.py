@@ -752,6 +752,13 @@ class TestBuildVllmInstallCommands(unittest.TestCase):
             {**base, "runtime_mode": "builtin", "cuda_version": "13.3"},
             "$HOME/.vllm", {"pypi": ""})
         self.assertIn(" torch --extra-index-url https://download.pytorch.org/whl/cu129", install)
+        # No CUDA version selected: plain vllm install — PyPI's default
+        # torch build applies, no torch index is pinned.
+        for mode in ("system", "builtin"):
+            _, install = ds._build_vllm_install_commands(
+                {**base, "runtime_mode": mode}, "$HOME/.vllm", {"pypi": ""})
+            self.assertIn("uv pip install --python $HOME/.vllm/bin/python vllm", install)
+            self.assertNotIn("torch", install)
 
 
 class TestProbeInThread(unittest.TestCase):

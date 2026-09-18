@@ -824,13 +824,17 @@ def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
     # Every branch below invokes uv, so each carries UV_PATH_PREFIX — a
     # bare `uv` fails in the non-login SSH shell when uv lives in
     # ~/.local/bin (see deployment_ops.UV_PATH_PREFIX).
+    cuda_version = (payload.get("cuda_version") or "").strip()
     if payload.get("source_build"):
         install = (
             UV_PATH_PREFIX + "git clone --depth 1 https://gh-proxy.com/https://github.com/vllm-project/vllm.git /tmp/vllm-src-vdb "
             + f"&& uv pip install {index_args} --python {py_bin} -e /tmp/vllm-src-vdb".replace("  ", " ")
         )
+    elif not cuda_version:
+        # No CUDA version selected: plain vllm install — PyPI's default torch
+        # build applies, no torch index is pinned.
+        install = UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} {spec}".replace("  ", " ")
     elif payload.get("runtime_mode") == "system":
-        cuda_version = (payload.get("cuda_version") or "").strip()
         # Torch wheels ship per CUDA toolkit version. Verified 2026-09-18:
         # CUDA 13 has two channels — cu130 (torch 2.9.0+) and cu132 (torch
         # 2.12.0+); cu131/cu133 do not exist (S3 AccessDenied) and cu134
@@ -838,17 +842,14 @@ def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
         # to cu130 (vLLM's docs standardize on it). 12.x follows the
         # selected version; 13.x follows the effective CUDA (the toolkit the
         # server actually runs), not the selection.
-        if cuda_version:
-            eff = (payload.get("effective_cuda") or "").strip() or cuda_version
-            if eff == "13.2":
-                family = "cu132"
-            elif eff.startswith("13"):
-                family = "cu130"
-            else:
-                family = f"cu{cuda_version.replace('.', '')}"
-            torch_index = f" --extra-index-url https://download.pytorch.org/whl/{family}"
+        eff = (payload.get("effective_cuda") or "").strip() or cuda_version
+        if eff == "13.2":
+            family = "cu132"
+        elif eff.startswith("13"):
+            family = "cu130"
         else:
-            torch_index = ""
+            family = f"cu{cuda_version.replace('.', '')}"
+        torch_index = f" --extra-index-url https://download.pytorch.org/whl/{family}"
         install = (
             UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} {spec} torch{torch_index}".replace("  ", " ")
         )

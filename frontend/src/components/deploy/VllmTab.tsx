@@ -71,7 +71,9 @@ export function VllmTab({
   const boundVer = effFamily === '13' ? effectiveCuda : cudaVersion;
   const previewCmd = sourceBuild
     ? `git clone --depth 1 <vllm repo> /tmp/vllm-src-vdb\nuv pip install${mirrorFlag} --python ~/${effVenv}/bin/python -e /tmp/vllm-src-vdb`
-    : `uv pip install${mirrorFlag} --python ~/${effVenv}/bin/python ${spec} torch --extra-index-url https://download.pytorch.org/whl/${torchIndex}`;
+    : cudaVersion === ''
+      ? `uv pip install${mirrorFlag} --python ~/${effVenv}/bin/python ${spec}`
+      : `uv pip install${mirrorFlag} --python ~/${effVenv}/bin/python ${spec} torch --extra-index-url https://download.pytorch.org/whl/${torchIndex}`;
 
   const handleApply = async () => {
     setActing(true);
@@ -123,19 +125,17 @@ export function VllmTab({
       {/* CUDA runtime — auto-bound to the effective CUDA, not selectable */}
       <div className="space-y-1.5 border border-border rounded-lg p-3">
         <div className="text-xs font-medium">{t('CUDA Runtime binding')}</div>
-        {systemBlocked ? (
+        {cudaVersion === '' ? (
+          <div className={`text-xs ${systemBlocked ? 'text-warning' : ''}`}>{t('No CUDA version selected')}</div>
+        ) : systemBlocked ? (
           <div className="text-xs text-warning">
-            {cudaVersion === ''
-              ? t('No CUDA version selected')
-              : t('Selected CUDA {sel} does not match the effective CUDA {eff} — select a matching version in the CUDA tab.', { sel: cudaVersion, eff: effectiveCuda })}
+            {t('Selected CUDA {sel} does not match the effective CUDA {eff} — select a matching version in the CUDA tab.', { sel: cudaVersion, eff: effectiveCuda })}
           </div>
         ) : (
           <div className="text-xs">
             {runtimeMode === 'system'
               ? t('Auto-bound: system CUDA runtime, {index} torch backend (matches CUDA {ver})', { index: torchIndex, ver: boundVer })
-              : effectiveCuda === ''
-                ? t('Auto-bound: built-in CUDA runtime, {index} torch backend (no system CUDA detected)', { index: torchIndex })
-                : t('Auto-bound: built-in CUDA runtime, {index} torch backend (matches CUDA {ver})', { index: torchIndex, ver: effectiveCuda })}
+              : t('Auto-bound: built-in CUDA runtime, {index} torch backend (matches CUDA {ver})', { index: torchIndex, ver: effectiveCuda })}
           </div>
         )}
         {!systemBlocked && cudaVersion !== '' && effFamily !== '' &&
