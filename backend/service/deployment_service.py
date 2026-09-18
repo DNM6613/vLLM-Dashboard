@@ -831,11 +831,11 @@ def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
         )
     elif payload.get("runtime_mode") == "system":
         cuda_version = (payload.get("cuda_version") or "").strip()
-        # Torch wheels ship per CUDA family (cu129, cu130, ...), not per
-        # toolkit minor version. Verified 2026-09-18: /whl/cu133 is an S3
-        # AccessDenied page and /whl/cu134 serves a generic fallback listing,
-        # so every 13.x selection maps to cu130 — the only real CUDA 13
-        # index (vLLM's docs use cu130 for CUDA 13 as well).
+        # Torch wheels ship per CUDA toolkit version. Verified 2026-09-18:
+        # cu131/cu133 do not exist (S3 AccessDenied) and cu134 ships no
+        # torch wheels; cu132 does (torch 2.12.0+). Every 13.x selection
+        # maps to cu130 anyway: vLLM's docs standardize on it and it
+        # covers the widest torch range (2.9.0+).
         if cuda_version:
             family = "cu130" if cuda_version.startswith("13") else f"cu{cuda_version.replace('.', '')}"
             torch_index = f" --extra-index-url https://download.pytorch.org/whl/{family}"

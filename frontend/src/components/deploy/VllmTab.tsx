@@ -42,7 +42,9 @@ export function VllmTab({
   // when the system install is on (the state it brings the server to); when
   // skipping the install the toolkit already on the server wins (it is what
   // actually runs), with the selection as fallback when no toolkit exists.
-  // torch wheels ship per CUDA family, not per toolkit minor: every 13.x → cu130.
+  // torch wheels ship per CUDA toolkit version: CUDA 13 has cu130 and cu132
+  // (no torch wheels for cu131/cu133/cu134); every 13.x → cu130 (vLLM's docs
+  // standardize on it, widest torch range).
   const effectiveCuda = cudaInstallSystem
     ? (cudaVersion || currentToolkit)
     : (currentToolkit || cudaVersion);

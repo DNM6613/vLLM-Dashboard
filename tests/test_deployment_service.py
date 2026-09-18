@@ -749,9 +749,9 @@ class TestBuildVllmInstallCommands(unittest.TestCase):
         self.assertIn("nvidia-nccl-cu12", deps[0])
 
     def test_system_torch_index_maps_to_cuda_family(self):
-        # torch wheels are published per CUDA family, not per toolkit minor
-        # version: /whl/cu133 is an S3 AccessDenied page and /whl/cu134 is a
-        # generic fallback listing, so every 13.x selection must use cu130.
+        # torch wheels are published per CUDA toolkit version: cu131/cu133
+        # do not exist (S3 AccessDenied) and cu134 ships no torch wheels
+        # (cu132 does), so every 13.x selection uses cu130.
         base = {"env_mode": "existing", "venv_name": ".vllm",
                 "version": "latest", "runtime_mode": "system"}
         for ver, want in (("13.1", "whl/cu130"), ("13.3", "whl/cu130"),
