@@ -50,6 +50,9 @@ export interface CudaInfo {
   selected: string;
   install_system: boolean;
   driver_major: number | null;
+  selected_driver_major: number | null;
+  driver_max_cuda: string;
+  selected_driver_max_cuda: string;
   current_toolkit: string;
   installed_toolkit: string;
 }

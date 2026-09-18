@@ -40,6 +40,8 @@ export function CudaTab({
   const version = customVersion.trim() || pickedVersion;
   const required = version ? info.min_driver[version] : undefined;
   const incompatible = required != null && info.driver_major != null && info.driver_major < required;
+  const selMajor = info.selected_driver_major;
+  const selDiffers = selMajor != null && selMajor !== info.driver_major;
 
   const handleApply = async () => {
     if (!version || incompatible) return;
@@ -62,7 +64,7 @@ export function CudaTab({
           {t('2. Built-in CUDA Runtime only (lightweight; some models fail to start without nvcc)')}
         </div>
         <div className="pl-5 text-warning">
-          {t('Installing CUDA Toolkit here means the system-level toolkit; the vLLM tab can still pick either runtime.')}
+          {t('The vLLM runtime is interlocked with the CUDA version: CUDA 13.x requires the system CUDA runtime (cu130); the built-in runtime is the CUDA 12.9 (cu129) wheel — a mismatch fails at model startup.')}
         </div>
       </div>
 
@@ -85,7 +87,8 @@ export function CudaTab({
           <tbody>
             {info.versions.map((v) => {
               const req = info.min_driver[v];
-              const bad = req != null && info.driver_major != null && info.driver_major < req;
+              const installedBad = req != null && info.driver_major != null && info.driver_major < req;
+              const selectedBad = selDiffers && req != null && selMajor != null && selMajor < req;
               return (
                 <tr
                   key={v}
@@ -105,11 +108,17 @@ export function CudaTab({
                   </td>
                   <td className="px-3 py-2 font-mono">CUDA {v}</td>
                   <td className="px-3 py-2">{t('driver ≥ {ver}', { ver: req ?? '—' })}</td>
-                  <td className="px-3 py-2">
-                    {bad && (
+                  <td className="px-3 py-2 space-y-0.5">
+                    {installedBad && (
                       <span className="flex items-center gap-1 text-danger text-[11px]">
                         <XCircle className="w-3 h-3" />
-                        {t('incompatible with current driver {major}', { major: info.driver_major ?? '—' })}
+                        {t('installed driver {major} does not support', { major: info.driver_major ?? '—' })}
+                      </span>
+                    )}
+                    {selectedBad && (
+                      <span className="flex items-center gap-1 text-warning text-[11px]">
+                        <XCircle className="w-3 h-3" />
+                        {t('selected driver {major} does not support', { major: selMajor ?? '—' })}
                       </span>
                     )}
                   </td>
@@ -118,6 +127,17 @@ export function CudaTab({
             })}
           </tbody>
         </table>
+        {((info.driver_major != null && info.driver_max_cuda) ||
+          (selDiffers && info.selected_driver_max_cuda)) && (
+          <div className="border-t border-border px-3 py-1.5 text-[11px] text-text-muted space-y-0.5">
+            {info.driver_major != null && info.driver_max_cuda && (
+              <div>{t('Installed driver {major} supports up to CUDA {max}', { major: info.driver_major, max: info.driver_max_cuda })}</div>
+            )}
+            {selDiffers && info.selected_driver_max_cuda && (
+              <div>{t('Selected driver {major} supports up to CUDA {max}', { major: selMajor ?? '—', max: info.selected_driver_max_cuda })}</div>
+            )}
+          </div>
+        )}
       </div>
 
       <button
@@ -177,9 +197,9 @@ export function CudaTab({
             className="accent-sky-400"
           />
           <span>
-            {t('Skip system CUDA (vLLM built-in runtime; may fail without nvcc)')}
+            {t('Skip system CUDA (may fail without nvcc)')}
             <span className="block text-text-muted pl-4">
-              {t('Only the version selection is saved; the vLLM tab uses the built-in runtime')}
+              {t('No system CUDA is installed; the vLLM tab interlocks with the toolkit already on the server.')}
             </span>
           </span>
         </label>

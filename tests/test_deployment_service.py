@@ -219,17 +219,58 @@ class TestValidationHelpers(unittest.TestCase):
         self.assertEqual(ds._suggest_error("something else entirely"), "")
 
     def test_compat_tables(self):
-        # NVIDIA CUDA Toolkit release notes (Linux x86_64): CUDA 12.9 GA
-        # >= 575; the whole 13.x series requires >= 580, no maximum driver.
+        # NVIDIA CUDA Toolkit release notes, "Corresponding Driver Versions"
+        # (Linux x86_64, GA rows): 12.9 >= 575, 13.0 >= 580, 13.1 >= 590,
+        # 13.2 >= 595, 13.3 >= 610; 13.4 corresponds to the R615 driver.
         # vLLM's default wheel is built with CUDA 12.9, so VLLM_MIN_DRIVER
         # stays 575. DRIVER_MIN_CUDA stays empty: drivers are backward
         # compatible with older toolkits.
         self.assertEqual(ds.CUDA_MIN_DRIVER, {
-            "12.9": 575, "13.0": 580, "13.1": 580,
-            "13.2": 580, "13.3": 580, "13.4": 580,
+            "12.9": 575, "13.0": 580, "13.1": 590,
+            "13.2": 595, "13.3": 610, "13.4": 615,
         })
         self.assertEqual(ds.VLLM_MIN_DRIVER, 575)
         self.assertEqual(ds.DRIVER_MIN_CUDA, {})
+
+    def test_driver_max_cuda(self):
+        # Highest offered CUDA toolkit a driver can run (595 -> 13.2,
+        # verified 2026-09-18 via nvidia-smi "CUDA Version: 13.2" on 595.91.07).
+        self.assertEqual(ds.driver_max_cuda(595), "13.2")
+        self.assertEqual(ds.driver_max_cuda(610), "13.3")
+        self.assertEqual(ds.driver_max_cuda(615), "13.4")
+        self.assertEqual(ds.driver_max_cuda(580), "13.0")
+        self.assertEqual(ds.driver_max_cuda(590), "13.1")
+        self.assertEqual(ds.driver_max_cuda(575), "12.9")
+        self.assertEqual(ds.driver_max_cuda(570), "")
+        self.assertEqual(ds.driver_max_cuda(None), "")
+        self.assertEqual(ds.driver_max_cuda(620), "13.4")
+
+    def test_driver_pkg_major(self):
+        self.assertEqual(ds._driver_pkg_major("nvidia-driver-610-open"), 610)
+        self.assertEqual(ds._driver_pkg_major("nvidia-driver-595-server-open"), 595)
+        self.assertIsNone(ds._driver_pkg_major(""))
+        self.assertIsNone(ds._driver_pkg_major("nvidia-driver"))
+
+    def test_check_runtime_toolkit_compat(self):
+        ds._check_runtime_toolkit_compat("builtin", "", "12.9")
+        ds._check_runtime_toolkit_compat("builtin", "", "")
+        # user failure case 1: CUDA 12.9 toolkit + cu130 torch backend
+        with self.assertRaises(ds.DeploymentError):
+            ds._check_runtime_toolkit_compat("system", "13.3", "12.9")
+        # user failure case 2: CUDA 13.x toolkit + cu129 built-in wheel
+        with self.assertRaises(ds.DeploymentError):
+            ds._check_runtime_toolkit_compat("builtin", "", "13.0")
+        with self.assertRaises(ds.DeploymentError):
+            ds._check_runtime_toolkit_compat("builtin", "", "13.3")
+        # matching combinations pass
+        ds._check_runtime_toolkit_compat("system", "13.3", "13.3")
+        ds._check_runtime_toolkit_compat("system", "12.9", "12.9")
+        ds._check_runtime_toolkit_compat("builtin", "12.9", "12.9")
+        # no toolkit on the server -> nothing to mismatch
+        ds._check_runtime_toolkit_compat("system", "13.3", "")
+        # selected 12.x against an existing 13.x toolkit
+        with self.assertRaises(ds.DeploymentError):
+            ds._check_runtime_toolkit_compat("system", "12.9", "13.0")
 
 
 class TestDeploymentState(unittest.TestCase):
@@ -565,9 +606,42 @@ class TestCudaEndpoint(unittest.TestCase):
         self.assertEqual(body["versions"],
                          ["12.9", "13.0", "13.1", "13.2", "13.3", "13.4"])
         self.assertEqual(body["min_driver"], {
-            "12.9": 575, "13.0": 580, "13.1": 580,
-            "13.2": 580, "13.3": 580, "13.4": 580,
+            "12.9": 575, "13.0": 580, "13.1": 590,
+            "13.2": 595, "13.3": 610, "13.4": 615,
         })
+        # installed 595 driver tops out at CUDA 13.2; no driver selected yet
+        self.assertEqual(body["driver_max_cuda"], "13.2")
+        self.assertIsNone(body["selected_driver_major"])
+        self.assertEqual(body["selected_driver_max_cuda"], "")
+
+    def test_selected_driver_max_cuda(self):
+        from fastapi.testclient import TestClient
+
+        from backend.main import app
+        executor = MagicMock()
+        executor.get_driver_list.return_value = {
+            "success": True,
+            "current_driver": "595.91.07",
+        }
+        executor.execute.return_value = {
+            "success": True, "stdout": "13.0\n", "stderr": "", "returncode": 0}
+        config = MagicMock()
+        config.host = "10.131.1.7"
+        state = MagicMock()
+        base = ds._default_state()
+        base["selected"]["driver"] = "nvidia-driver-610-open"
+        state.get.return_value = base
+        with patch.object(api_dep, "get_remote_executor", return_value=executor), \
+             patch.object(api_dep, "config_manager") as cm, \
+             patch.object(ds, "deployment_state", state):
+            cm.get_config.return_value = config
+            client = TestClient(app)
+            resp = client.get("/api/v1/deployment/cuda")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["selected_driver_major"], 610)
+        self.assertEqual(body["selected_driver_max_cuda"], "13.3")
+        self.assertEqual(body["driver_max_cuda"], "13.2")
 
 
 class TestPreflightPythonBounds(unittest.TestCase):

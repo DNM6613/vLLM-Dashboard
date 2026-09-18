@@ -50,7 +50,7 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
 
   const TABS: { id: TabId; label: string; locked: boolean }[] = [
     { id: 'driver', label: t('GPU Driver'), locked: false },
-    { id: 'cuda', label: 'CUDA Toolkit', locked: cudaLocked },
+    { id: 'cuda', label: 'CUDA', locked: cudaLocked },
     { id: 'vllm', label: 'vLLM', locked: vllmLocked },
   ];
 
@@ -230,6 +230,7 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
             info={dep.vllm}
             cudaVersion={dep.state?.selected.cuda ?? ''}
             cudaInstallSystem={Boolean(dep.state?.selected.cuda_install_system)}
+            currentToolkit={dep.cuda?.current_toolkit ?? ''}
             pypiMirror={dep.state?.mirrors.pypi ?? ''}
             onApply={dep.handleVllm}
             busy={dep.busy}

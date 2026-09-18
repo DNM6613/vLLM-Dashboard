@@ -46,12 +46,17 @@ TASKS_FILE = os.path.join(DATA_DIR, "deployment_tasks.json")
 LOG_DIR = os.path.join(DATA_DIR, "deployment_logs")
 
 # ---- compatibility rules (spec) -------------------------------------------
-# Minimum driver major per CUDA version — NVIDIA CUDA Toolkit release notes
-# (Linux x86_64): CUDA 12.9 GA >= 575.51.03; the whole 13.x series requires
-# driver >= 580 (13.0 GA >= 580.65.06; the sub-version compatibility table
-# lists no maximum driver — drivers stay backward compatible).
+# Minimum driver major per CUDA toolkit version — NVIDIA CUDA Toolkit release
+# notes, "Corresponding Driver Versions" table (Linux x86_64, GA rows):
+# 12.9 >= 575.51.03, 13.0 >= 580.65.06, 13.1 >= 590.44.01, 13.2 >= 595.45.04,
+# 13.3 >= 610.43.02; CUDA 13.4 corresponds to the R615 driver branch (13.4.1
+# notes). A toolkit runs on any driver at/above its minimum, so a driver's
+# practical CUDA ceiling is the highest version it meets — driver 595 tops
+# out at 13.2 (verified 2026-09-18: nvidia-smi reports "CUDA Version: 13.2"
+# for 595.91.07).
 CUDA_MIN_DRIVER: dict[str, int] = {
-    "12.9": 575, "13.0": 580, "13.1": 580, "13.2": 580, "13.3": 580, "13.4": 580,
+    "12.9": 575, "13.0": 580, "13.1": 590, "13.2": 595,
+    "13.3": 610, "13.4": 615,
 }
 # Minimum driver for vLLM's default install: the PyPI wheel is compiled with
 # CUDA 12.9, whose minimum driver is 575.51.03 (NVIDIA CUDA release notes);
@@ -662,6 +667,63 @@ def check_cuda_compat(driver_major: int | None, cuda_version: str) -> str | None
     return None
 
 
+def _cuda_ver_key(ver: str) -> tuple[int, ...]:
+    try:
+        return tuple(int(p) for p in ver.split("."))
+    except ValueError:
+        return (0,)
+
+
+def driver_max_cuda(driver_major: int | None) -> str:
+    """Highest offered CUDA toolkit this driver can run — the largest
+    version whose minimum driver is <= the driver major. 595 -> 13.2
+    (verified 2026-09-18: nvidia-smi "CUDA Version: 13.2" on 595.91.07)."""
+    if not driver_major:
+        return ""
+    best = ""
+    for ver, need in CUDA_MIN_DRIVER.items():
+        if need <= driver_major and _cuda_ver_key(ver) > _cuda_ver_key(best):
+            best = ver
+    return best
+
+
+def _driver_pkg_major(package: str) -> int | None:
+    m = re.match(r"nvidia-driver-(\d{3,4})", package or "")
+    return int(m.group(1)) if m else None
+
+
+def _check_runtime_toolkit_compat(runtime_mode: str, cuda_selected: str,
+                                  effective_cuda: str) -> None:
+    """Interlock: the vLLM/torch CUDA family must match the effective system
+    CUDA family. Cross-family mixes (a CUDA 12.9 toolkit with the cu130
+    torch backend, or a 13.x toolkit with the cu129 built-in wheel) fail at
+    model startup. builtin = cu129 (CUDA 12.x); system = cu130 for a 13.x
+    selection, cu129 otherwise. When the system install is skipped, the
+    effective toolkit is whatever the server already runs — manual installs
+    included."""
+    torch_family = "13" if (runtime_mode == "system"
+                            and (cuda_selected or "").startswith("13")) else "12"
+    eff = (effective_cuda or "").strip()
+    eff_family = "13" if eff.startswith("13") else ("12" if eff.startswith("12") else "")
+    if eff_family and eff_family != torch_family:
+        if runtime_mode == "builtin":
+            raise DeploymentError(
+                "Built-in runtime is the CUDA 12.9 (cu129) wheel and does not "
+                "match the CUDA 13.x system toolkit — use the system CUDA "
+                "runtime (cu130) in the vLLM tab."
+            )
+        if torch_family == "13":
+            raise DeploymentError(
+                "System CUDA runtime installs the cu130 torch backend and does "
+                "not match the CUDA 12.x system toolkit — use the built-in "
+                "runtime (cu129) in the vLLM tab."
+            )
+        raise DeploymentError(
+            "The selected CUDA 12.x version does not match the CUDA 13.x "
+            "system toolkit — select a CUDA 13.x version in the CUDA tab."
+        )
+
+
 def _run_driver(ctx: TaskContext, package: str, target_major: int | None) -> None:
     with ctx.step(0):
         stop = ctx.executor.stop_vllm(force=False)
@@ -992,6 +1054,16 @@ def start_vllm_task(payload: dict[str, Any]) -> Task:
                "cuda_version": cuda_version}
 
     executor = get_remote_executor()
+    if state["selected"].get("cuda_install_system"):
+        effective_cuda = cuda_version
+    else:
+        # system install skipped: the effective toolkit is whatever the server
+        # already runs (manual installs included)
+        probe = executor.execute(CUDA_VERSION_PROBE, 20)
+        effective_cuda = (probe.get("stdout") or "").strip()
+        if effective_cuda == "NO_NVCC":
+            effective_cuda = ""
+    _check_runtime_toolkit_compat(payload["runtime_mode"], cuda_version, effective_cuda)
     env_info = executor.get_vllm_env()
     previous_version = env_info.get("vllm_version", "") if env_info.get("success") else ""
 

@@ -249,12 +249,17 @@ async def get_cuda():
     toolkit = (result.get("stdout") or "").strip()
     if toolkit == "NO_NVCC":
         toolkit = ""
+    selected_pkg = state["selected"].get("driver", "")
+    selected_major = ds._driver_pkg_major(selected_pkg)
     return {
         "versions": list(_CUDA_VERSIONS),
         "min_driver": ds.CUDA_MIN_DRIVER,
         "selected": state["selected"].get("cuda", ""),
         "install_system": bool(state["selected"].get("cuda_install_system", False)),
         "driver_major": driver_major,
+        "selected_driver_major": selected_major,
+        "driver_max_cuda": ds.driver_max_cuda(driver_major),
+        "selected_driver_max_cuda": ds.driver_max_cuda(selected_major),
         "current_toolkit": toolkit,
         "installed_toolkit": state["snapshots"]["cuda"].get("installed_version", ""),
     }
@@ -459,13 +464,17 @@ async def conflict_cleanup(body: dict[str, Any]):
 
 @router.get("/templates")
 async def get_templates():
+    # CUDA version is capped at the driver's ceiling (595 -> 13.2,
+    # 610 -> 13.3) and the vLLM runtime is the system CUDA runtime: a
+    # 13.x system toolkit interlocks with the cu130 torch backend —
+    # the built-in cu129 wheel does not match it.
     return {"templates": [
         {"id": "A", "name": "Production stable",
-         "driver": "nvidia-driver-595-server-open", "cuda": "13.3",
-         "cuda_install_system": True, "vllm_version": "0.29.0", "vllm_runtime": "builtin"},
+         "driver": "nvidia-driver-595-server-open", "cuda": "13.2",
+         "cuda_install_system": True, "vllm_version": "0.29.0", "vllm_runtime": "system"},
         {"id": "B", "name": "Cutting edge",
-         "driver": "nvidia-driver-610-open", "cuda": "13.4",
-         "cuda_install_system": True, "vllm_version": "latest", "vllm_runtime": "builtin"},
+         "driver": "nvidia-driver-610-open", "cuda": "13.3",
+         "cuda_install_system": True, "vllm_version": "latest", "vllm_runtime": "system"},
     ]}
 
 

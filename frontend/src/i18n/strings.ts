@@ -169,7 +169,6 @@ export const ZH: Record<string, string> = {
 
   // Environment deployment module
   'Environment Deployment': '环境部署',
-  'CUDA Toolkit': 'CUDA 工具包',
   'locked': '已锁定',
   'Loading...': '加载中...',
   'Template {id}: {name}': '模板 {id}：{name}',
@@ -275,13 +274,16 @@ export const ZH: Record<string, string> = {
     '1. 系统级 CUDA Toolkit（推荐 — 最稳妥，覆盖需运行时编译的场景）',
   '2. Built-in CUDA Runtime only (lightweight; some models fail to start without nvcc)':
     '2. 仅内置 CUDA Runtime（轻量；缺少 nvcc 时部分模型无法启动）',
-  'Installing CUDA Toolkit here means the system-level toolkit; the vLLM tab can still pick either runtime.':
-    '此处安装的是系统级 CUDA Toolkit；vLLM Tab 仍可选择任一 Runtime。',
+  'The vLLM runtime is interlocked with the CUDA version: CUDA 13.x requires the system CUDA runtime (cu130); the built-in runtime is the CUDA 12.9 (cu129) wheel — a mismatch fails at model startup.':
+    'vLLM 的 Runtime 与 CUDA 版本互锁：CUDA 13.x 必须使用系统 CUDA Runtime（cu130）；内置 Runtime 为 CUDA 12.9（cu129）轮子包——不匹配会导致模型无法启动。',
   'Currently installed system toolkit: CUDA {version}': '当前系统工具包：CUDA {version}',
   'CUDA version': 'CUDA 版本',
   'Minimum driver': '最低驱动',
   'driver ≥ {ver}': '驱动 ≥ {ver}',
-  'incompatible with current driver {major}': '与当前驱动 {major} 不兼容',
+  'installed driver {major} does not support': '已装驱动 {major} 不支持',
+  'selected driver {major} does not support': '已选驱动 {major} 不支持',
+  'Installed driver {major} supports up to CUDA {max}': '已装驱动 {major} 最高支持 CUDA {max}',
+  'Selected driver {major} supports up to CUDA {max}': '已选驱动 {major} 最高支持 CUDA {max}',
   'Advanced options': '高级选项',
   'Custom CUDA version (for testing)': '自定义 CUDA 版本（测试用）',
   'Current driver {major} cannot use CUDA {ver} — go back to the GPU Driver tab and upgrade the driver first.':
@@ -289,16 +291,15 @@ export const ZH: Record<string, string> = {
   'Install system CUDA Toolkit (recommended — most robust)': '安装系统 CUDA Toolkit（推荐 — 最稳妥）',
   'apt install from the NVIDIA repo + PATH / LD_LIBRARY_PATH environment (persisted)':
     '从 NVIDIA 源 apt 安装 + PATH / LD_LIBRARY_PATH 环境（持久化）',
-  'Skip system CUDA (vLLM built-in runtime; may fail without nvcc)':
-    '跳过系统 CUDA（vLLM 内置 Runtime；缺少 nvcc 时可能失败）',
-  'Only the version selection is saved; the vLLM tab uses the built-in runtime':
-    '仅保存版本选择；vLLM Tab 将使用内置 Runtime',
+  'Skip system CUDA (may fail without nvcc)': '跳过系统 CUDA（缺少 nvcc 时部分模型可能启动失败）',
+  'No system CUDA is installed; the vLLM tab interlocks with the toolkit already on the server.':
+    '不安装系统 CUDA；vLLM Tab 与服务器上已有的 CUDA Toolkit 互锁。',
   'Selected: CUDA {ver}': '已选择：CUDA {ver}',
   'Install CUDA Toolkit': '安装 CUDA Toolkit',
   'Confirm selection': '确认选择',
 
-  'Locked: select a CUDA version in the CUDA Toolkit tab first.':
-    '已锁定：请先在 CUDA Toolkit Tab 选择 CUDA 版本。',
+  'Locked: select a CUDA version in the CUDA tab first.':
+    '已锁定：请先在 CUDA Tab 选择 CUDA 版本。',
   'Currently installed: vLLM {version}': '当前已安装：vLLM {version}',
   'Latest stable (PyPI)': '最新稳定版（PyPI）',
   'Pinned version': '指定版本',
@@ -309,8 +310,16 @@ export const ZH: Record<string, string> = {
   'Use the local system CUDA Runtime': '使用本机系统 CUDA Runtime',
   'Installs the matching CUDA {ver} torch backend alongside vLLM.':
     '随 vLLM 一并安装匹配 CUDA {ver} 的 torch 后端。',
-  'Not selectable — install the system CUDA Toolkit in the CUDA tab first.':
-    '不可选 — 请先在 CUDA Tab 安装系统 CUDA Toolkit。',
+  'Not selectable — select a CUDA version in the CUDA tab first.':
+    '不可选 — 请先在 CUDA Tab 选择 CUDA 版本。',
+  'System CUDA is CUDA {ver} — the built-in runtime is the CUDA 12.9 (cu129) wheel and would not match it; use the system CUDA runtime (cu130).':
+    '系统 CUDA 为 CUDA {ver} — 内置 Runtime 是 CUDA 12.9（cu129）轮子包，与其不匹配；请使用系统 CUDA Runtime（cu130）。',
+  'System CUDA is CUDA {cur} — the cu130 torch backend does not match it; use the built-in runtime (cu129).':
+    '系统 CUDA 为 CUDA {cur} — cu130 的 torch 后端与其不匹配；请使用内置 Runtime（cu129）。',
+  'System CUDA is CUDA {cur} — the cu129 torch backend does not match it; select a CUDA 13.x version in the CUDA tab.':
+    '系统 CUDA 为 CUDA {cur} — cu129 的 torch 后端与其不匹配；请在 CUDA Tab 选择 CUDA 13.x 版本。',
+  'System CUDA is CUDA {cur} (13.x) — select a matching CUDA 13.x version in the CUDA tab to unlock the system CUDA runtime (cu130).':
+    '系统 CUDA 为 CUDA {cur}（13.x）— 请在 CUDA Tab 选择匹配的 CUDA 13.x 版本以解锁系统 CUDA Runtime（cu130）。',
   'Python environment': 'Python 环境',
   'Python interpreter (uv managed)': 'Python 解释器（uv 管理）',
   'System default': '系统默认',
@@ -362,7 +371,7 @@ export const ZH: Record<string, string> = {
   'Risk 1: driver change requires reboot': '风险 1：更换驱动必须重启服务器才能生效',
   'Risk 2: version mismatch': '风险 2：驱动 / CUDA / vLLM 版本必须匹配，不匹配会导致启动失败',
   'Risk 3: open kernel driver': '风险 3：open kernel 驱动需要较新的内核；Blackwell GPU 仅支持 open 内核模块',
-  'Risk 4: CUDA 13.x': '风险 4：CUDA 13.x 需要驱动 ≥ 580；vLLM 官方提供 CUDA 13（cu130）二进制，默认 cu129',
+  'Risk 4: CUDA 13.x': '风险 4：CUDA 13.x 最低驱动随次版本递增（13.0 ≥ 580 … 13.4 ≥ 615）；vLLM 官方提供 CUDA 13（cu130）二进制，默认 cu129',
   'Risk 5: driver purge': '风险 5：应用驱动前会 --purge 全部 nvidia-* 包，不可部分回退',
 };
 
