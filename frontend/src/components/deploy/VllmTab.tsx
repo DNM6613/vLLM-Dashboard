@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { VllmApplyPayload, VllmInfo } from '../../api/deployment';
 import { useI18n } from '../../i18n';
@@ -21,7 +21,6 @@ export function VllmTab({
 }: VllmTabProps) {
   const { t } = useI18n();
   const [version, setVersion] = useState('latest');
-  const [runtime, setRuntime] = useState<'builtin' | 'system'>('builtin');
   const [envMode, setEnvMode] = useState<'new' | 'existing'>('new');
   const [venvName, setVenvName] = useState('');
   const [pyVersion, setPyVersion] = useState('');
@@ -32,15 +31,6 @@ export function VllmTab({
   const [sourceBuild, setSourceBuild] = useState(false);
   const [acting, setActing] = useState(false);
 
-  // Resync the runtime radio from persisted state (initial load / post-apply) —
-  // mirrors the driver/CUDA sync effects in DeployEnvModal.
-  const persistedRuntime = info?.selected.runtime;
-  useEffect(() => {
-    if (persistedRuntime === 'builtin' || persistedRuntime === 'system') {
-      setRuntime(persistedRuntime);
-    }
-  }, [persistedRuntime]);
-
   if (!info) {
     return <div className="text-xs text-text-muted py-6 text-center">{t('Loading...')}</div>;
   }
@@ -48,24 +38,23 @@ export function VllmTab({
   const effVenv = venvName.trim() || info.venv_name || '.vllm';
   const spec = version.trim() && version.trim() !== 'latest' ? `vllm==${version.trim()}` : 'vllm';
   const mirrorFlag = pypiMirror ? ` --index-url ${pypiMirror}` : '';
-  // Interlock: the torch CUDA family must match the effective system CUDA —
-  // the selected version when the system install is on, the toolkit already
-  // on the server otherwise (manual installs included). builtin = cu129;
-  // system = cu130 for a 13.x selection.
+  // The torch backend auto-binds to the effective system CUDA — the selected
+  // version when the system install is on, the toolkit already on the server
+  // otherwise. torch wheels ship per CUDA family, not per toolkit minor:
+  // every 13.x → cu130.
   const effectiveCuda = cudaInstallSystem ? cudaVersion : currentToolkit;
-  const effFamily = effectiveCuda.startsWith('13') ? '13'
-    : effectiveCuda.startsWith('12') ? '12' : '';
-  const builtinDisabled = effFamily === '13';
-  const sysTorchFamily = cudaVersion.startsWith('13') ? '13' : '12';
-  const systemDisabled = !cudaVersion || (effFamily !== '' && effFamily !== sysTorchFamily);
-  const bothBlocked = builtinDisabled && systemDisabled;
-  // torch wheels ship per CUDA family, not per toolkit minor: every 13.x → cu130
-  const torchIndex = (cudaVersion || effectiveCuda || '13.3').startsWith('13')
-    ? 'cu130'
-    : `cu${(cudaVersion || effectiveCuda || '13.3').replace('.', '')}`;
+  const isCuda13 = effectiveCuda.startsWith('13');
+  const isCuda12 = effectiveCuda.startsWith('12');
+  // 13.x forces the system runtime (cu130); 12.x uses it when a version is
+  // selected, else the built-in cu129 wheel (same family).
+  const runtimeMode: 'builtin' | 'system' =
+    isCuda13 || (isCuda12 && cudaVersion !== '') ? 'system' : 'builtin';
+  const torchIndex = isCuda13 ? 'cu130' : isCuda12 ? `cu${effectiveCuda.replace('.', '')}` : '';
+  // the system runtime needs an explicitly selected CUDA version (backend check)
+  const systemBlocked = runtimeMode === 'system' && !cudaVersion;
   const previewCmd = sourceBuild
     ? `git clone --depth 1 <vllm repo> /tmp/vllm-src-vdb\nuv pip install${mirrorFlag} --python ~/${effVenv}/bin/python -e /tmp/vllm-src-vdb`
-    : runtime === 'system'
+    : runtimeMode === 'system'
       ? `uv pip install${mirrorFlag} --python ~/${effVenv}/bin/python ${spec} torch --extra-index-url https://download.pytorch.org/whl/${torchIndex}`
       : `uv pip install${mirrorFlag} --python ~/${effVenv}/bin/python ${spec}`;
 
@@ -73,7 +62,7 @@ export function VllmTab({
     setActing(true);
     await onApply({
       version: version.trim() || 'latest',
-      runtime_mode: runtime,
+      runtime_mode: runtimeMode,
       env_mode: envMode,
       venv_name: effVenv,
       python_version: pyVersion,
@@ -118,55 +107,18 @@ export function VllmTab({
         </label>
       </div>
 
-      {/* CUDA runtime binding */}
+      {/* CUDA runtime — auto-bound to the effective CUDA, not selectable */}
       <div className="space-y-1.5 border border-border rounded-lg p-3">
         <div className="text-xs font-medium">{t('CUDA Runtime binding')}</div>
-        <label className={`flex items-start gap-2 text-xs ${builtinDisabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
-          <input
-            type="radio"
-            name="vllm-runtime"
-            checked={runtime === 'builtin'}
-            onChange={() => setRuntime('builtin')}
-            disabled={builtinDisabled}
-            className="accent-sky-400 mt-0.5"
-          />
-          <span>
-            {!builtinDisabled && (
-              <><span className="text-success">{t('Recommended')}</span> · </>
-            )}
-            {t('vLLM built-in CUDA Runtime')}
-            <span className="block text-text-muted pl-4">
-              {builtinDisabled
-                ? t('System CUDA is CUDA {ver} — the built-in runtime is the CUDA 12.9 (cu129) wheel and would not match it; use the system CUDA runtime (cu130).', { ver: effectiveCuda })
-                : t('No dependency on the system CUDA Toolkit — isolation stays clean even without a system CUDA install.')}
-            </span>
-          </span>
-        </label>
-        <label className={`flex items-start gap-2 text-xs ${systemDisabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
-          <input
-            type="radio"
-            name="vllm-runtime"
-            checked={runtime === 'system'}
-            onChange={() => setRuntime('system')}
-            disabled={systemDisabled}
-            className="accent-sky-400 mt-0.5"
-          />
-          <span>
-            {t('Use the local system CUDA Runtime')}
-            <span className="block text-text-muted pl-4">
-              {systemDisabled
-                ? (!cudaVersion
-                  ? t('Not selectable — select a CUDA version in the CUDA tab first.')
-                  : sysTorchFamily === '13'
-                    ? t('System CUDA is CUDA {cur} — the cu130 torch backend does not match it; use the built-in runtime (cu129).', { cur: effectiveCuda })
-                    : t('System CUDA is CUDA {cur} — the cu129 torch backend does not match it; select a CUDA 13.x version in the CUDA tab.', { cur: effectiveCuda }))
-                : t('Installs the matching CUDA {ver} torch backend alongside vLLM.', { ver: torchIndex })}
-            </span>
-          </span>
-        </label>
-        {bothBlocked && (
-          <div className="text-xs text-warning pl-1">
-            {t('System CUDA is CUDA {cur} (13.x) — select a matching CUDA 13.x version in the CUDA tab to unlock the system CUDA runtime (cu130).', { cur: effectiveCuda })}
+        {systemBlocked ? (
+          <div className="text-xs text-warning">
+            {t('No CUDA version selected — the system CUDA runtime (cu130) requires one; select a CUDA 13.x version in the CUDA tab first.')}
+          </div>
+        ) : (
+          <div className="text-xs">
+            {runtimeMode === 'system'
+              ? t('Auto-bound: system CUDA runtime, {index} torch backend (matches CUDA {ver})', { index: torchIndex, ver: effectiveCuda })
+              : t('Auto-bound: vLLM built-in CUDA runtime (CUDA 12.9, cu129)')}
           </div>
         )}
         <pre className="text-[11px] font-mono bg-bg rounded-lg border border-border p-2 overflow-x-auto whitespace-pre-wrap break-all text-text-muted">
@@ -205,30 +157,36 @@ export function VllmTab({
             {t('Existing virtualenv')}
           </label>
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-text-muted shrink-0" htmlFor="vllm-venv">
-            {t('Venv name')}
-          </label>
-          <input
-            id="vllm-venv"
-            type="text"
-            value={venvName}
-            onChange={(e) => setVenvName(e.target.value)}
-            placeholder={info.venv_name || '.vllm'}
-            className={FIELD_CLASS}
-          />
-          {info.venvs.length > 0 && (
+        {envMode === 'new' ? (
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-text-muted shrink-0" htmlFor="vllm-venv">
+              {t('Venv name')}
+            </label>
+            <input
+              id="vllm-venv"
+              type="text"
+              value={venvName}
+              onChange={(e) => setVenvName(e.target.value)}
+              placeholder={info.venv_name || '.vllm'}
+              className={FIELD_CLASS}
+            />
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-text-muted shrink-0" htmlFor="vllm-venv-pick">
+              {t('Existing virtualenv')}
+            </label>
             <select
-              value=""
-              onChange={(e) => { if (e.target.value) { setEnvMode('existing'); setVenvName(e.target.value); } }}
-              className={`${FIELD_CLASS} !font-sans max-w-48`}
-              aria-label={t('Existing virtualenvs')}
+              id="vllm-venv-pick"
+              value={info.venvs.includes(venvName) ? venvName : ''}
+              onChange={(e) => setVenvName(e.target.value)}
+              className={`${FIELD_CLASS} !font-sans`}
             >
-              <option value="">{t('…or pick existing')}</option>
+              <option value="">{t('Select…')}</option>
               {info.venvs.map((v) => <option key={v} value={v}>{v.replace(/^\/[^/]*\//, '~/')}</option>)}
             </select>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* optional dependencies */}
@@ -273,7 +231,7 @@ export function VllmTab({
         <Button
           variant="primary"
           onClick={handleApply}
-          disabled={busy || acting || (version !== 'latest' && !/^\d+\.\d+\.\d+$/.test(version.trim())) || (envMode === 'new' && pyVersion !== '' && !/^\d+\.\d{1,2}$/.test(pyVersion))}
+          disabled={busy || acting || systemBlocked || (version !== 'latest' && !/^\d+\.\d+\.\d+$/.test(version.trim())) || (envMode === 'new' && pyVersion !== '' && !/^\d+\.\d{1,2}$/.test(pyVersion))}
         >
           {t('Install vLLM')}
         </Button>

@@ -290,30 +290,19 @@ export const ZH: Record<string, string> = {
   'Latest stable (PyPI)': '最新稳定版（PyPI）',
   'Pinned version': '指定版本',
   'CUDA Runtime binding': 'CUDA Runtime 绑定',
-  'vLLM built-in CUDA Runtime': 'vLLM 内置 CUDA Runtime',
-  'No dependency on the system CUDA Toolkit — isolation stays clean even without a system CUDA install.':
-    '不依赖系统 CUDA Toolkit — 即使不装系统 CUDA 也能保持环境隔离干净。',
-  'Use the local system CUDA Runtime': '使用本机系统 CUDA Runtime',
-  'Installs the matching CUDA {ver} torch backend alongside vLLM.':
-    '随 vLLM 一并安装匹配 CUDA {ver} 的 torch 后端。',
-  'Not selectable — select a CUDA version in the CUDA tab first.':
-    '不可选 — 请先在 CUDA Tab 选择 CUDA 版本。',
-  'System CUDA is CUDA {ver} — the built-in runtime is the CUDA 12.9 (cu129) wheel and would not match it; use the system CUDA runtime (cu130).':
-    '系统 CUDA 为 CUDA {ver} — 内置 Runtime 是 CUDA 12.9（cu129）轮子包，与其不匹配；请使用系统 CUDA Runtime（cu130）。',
-  'System CUDA is CUDA {cur} — the cu130 torch backend does not match it; use the built-in runtime (cu129).':
-    '系统 CUDA 为 CUDA {cur} — cu130 的 torch 后端与其不匹配；请使用内置 Runtime（cu129）。',
-  'System CUDA is CUDA {cur} — the cu129 torch backend does not match it; select a CUDA 13.x version in the CUDA tab.':
-    '系统 CUDA 为 CUDA {cur} — cu129 的 torch 后端与其不匹配；请在 CUDA Tab 选择 CUDA 13.x 版本。',
-  'System CUDA is CUDA {cur} (13.x) — select a matching CUDA 13.x version in the CUDA tab to unlock the system CUDA runtime (cu130).':
-    '系统 CUDA 为 CUDA {cur}（13.x）— 请在 CUDA Tab 选择匹配的 CUDA 13.x 版本以解锁系统 CUDA Runtime（cu130）。',
+  'Auto-bound: system CUDA runtime, {index} torch backend (matches CUDA {ver})':
+    '自动绑定：系统 CUDA Runtime，{index} torch 后端（匹配 CUDA {ver}）',
+  'Auto-bound: vLLM built-in CUDA runtime (CUDA 12.9, cu129)':
+    '自动绑定：vLLM 内置 CUDA Runtime（CUDA 12.9，cu129）',
+  'No CUDA version selected — the system CUDA runtime (cu130) requires one; select a CUDA 13.x version in the CUDA tab first.':
+    '未选择 CUDA 版本 — 系统 CUDA Runtime（cu130）需要先在 CUDA Tab 选择 CUDA 13.x 版本。',
   'Python environment': 'Python 环境',
   'Python interpreter (uv managed)': 'Python 解释器（uv 管理）',
   'System default': '系统默认',
   'New virtualenv': '新建虚拟环境',
   'Existing virtualenv': '已有虚拟环境',
   'Venv name': '虚拟环境名',
-  '…or pick existing': '…或选择已有',
-  'Existing virtualenvs': '已有虚拟环境',
+  'Select…': '选择…',
   'Optional dependencies': '可选依赖',
   'cluster multi-GPU communication': '集群多卡通信',
   'Local source build (development)': '本地源码编译（开发用）',
