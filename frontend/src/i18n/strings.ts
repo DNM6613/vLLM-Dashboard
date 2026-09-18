@@ -300,8 +300,8 @@ export const ZH: Record<string, string> = {
     '已选 CUDA {sel} 与生效 CUDA {eff} 不匹配 — 请在 CUDA Tab 选择匹配的版本。',
   'Selected CUDA {sel} conflicts with the system CUDA {cur} — the binding follows the system toolkit.':
     '已选 CUDA {sel} 与系统 CUDA {cur} 冲突 — 绑定跟随系统工具包。',
-  'No CUDA version selected — the system CUDA runtime (cu130) requires one; select a CUDA 13.x version in the CUDA tab first.':
-    '未选择 CUDA 版本 — 系统 CUDA Runtime（cu130）需要先在 CUDA Tab 选择 CUDA 13.x 版本。',
+  'No CUDA version selected — the system CUDA runtime ({index}) requires one; select a CUDA 13.x version in the CUDA tab first.':
+    '未选择 CUDA 版本 — 系统 CUDA Runtime（{index}）需要先在 CUDA Tab 选择 CUDA 13.x 版本。',
   'Python environment': 'Python 环境',
   'Python interpreter (uv managed)': 'Python 解释器（uv 管理）',
   'System default': '系统默认',
@@ -352,7 +352,7 @@ export const ZH: Record<string, string> = {
   'Risk 1: driver change requires reboot': '风险 1：更换驱动必须重启服务器才能生效',
   'Risk 2: version mismatch': '风险 2：驱动 / CUDA / vLLM 版本必须匹配，不匹配会导致启动失败',
   'Risk 3: open kernel driver': '风险 3：open kernel 驱动需要较新的内核；Blackwell GPU 仅支持 open 内核模块',
-  'Risk 4: CUDA 13.x': '风险 4：CUDA 13.x 最低驱动随次版本递增（13.0 ≥ 580 … 13.4 ≥ 615）；vLLM 官方提供 CUDA 13（cu130）二进制，默认 cu129',
+  'Risk 4: CUDA 13.x': '风险 4：CUDA 13.x 最低驱动随次版本递增（13.0 ≥ 580 … 13.4 ≥ 615）；vLLM 官方提供 CUDA 13（cu130/cu132）二进制，默认 cu129',
   'Risk 5: driver purge': '风险 5：应用驱动前会 --purge 全部 nvidia-* 包，不可部分回退',
 };
 

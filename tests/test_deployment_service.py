@@ -549,11 +549,11 @@ class TestCudaEndpoint(unittest.TestCase):
 
     def test_offered_versions_and_min_driver(self):
         body = self._get_cuda("13.0\n")
-        # 12.9–13.4 are all offered: the ubuntu2604 repo only carries
-        # 13.3/13.4, but the 2404-repo toolkits install cleanly on the
-        # 26.04 target (user-verified 2026-09-18: 12.9/13.0).
-        self.assertEqual(body["versions"],
-                         ["12.9", "13.0", "13.1", "13.2", "13.3", "13.4"])
+        # Only toolkits with a torch wheel channel on the official index are
+        # offered (verified 2026-09-18: no cu131/cu133 channels, no torch
+        # wheels under cu134); the 2404-repo toolkits install cleanly on the
+        # 26.04 target (user-verified: 12.9/13.0).
+        self.assertEqual(body["versions"], ["12.9", "13.0", "13.2"])
         self.assertEqual(body["min_driver"], {
             "12.9": 575, "13.0": 580, "13.1": 590,
             "13.2": 595, "13.3": 610, "13.4": 615,
@@ -748,17 +748,25 @@ class TestBuildVllmInstallCommands(unittest.TestCase):
         deps = self._deps(nccl=True, runtime_mode="system", cuda_version="12.9")
         self.assertIn("nvidia-nccl-cu12", deps[0])
 
-    def test_system_torch_index_maps_to_cuda_family(self):
+    def test_system_torch_index_maps_to_cuda_version(self):
         # torch wheels are published per CUDA toolkit version: cu131/cu133
-        # do not exist (S3 AccessDenied) and cu134 ships no torch wheels
-        # (cu132 does), so every 13.x selection uses cu130.
+        # do not exist (S3 AccessDenied) and cu134 ships no torch wheels;
+        # 13.2 binds cu132, the other 13.x fall back to cu130, 12.x follows
+        # the selected version.
         base = {"env_mode": "existing", "venv_name": ".vllm",
                 "version": "latest", "runtime_mode": "system"}
-        for ver, want in (("13.1", "whl/cu130"), ("13.3", "whl/cu130"),
+        for ver, want in (("13.0", "whl/cu130"), ("13.2", "whl/cu132"),
+                          ("13.1", "whl/cu130"), ("13.3", "whl/cu130"),
                           ("13.4", "whl/cu130"), ("12.9", "whl/cu129")):
             _, install, _ = ds._build_vllm_install_commands(
                 {**base, "cuda_version": ver}, "$HOME/.vllm", {"pypi": ""})
             self.assertIn(want, install)
+        # the 13.x index follows the effective CUDA — skip-install: the
+        # toolkit already on the server wins over the selection
+        _, install, _ = ds._build_vllm_install_commands(
+            {**base, "cuda_version": "13.0", "effective_cuda": "13.2"},
+            "$HOME/.vllm", {"pypi": ""})
+        self.assertIn("whl/cu132", install)
         # built-in runtime pins the cu129 index explicitly — the PyPI default
         # torch build is not named after its CUDA version
         _, install, _ = ds._build_vllm_install_commands(

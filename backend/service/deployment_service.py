@@ -694,10 +694,10 @@ def _driver_pkg_major(package: str) -> int | None:
 def _check_runtime_toolkit_compat(runtime_mode: str, cuda_selected: str,
                                   effective_cuda: str) -> None:
     """Interlock: the vLLM/torch CUDA family must match the effective system
-    CUDA family. Cross-family mixes (a CUDA 12.9 toolkit with the cu130
+    CUDA family. Cross-family mixes (a CUDA 12.9 toolkit with a CUDA 13
     torch backend, or a 13.x toolkit with the cu129 built-in wheel) fail at
-    model startup. builtin = cu129 (CUDA 12.x); system = cu130 for a 13.x
-    selection, cu129 otherwise. When the system install is skipped, the
+    model startup. builtin = cu129 (CUDA 12.x); system = cu130/cu132 for a
+    13.x selection, cu129 otherwise. When the system install is skipped, the
     effective toolkit is whatever the server already runs — manual installs
     included."""
     torch_family = "13" if (runtime_mode == "system"
@@ -709,13 +709,13 @@ def _check_runtime_toolkit_compat(runtime_mode: str, cuda_selected: str,
             raise DeploymentError(
                 "Built-in runtime is the CUDA 12.9 (cu129) wheel and does not "
                 "match the CUDA 13.x system toolkit — use the system CUDA "
-                "runtime (cu130) in the vLLM tab."
+                "runtime (cu130/cu132) in the vLLM tab."
             )
         if torch_family == "13":
             raise DeploymentError(
-                "System CUDA runtime installs the cu130 torch backend and does "
-                "not match the CUDA 12.x system toolkit — use the built-in "
-                "runtime (cu129) in the vLLM tab."
+                "System CUDA runtime installs a CUDA 13 torch backend "
+                "(cu130/cu132) and does not match the CUDA 12.x system "
+                "toolkit — use the built-in runtime (cu129) in the vLLM tab."
             )
         raise DeploymentError(
             "The selected CUDA 12.x version does not match the CUDA 13.x "
@@ -832,12 +832,20 @@ def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
     elif payload.get("runtime_mode") == "system":
         cuda_version = (payload.get("cuda_version") or "").strip()
         # Torch wheels ship per CUDA toolkit version. Verified 2026-09-18:
-        # cu131/cu133 do not exist (S3 AccessDenied) and cu134 ships no
-        # torch wheels; cu132 does (torch 2.12.0+). Every 13.x selection
-        # maps to cu130 anyway: vLLM's docs standardize on it and it
-        # covers the widest torch range (2.9.0+).
+        # CUDA 13 has two channels — cu130 (torch 2.9.0+) and cu132 (torch
+        # 2.12.0+); cu131/cu133 do not exist (S3 AccessDenied) and cu134
+        # ships no torch wheels. 13.2 binds cu132; the other 13.x fall back
+        # to cu130 (vLLM's docs standardize on it). 12.x follows the
+        # selected version; 13.x follows the effective CUDA (the toolkit the
+        # server actually runs), not the selection.
         if cuda_version:
-            family = "cu130" if cuda_version.startswith("13") else f"cu{cuda_version.replace('.', '')}"
+            eff = (payload.get("effective_cuda") or "").strip() or cuda_version
+            if eff == "13.2":
+                family = "cu132"
+            elif eff.startswith("13"):
+                family = "cu130"
+            else:
+                family = f"cu{cuda_version.replace('.', '')}"
             torch_index = f" --extra-index-url https://download.pytorch.org/whl/{family}"
         else:
             torch_index = ""
@@ -1061,6 +1069,7 @@ def start_vllm_task(payload: dict[str, Any]) -> Task:
         effective_cuda = (probe.get("stdout") or "").strip()
         if effective_cuda == "NO_NVCC":
             effective_cuda = ""
+    payload["effective_cuda"] = effective_cuda
     _check_runtime_toolkit_compat(payload["runtime_mode"], cuda_version, effective_cuda)
     env_info = executor.get_vllm_env()
     previous_version = env_info.get("vllm_version", "") if env_info.get("success") else ""

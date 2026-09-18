@@ -26,12 +26,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/deployment", tags=["deployment"])
 
-# Offered toolkits, 12.9–13.4. On the Ubuntu 26.04 target the ubuntu2604
-# repo only carries 13.3/13.4 (verified 2026-09-18 by listing
-# ubuntu2604/x86_64 Packages); the ubuntu2404 repo carries 12.9–13.4 and its
-# toolkits install cleanly on 26.04 (user-verified 2026-09-18: 12.9/13.0).
-# The per-version keyring switch lives in deployment_service._run_cuda.
-_CUDA_VERSIONS = ["12.9", "13.0", "13.1", "13.2", "13.3", "13.4"]
+# Toolkits offered in the CUDA tab. Verified 2026-09-18: on the Ubuntu 26.04
+# target the ubuntu2604 repo only carries 13.3/13.4, the ubuntu2404 repo
+# carries 12.9–13.4 and its toolkits install cleanly on 26.04 (user-verified:
+# 12.9/13.0); the per-version keyring switch lives in
+# deployment_service._run_cuda. Only versions with a torch wheel channel on
+# download.pytorch.org are offered — no cu131/cu133 channels exist and cu134
+# ships no torch wheels (13.1/13.3/13.4 remain reachable via the custom
+# field, which binds the cu130 torch index).
+_CUDA_VERSIONS = ["12.9", "13.0", "13.2"]
 
 
 def _error_to_http(e: DeploymentError) -> HTTPException:
