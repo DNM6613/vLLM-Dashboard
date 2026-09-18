@@ -7,7 +7,6 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { useDeployment } from '../../hooks/useDeployment';
 import { PreflightCard } from '../deploy/PreflightCard';
-import { RiskPanel } from '../deploy/RiskPanel';
 import { MirrorPanel } from '../deploy/MirrorPanel';
 import { DriverTab } from '../deploy/DriverTab';
 import { CudaTab } from '../deploy/CudaTab';
@@ -51,7 +50,7 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
   const snapshot = dep.state?.snapshots;
 
   return (
-    <Modal title={t('Environment Deployment')} icon={<Rocket className="w-5 h-5" />} maxWidth="max-w-4xl" onClose={onClose}
+    <Modal title={t('Environment Deployment')} icon={<Rocket className="w-5 h-5" />} maxWidth="max-w-4xl" hideScrollbar onClose={onClose}
       footer={
         <>
           {snapshot?.driver.previous_pkg && (
@@ -156,8 +155,6 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
             </ul>
           </section>
         ) : null}
-
-        <RiskPanel />
       </div>
     </Modal>
   );

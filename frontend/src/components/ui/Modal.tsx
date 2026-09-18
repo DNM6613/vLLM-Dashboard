@@ -11,11 +11,13 @@ interface ModalProps {
   footer?: ReactNode;
   /** Optional action rendered on the title row, left of the close button. */
   headerAction?: ReactNode;
+  /** Hide the scroll indicator (the panel stays scrollable). */
+  hideScrollbar?: boolean;
 }
 
 const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
-export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, footer, headerAction }: ModalProps) {
+export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, footer, headerAction, hideScrollbar }: ModalProps) {
   const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const onCloseRef = useRef(onClose);
@@ -66,7 +68,7 @@ export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, f
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
-        className={`bg-bg-card rounded-xl border border-border shadow-lg w-full ${maxWidth} max-h-[90vh] overflow-y-auto p-6`}
+        className={`bg-bg-card rounded-xl border border-border shadow-lg w-full ${maxWidth} max-h-[90vh] overflow-y-auto p-6${hideScrollbar ? ' no-scrollbar' : ''}`}
       >
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-medium flex items-center gap-2 text-base">{icon}{title}</h3>
