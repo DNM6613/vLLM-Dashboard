@@ -700,6 +700,10 @@ def _check_runtime_toolkit_compat(runtime_mode: str, cuda_selected: str,
     13.x selection, cu129 otherwise. When the system install is skipped, the
     effective toolkit is whatever the server already runs — manual installs
     included."""
+    if not (cuda_selected or "").strip():
+        # No CUDA version selected: plain vllm install — no torch family is
+        # pinned, so there is nothing to interlock.
+        return
     torch_family = "13" if (runtime_mode == "system"
                             and (cuda_selected or "").startswith("13")) else "12"
     eff = (effective_cuda or "").strip()
@@ -997,6 +1001,12 @@ def start_driver_task(package: str) -> Task:
 
 def start_cuda_task(version: str, install_system: bool) -> Task | None:
     _require_remote()
+    if not install_system:
+        # Skip mode: no CUDA version is selected or needed — clear any
+        # previous selection and persist the skip flag.
+        deployment_state.update_section("selected", cuda="",
+                                        cuda_install_system=False)
+        return None
     if not CUDA_VER_RE.fullmatch(version or ""):
         raise DeploymentError(f"Invalid CUDA version: {version}")
     executor = get_remote_executor()
@@ -1010,8 +1020,6 @@ def start_cuda_task(version: str, install_system: bool) -> Task | None:
 
     deployment_state.update_section("selected", cuda=version,
                                     cuda_install_system=install_system)
-    if not install_system:
-        return None  # selection saved; no mutation needed
 
     pkg = f"cuda-toolkit-{version.replace('.', '-')}"
     task = task_manager.create("cuda", f"Install CUDA toolkit {version}",
@@ -1038,9 +1046,9 @@ def start_vllm_task(payload: dict[str, Any]) -> Task:
         raise DeploymentError(f"Invalid Python version: {py_version}")
 
     state = deployment_state.get()
-    cuda_version = (payload.get("cuda_version") or state["selected"].get("cuda") or "").strip()
-    if payload.get("runtime_mode") == "system" and not cuda_version:
-        raise DeploymentError("System CUDA runtime requires a CUDA version selected in Tab 2")
+    # The client sends the effective selection (skip-system-CUDA mode sends
+    # no version); an empty version means a plain vllm install.
+    cuda_version = (payload.get("cuda_version") or "").strip()
     payload = {**payload, "venv_name": venv_name, "python_version": py_version,
                "cuda_version": cuda_version}
 

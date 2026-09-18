@@ -121,7 +121,7 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
         {activeTab === 'vllm' && (
           <VllmTab
             info={dep.vllm}
-            cudaVersion={cudaPick || (dep.state?.selected.cuda ?? '')}
+            cudaVersion={cudaInstallSystem ? (cudaPick || (dep.state?.selected.cuda ?? '')) : ''}
             cudaInstallSystem={cudaInstallSystem}
             currentToolkit={dep.cuda?.current_toolkit ?? ''}
             pypiMirror={dep.state?.mirrors.pypi ?? ''}

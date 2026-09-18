@@ -292,8 +292,8 @@ export const ZH: Record<string, string> = {
     '自动绑定：系统 CUDA Runtime，{index} torch 后端（匹配 CUDA {ver}）',
   'Auto-bound: built-in CUDA runtime, {index} torch backend (matches CUDA {ver})':
     '自动绑定：内置 CUDA Runtime，{index} torch 后端（匹配 CUDA {ver}）',
-  'Selected CUDA {sel} does not match the effective CUDA {eff} — select a matching version in the CUDA tab.':
-    '已选 CUDA {sel} 与生效 CUDA {eff} 不匹配 — 请在 CUDA Tab 选择匹配的版本。',
+  'Auto-bound: built-in CUDA runtime, PyPI default torch backend':
+    '自动绑定：内置 CUDA Runtime，PyPI 默认 torch 后端',
   'Selected CUDA {sel} conflicts with the system CUDA {cur} — the binding follows the system toolkit.':
     '已选 CUDA {sel} 与系统 CUDA {cur} 冲突 — 绑定跟随系统工具包。',
   'No CUDA version selected': '未选择 CUDA 版本',

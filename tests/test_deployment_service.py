@@ -208,11 +208,12 @@ class TestValidationHelpers(unittest.TestCase):
         # user failure case 1: CUDA 12.9 toolkit + cu130 torch backend
         with self.assertRaises(ds.DeploymentError):
             ds._check_runtime_toolkit_compat("system", "13.3", "12.9")
-        # user failure case 2: CUDA 13.x toolkit + cu129 built-in wheel
-        with self.assertRaises(ds.DeploymentError):
-            ds._check_runtime_toolkit_compat("builtin", "", "13.0")
-        with self.assertRaises(ds.DeploymentError):
-            ds._check_runtime_toolkit_compat("builtin", "", "13.3")
+        # No CUDA version selected: plain vllm install — no torch family is
+        # pinned, so there is nothing to interlock, even against a 13.x
+        # toolkit.
+        ds._check_runtime_toolkit_compat("builtin", "", "13.0")
+        ds._check_runtime_toolkit_compat("builtin", "", "13.3")
+        ds._check_runtime_toolkit_compat("system", "", "13.0")
         # matching combinations pass
         ds._check_runtime_toolkit_compat("system", "13.3", "13.3")
         ds._check_runtime_toolkit_compat("system", "12.9", "12.9")

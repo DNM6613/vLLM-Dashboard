@@ -44,9 +44,9 @@ export function CudaTab({
   const selDiffers = selMajor != null && selMajor !== info.driver_major;
 
   const handleApply = async () => {
-    if (!version || incompatible) return;
+    if (installSystem && (!version || incompatible)) return;
     setActing(true);
-    await onApply(version, installSystem);
+    await onApply(installSystem ? version : '', installSystem);
     setActing(false);
   };
 
@@ -89,14 +89,15 @@ export function CudaTab({
               return (
                 <tr
                   key={v}
-                  className={`border-t border-border cursor-pointer ${pickedVersion === v ? 'bg-bg-hover/60' : 'hover:bg-bg-hover/30'}`}
-                  onClick={() => { setCustomVersion(''); onPickVersion(v); }}
+                  className={`border-t border-border ${installSystem ? 'cursor-pointer' : 'opacity-50'} ${pickedVersion === v ? 'bg-bg-hover/60' : installSystem ? 'hover:bg-bg-hover/30' : ''}`}
+                  onClick={installSystem ? () => { setCustomVersion(''); onPickVersion(v); } : undefined}
                 >
                   <td className="px-3 py-2">
                     <input
                       type="radio"
                       name="cuda-pick"
                       checked={pickedVersion === v}
+                      disabled={!installSystem}
                       onChange={() => onPickVersion(v)}
                       onClick={(e) => e.stopPropagation()}
                       className="accent-sky-400"
@@ -153,14 +154,15 @@ export function CudaTab({
             id="cuda-custom"
             type="text"
             value={customVersion}
+            disabled={!installSystem}
             onChange={(e) => setCustomVersion(e.target.value.replace(/[^0-9.]/g, ''))}
             placeholder="12.4"
-            className="w-full px-3 py-1.5 bg-bg rounded-lg border border-border text-text focus:border-accent focus:outline-none font-mono text-sm"
+            className="w-full px-3 py-1.5 bg-bg rounded-lg border border-border text-text focus:border-accent focus:outline-none font-mono text-sm disabled:opacity-50"
           />
         </div>
       )}
 
-      {incompatible && version && (
+      {installSystem && incompatible && version && (
         <div className="flex items-center gap-1.5 text-xs text-danger">
           <XCircle className="w-3.5 h-3.5 shrink-0" />
           {t('Current driver {major} cannot use CUDA {ver} — go back to the GPU Driver tab and upgrade the driver first.', {
@@ -204,12 +206,12 @@ export function CudaTab({
 
       <div className="flex items-center justify-between pt-1">
         <div className="text-xs text-text-muted">
-          {version ? t('Selected: CUDA {ver}', { ver: version }) : ''}
+          {installSystem && version ? t('Selected: CUDA {ver}', { ver: version }) : ''}
         </div>
         <Button
           variant="primary"
           onClick={handleApply}
-          disabled={!version || incompatible || busy || acting}
+          disabled={installSystem ? (!version || incompatible || busy || acting) : (busy || acting)}
         >
           {installSystem ? t('Install CUDA Toolkit') : t('Confirm selection')}
         </Button>

@@ -64,8 +64,8 @@ export function VllmTab({
     : runtimeMode === 'system' ? `cu${cudaVersion.replace('.', '')}`
     : 'cu129';
   // the system runtime needs a selected version agreeing with the effective
-  // family (backend check)
-  const systemBlocked = runtimeMode === 'system' && selFamily !== effFamily;
+  // family (backend check); skip-system-CUDA mode needs no version
+  const systemBlocked = runtimeMode === 'system' && cudaInstallSystem && selFamily !== effFamily;
   // the version the auto-bound index matches: the effective CUDA for 13.x
   // (the index follows it), the selection for 12.x
   const boundVer = effFamily === '13' ? effectiveCuda : cudaVersion;
@@ -125,12 +125,12 @@ export function VllmTab({
       {/* CUDA runtime — auto-bound to the effective CUDA, not selectable */}
       <div className="space-y-1.5 border border-border rounded-lg p-3">
         <div className="text-xs font-medium">{t('CUDA Runtime binding')}</div>
-        {cudaVersion === '' ? (
-          <div className={`text-xs ${systemBlocked ? 'text-warning' : ''}`}>{t('No CUDA version selected')}</div>
+        {!cudaInstallSystem ? (
+          <div className="text-xs">{t('Auto-bound: built-in CUDA runtime, PyPI default torch backend')}</div>
         ) : systemBlocked ? (
-          <div className="text-xs text-warning">
-            {t('Selected CUDA {sel} does not match the effective CUDA {eff} — select a matching version in the CUDA tab.', { sel: cudaVersion, eff: effectiveCuda })}
-          </div>
+          <div className="text-xs text-warning">{t('No CUDA version selected')}</div>
+        ) : cudaVersion === '' ? (
+          <div className="text-xs">{t('No CUDA version selected')}</div>
         ) : (
           <div className="text-xs">
             {runtimeMode === 'system'
