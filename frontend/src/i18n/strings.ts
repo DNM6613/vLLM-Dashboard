@@ -292,8 +292,14 @@ export const ZH: Record<string, string> = {
   'CUDA Runtime binding': 'CUDA Runtime 绑定',
   'Auto-bound: system CUDA runtime, {index} torch backend (matches CUDA {ver})':
     '自动绑定：系统 CUDA Runtime，{index} torch 后端（匹配 CUDA {ver}）',
-  'Auto-bound: vLLM built-in CUDA runtime (CUDA 12.9, cu129)':
-    '自动绑定：vLLM 内置 CUDA Runtime（CUDA 12.9，cu129）',
+  'Auto-bound: built-in CUDA runtime, {index} torch backend (matches CUDA {ver})':
+    '自动绑定：内置 CUDA Runtime，{index} torch 后端（匹配 CUDA {ver}）',
+  'Auto-bound: built-in CUDA runtime, {index} torch backend (no system CUDA detected)':
+    '自动绑定：内置 CUDA Runtime，{index} torch 后端（未检测到系统 CUDA）',
+  'Selected CUDA {sel} does not match the effective CUDA {eff} — select a matching version in the CUDA tab.':
+    '已选 CUDA {sel} 与生效 CUDA {eff} 不匹配 — 请在 CUDA Tab 选择匹配的版本。',
+  'Selected CUDA {sel} conflicts with the system CUDA {cur} — the binding follows the system toolkit.':
+    '已选 CUDA {sel} 与系统 CUDA {cur} 冲突 — 绑定跟随系统工具包。',
   'No CUDA version selected — the system CUDA runtime (cu130) requires one; select a CUDA 13.x version in the CUDA tab first.':
     '未选择 CUDA 版本 — 系统 CUDA Runtime（cu130）需要先在 CUDA Tab 选择 CUDA 13.x 版本。',
   'Python environment': 'Python 环境',

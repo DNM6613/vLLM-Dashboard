@@ -38,21 +38,33 @@ export function VllmTab({
   const effVenv = venvName.trim() || info.venv_name || '.vllm';
   const spec = version.trim() && version.trim() !== 'latest' ? `vllm==${version.trim()}` : 'vllm';
   const mirrorFlag = pypiMirror ? ` --index-url ${pypiMirror}` : '';
-  // The torch backend auto-binds to the effective system CUDA — the selected
-  // version when the system install is on, the toolkit already on the server
-  // otherwise. torch wheels ship per CUDA family, not per toolkit minor:
-  // every 13.x → cu130.
-  const effectiveCuda = cudaInstallSystem ? cudaVersion : currentToolkit;
-  const isCuda13 = effectiveCuda.startsWith('13');
-  const isCuda12 = effectiveCuda.startsWith('12');
-  // 13.x forces the system runtime (cu130); 12.x uses it when a version is
-  // selected, else the built-in cu129 wheel (same family).
+  // The torch backend auto-binds to the effective CUDA: the selected version
+  // when the system install is on (the state it brings the server to); when
+  // skipping the install the toolkit already on the server wins (it is what
+  // actually runs), with the selection as fallback when no toolkit exists.
+  // torch wheels ship per CUDA family, not per toolkit minor: every 13.x → cu130.
+  const effectiveCuda = cudaInstallSystem
+    ? (cudaVersion || currentToolkit)
+    : (currentToolkit || cudaVersion);
+  const family = (v: string) => (v.startsWith('13') ? '13' : v.startsWith('12') ? '12' : '');
+  const effFamily = family(effectiveCuda);
+  const selFamily = family(cudaVersion);
+  // 13.x forces the system runtime (cu130); 12.x uses the system runtime when
+  // the selection agrees (the backend pins torch to it), else the built-in
+  // cu129 wheel (same family).
   const runtimeMode: 'builtin' | 'system' =
-    isCuda13 || (isCuda12 && cudaVersion !== '') ? 'system' : 'builtin';
-  // no effective CUDA → cu129 (the PyPI default torch family, pinned explicitly)
-  const torchIndex = isCuda13 ? 'cu130' : isCuda12 ? `cu${effectiveCuda.replace('.', '')}` : 'cu129';
-  // the system runtime needs an explicitly selected CUDA version (backend check)
-  const systemBlocked = runtimeMode === 'system' && !cudaVersion;
+    effFamily === '13' ? 'system'
+    : effFamily === '12' ? (selFamily === '12' ? 'system' : 'builtin')
+    : 'builtin';
+  // torch index: 13.x → cu130; system 12.x follows the selected version (the
+  // backend pins torch to it); built-in → cu129 (the PyPI default family,
+  // pinned explicitly).
+  const torchIndex = effFamily === '13' ? 'cu130'
+    : runtimeMode === 'system' ? `cu${cudaVersion.replace('.', '')}`
+    : 'cu129';
+  // the system runtime needs a selected version agreeing with the effective
+  // family (backend check)
+  const systemBlocked = runtimeMode === 'system' && selFamily !== effFamily;
   const previewCmd = sourceBuild
     ? `git clone --depth 1 <vllm repo> /tmp/vllm-src-vdb\nuv pip install${mirrorFlag} --python ~/${effVenv}/bin/python -e /tmp/vllm-src-vdb`
     : `uv pip install${mirrorFlag} --python ~/${effVenv}/bin/python ${spec} torch --extra-index-url https://download.pytorch.org/whl/${torchIndex}`;
@@ -111,13 +123,22 @@ export function VllmTab({
         <div className="text-xs font-medium">{t('CUDA Runtime binding')}</div>
         {systemBlocked ? (
           <div className="text-xs text-warning">
-            {t('No CUDA version selected — the system CUDA runtime (cu130) requires one; select a CUDA 13.x version in the CUDA tab first.')}
+            {cudaVersion === ''
+              ? t('No CUDA version selected — the system CUDA runtime (cu130) requires one; select a CUDA 13.x version in the CUDA tab first.')
+              : t('Selected CUDA {sel} does not match the effective CUDA {eff} — select a matching version in the CUDA tab.', { sel: cudaVersion, eff: effectiveCuda })}
           </div>
         ) : (
           <div className="text-xs">
             {runtimeMode === 'system'
-              ? t('Auto-bound: system CUDA runtime, {index} torch backend (matches CUDA {ver})', { index: torchIndex, ver: effectiveCuda })
-              : t('Auto-bound: vLLM built-in CUDA runtime (CUDA 12.9, cu129)')}
+              ? t('Auto-bound: system CUDA runtime, {index} torch backend (matches CUDA {ver})', { index: torchIndex, ver: cudaVersion })
+              : effectiveCuda === ''
+                ? t('Auto-bound: built-in CUDA runtime, {index} torch backend (no system CUDA detected)', { index: torchIndex })
+                : t('Auto-bound: built-in CUDA runtime, {index} torch backend (matches CUDA {ver})', { index: torchIndex, ver: effectiveCuda })}
+          </div>
+        )}
+        {!systemBlocked && selFamily === '13' && effFamily === '12' && (
+          <div className="text-xs text-warning">
+            {t('Selected CUDA {sel} conflicts with the system CUDA {cur} — the binding follows the system toolkit.', { sel: cudaVersion, cur: effectiveCuda })}
           </div>
         )}
         <pre className="text-[11px] font-mono bg-bg rounded-lg border border-border p-2 overflow-x-auto whitespace-pre-wrap break-all text-text-muted">
