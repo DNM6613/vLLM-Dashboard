@@ -126,7 +126,7 @@ export function VllmTab({
         {systemBlocked ? (
           <div className="text-xs text-warning">
             {cudaVersion === ''
-              ? t('No CUDA version selected — the system CUDA runtime ({index}) requires one; select a CUDA 13.x version in the CUDA tab first.', { index: torchIndex })
+              ? t('No CUDA version selected')
               : t('Selected CUDA {sel} does not match the effective CUDA {eff} — select a matching version in the CUDA tab.', { sel: cudaVersion, eff: effectiveCuda })}
           </div>
         ) : (
