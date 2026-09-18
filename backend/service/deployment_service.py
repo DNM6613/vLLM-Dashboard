@@ -807,9 +807,7 @@ def _run_vllm(ctx: TaskContext, payload: dict[str, Any], venv_path: str,
     with ctx.step(3):
         for dep_cmd in deps:
             ctx.run_long(dep_cmd, timeout=1800)
-        if payload.get("rust_frontend"):
-            ctx.log("Rust frontend ships inside the vLLM main package — no separate install.")
-        if not deps and not payload.get("rust_frontend"):
+        if not deps:
             ctx.log("No optional dependencies selected.")
     with ctx.step(4):
         verify = ctx.exec(

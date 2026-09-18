@@ -321,7 +321,6 @@ export const ZH: Record<string, string> = {
   'Existing virtualenvs': '已有虚拟环境',
   'Optional dependencies': '可选依赖',
   'cluster multi-GPU communication': '集群多卡通信',
-  'Rust Frontend': 'Rust 前端',
   'Local source build (development)': '本地源码编译（开发用）',
   'git clone + editable install instead of the PyPI wheel':
     'git clone + 可编辑安装，替代 PyPI 轮子包',

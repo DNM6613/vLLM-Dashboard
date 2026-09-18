@@ -304,7 +304,7 @@ async def apply_vllm(body: dict[str, Any]):
     _require_remote()
     allowed = {
         "version", "runtime_mode", "env_mode", "venv_name", "python_version",
-        "source_build", "flashinfer", "nccl", "rust_frontend",
+        "source_build", "flashinfer", "nccl",
         "auto_register_service", "cuda_version",
     }
     payload = {k: body[k] for k in allowed if k in body}

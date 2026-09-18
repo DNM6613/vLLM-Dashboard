@@ -27,7 +27,6 @@ export function VllmTab({
   const [pyVersion, setPyVersion] = useState('');
   const [flashinfer, setFlashinfer] = useState(false);
   const [nccl, setNccl] = useState(false);
-  const [rustFrontend, setRustFrontend] = useState(false);
   const [autoRegister, setAutoRegister] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [sourceBuild, setSourceBuild] = useState(false);
@@ -72,7 +71,6 @@ export function VllmTab({
       source_build: sourceBuild,
       flashinfer,
       nccl,
-      rust_frontend: rustFrontend,
       auto_register_service: autoRegister,
       cuda_version: cudaVersion,
     });
@@ -219,10 +217,6 @@ export function VllmTab({
         <label className="flex items-center gap-2 text-xs cursor-pointer">
           <input type="checkbox" checked={nccl} onChange={(e) => setNccl(e.target.checked)} className="accent-sky-400" />
           NCCL ({t('cluster multi-GPU communication')})
-        </label>
-        <label className="flex items-center gap-2 text-xs cursor-pointer">
-          <input type="checkbox" checked={rustFrontend} onChange={(e) => setRustFrontend(e.target.checked)} className="accent-sky-400" />
-          {t('Rust Frontend')}
         </label>
       </div>
 
