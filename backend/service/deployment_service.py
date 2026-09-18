@@ -845,7 +845,13 @@ def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
             UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} {spec} torch{torch_index}".replace("  ", " ")
         )
     else:
-        install = UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} {spec}"
+        # built-in runtime = explicit cu129 pin: the PyPI default torch build
+        # is not named after its CUDA version, so pin the cu129 index to keep
+        # the auto-bound family real instead of assumed.
+        install = (
+            UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} {spec} torch"
+            " --extra-index-url https://download.pytorch.org/whl/cu129".replace("  ", " ")
+        )
 
     deps: list[str] = []
     if payload.get("flashinfer"):

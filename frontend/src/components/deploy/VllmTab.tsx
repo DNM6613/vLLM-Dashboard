@@ -49,14 +49,13 @@ export function VllmTab({
   // selected, else the built-in cu129 wheel (same family).
   const runtimeMode: 'builtin' | 'system' =
     isCuda13 || (isCuda12 && cudaVersion !== '') ? 'system' : 'builtin';
-  const torchIndex = isCuda13 ? 'cu130' : isCuda12 ? `cu${effectiveCuda.replace('.', '')}` : '';
+  // no effective CUDA → cu129 (the PyPI default torch family, pinned explicitly)
+  const torchIndex = isCuda13 ? 'cu130' : isCuda12 ? `cu${effectiveCuda.replace('.', '')}` : 'cu129';
   // the system runtime needs an explicitly selected CUDA version (backend check)
   const systemBlocked = runtimeMode === 'system' && !cudaVersion;
   const previewCmd = sourceBuild
     ? `git clone --depth 1 <vllm repo> /tmp/vllm-src-vdb\nuv pip install${mirrorFlag} --python ~/${effVenv}/bin/python -e /tmp/vllm-src-vdb`
-    : runtimeMode === 'system'
-      ? `uv pip install${mirrorFlag} --python ~/${effVenv}/bin/python ${spec} torch --extra-index-url https://download.pytorch.org/whl/${torchIndex}`
-      : `uv pip install${mirrorFlag} --python ~/${effVenv}/bin/python ${spec}`;
+    : `uv pip install${mirrorFlag} --python ~/${effVenv}/bin/python ${spec} torch --extra-index-url https://download.pytorch.org/whl/${torchIndex}`;
 
   const handleApply = async () => {
     setActing(true);

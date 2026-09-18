@@ -759,11 +759,12 @@ class TestBuildVllmInstallCommands(unittest.TestCase):
             _, install, _ = ds._build_vllm_install_commands(
                 {**base, "cuda_version": ver}, "$HOME/.vllm", {"pypi": ""})
             self.assertIn(want, install)
-        # built-in runtime carries no torch index at all
+        # built-in runtime pins the cu129 index explicitly — the PyPI default
+        # torch build is not named after its CUDA version
         _, install, _ = ds._build_vllm_install_commands(
             {**base, "runtime_mode": "builtin", "cuda_version": "13.3"},
             "$HOME/.vllm", {"pypi": ""})
-        self.assertNotIn("download.pytorch.org", install)
+        self.assertIn(" torch --extra-index-url https://download.pytorch.org/whl/cu129", install)
 
     def test_no_nccl_no_deps(self):
         self.assertEqual(self._deps(nccl=False, flashinfer=False), [])
