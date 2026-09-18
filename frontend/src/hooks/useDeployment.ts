@@ -6,22 +6,16 @@ import {
   applyCuda,
   applyDriver,
   applyVllm,
-  exportEnv,
   getCudaInfo,
   getDeployState,
   getDrivers,
   getPreflight,
-  getTemplates,
   getVllmInfo,
-  importEnv,
   rebootServer,
   rollbackEnv,
-  scanConflicts,
   updateDeployState,
   type CudaInfo,
-  type ConflictPackage,
   type DeployState,
-  type DeployTemplate,
   type DriverList,
   type Preflight,
   type VllmApplyPayload,
@@ -35,8 +29,6 @@ export function useDeployment(open: boolean) {
   const [cuda, setCuda] = useState<CudaInfo | null>(null);
   const [vllm, setVllm] = useState<VllmInfo | null>(null);
   const [state, setState] = useState<DeployState | null>(null);
-  const [templates, setTemplates] = useState<DeployTemplate[]>([]);
-  const [conflicts, setConflicts] = useState<ConflictPackage[] | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -76,7 +68,6 @@ export function useDeployment(open: boolean) {
   useEffect(() => {
     if (open) {
       loadAll();
-      getTemplates().then(setTemplates).catch(() => undefined);
     }
   }, [open, loadAll]);
 
@@ -196,48 +187,6 @@ export function useDeployment(open: boolean) {
     }
   }, []);
 
-  const handleTemplate = useCallback((tpl: DeployTemplate) => {
-    // Prefill the three tabs from a template; the user still confirms each step.
-    updateDeployState({
-      selected: {
-        driver: tpl.driver,
-        cuda: tpl.cuda,
-        cuda_install_system: tpl.cuda_install_system,
-        vllm_version: tpl.vllm_version,
-        vllm_runtime: tpl.vllm_runtime,
-      },
-    }).then(setState).catch((e) => setError(apiErrorMessage(e)));
-  }, []);
-
-  const handleScanConflicts = useCallback(async () => {
-    try {
-      setConflicts(await scanConflicts());
-      setError('');
-    } catch (e) {
-      setError(apiErrorMessage(e));
-    }
-  }, []);
-
-  const handleExport = useCallback(async (): Promise<{ yaml: string; filename: string } | null> => {
-    try {
-      return await exportEnv();
-    } catch (e) {
-      setError(apiErrorMessage(e));
-      return null;
-    }
-  }, []);
-
-  const handleImport = useCallback(async (yaml: string): Promise<boolean> => {
-    try {
-      setState(await importEnv(yaml));
-      setError('');
-      return true;
-    } catch (e) {
-      setError(apiErrorMessage(e));
-      return false;
-    }
-  }, []);
-
   return {
     preflight,
     preflightLoading,
@@ -245,8 +194,6 @@ export function useDeployment(open: boolean) {
     cuda,
     vllm,
     state,
-    templates,
-    conflicts,
     error,
     busy,
     loadAll,
@@ -259,10 +206,6 @@ export function useDeployment(open: boolean) {
     handleVllm,
     handleRollback,
     handleMirrors,
-    handleTemplate,
-    handleScanConflicts,
-    handleExport,
-    handleImport,
   };
 }
 

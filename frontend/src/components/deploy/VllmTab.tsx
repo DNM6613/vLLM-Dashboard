@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, Lock } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import type { VllmApplyPayload, VllmInfo } from '../../api/deployment';
 import { useI18n } from '../../i18n';
 import { Button } from '../ui/Button';
 
 interface VllmTabProps {
-  locked: boolean;
   info: VllmInfo | null;
   cudaVersion: string;
   cudaInstallSystem: boolean;
@@ -18,7 +17,7 @@ interface VllmTabProps {
 const FIELD_CLASS = 'w-full px-3 py-1.5 bg-bg rounded-lg border border-border text-text focus:border-accent focus:outline-none font-mono text-sm';
 
 export function VllmTab({
-  locked, info, cudaVersion, cudaInstallSystem, currentToolkit, pypiMirror, onApply, busy,
+  info, cudaVersion, cudaInstallSystem, currentToolkit, pypiMirror, onApply, busy,
 }: VllmTabProps) {
   const { t } = useI18n();
   const [version, setVersion] = useState('latest');
@@ -33,7 +32,7 @@ export function VllmTab({
   const [sourceBuild, setSourceBuild] = useState(false);
   const [acting, setActing] = useState(false);
 
-  // Resync the runtime radio from persisted state (template prefill) —
+  // Resync the runtime radio from persisted state (initial load / post-apply) —
   // mirrors the driver/CUDA sync effects in DeployEnvModal.
   const persistedRuntime = info?.selected.runtime;
   useEffect(() => {
@@ -41,15 +40,6 @@ export function VllmTab({
       setRuntime(persistedRuntime);
     }
   }, [persistedRuntime]);
-
-  if (locked) {
-    return (
-      <div className="border border-border rounded-lg p-8 text-center">
-        <Lock className="w-6 h-6 text-text-muted mx-auto mb-2" />
-        <div className="text-sm text-text-muted">{t('Locked: select a CUDA version in the CUDA tab first.')}</div>
-      </div>
-    );
-  }
 
   if (!info) {
     return <div className="text-xs text-text-muted py-6 text-center">{t('Loading...')}</div>;

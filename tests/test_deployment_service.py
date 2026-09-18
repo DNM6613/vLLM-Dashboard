@@ -143,55 +143,6 @@ class TestGetDriverList(unittest.TestCase):
         self.assertEqual(res["installed_packages"], [])
 
 
-class TestYamlRoundTrip(unittest.TestCase):
-    def _round_trip(self, inner: dict):
-        doc = {"vllm_dashboard_env": inner}
-        text = "\n".join(api_dep._yaml_dump(doc)) + "\n"
-        return api_dep.parse_env_yaml(text)
-
-    def test_export_shape_round_trips(self):
-        inner = {
-            "exported_at": "2026-09-17 10:00:00",
-            "driver": {
-                "current_driver": "570.86.15",
-                "current_pkg": "nvidia-driver-570-server",
-                "previous_pkg": "",
-            },
-            "cuda": {
-                "selected_version": "12.9",
-                "install_system": False,
-                "installed_version": "",
-            },
-            "vllm": {
-                "version": "0.29.0",
-                "runtime": "builtin",
-                "venv": ".vllm",
-            },
-            "mirrors": {
-                "pypi": "https://pypi.tuna.tsinghua.edu.cn/simple/",
-                "hf": "https://hf-mirror.com",
-            },
-        }
-        self.assertEqual(self._round_trip(inner), inner)
-
-    def test_string_with_quotes_and_backslash(self):
-        inner = {"s": 'a "b" c\\d'}
-        self.assertEqual(self._round_trip(inner)["s"], 'a "b" c\\d')
-
-    def test_bool_and_plain_token_scalars(self):
-        inner = {"flag": True, "count": "3"}
-        parsed = self._round_trip(inner)
-        self.assertIs(parsed["flag"], True)
-        # plain (unquoted) tokens parse back as strings — version values like
-        # "12.90" must keep their exact spelling, so the parser never coerces
-        # to a number
-        self.assertEqual(parsed["count"], "3")
-
-    def test_unsupported_line_raises(self):
-        with self.assertRaises(ValueError):
-            api_dep.parse_env_yaml("- list item\n")
-
-
 class TestValidationHelpers(unittest.TestCase):
     def test_venv_name_validation(self):
         for valid in (".vllm", "~/envs/vllm", "/opt/vllm", "my-env_1"):
@@ -472,13 +423,11 @@ class TestStateEndpoint(unittest.TestCase):
         body = self._get_state("580.65.06", selected_cuda="13.3")
         self.assertEqual(body["current_driver_major"], 580)
         self.assertFalse(body["locks"]["cuda"])
-        self.assertFalse(body["locks"]["vllm"])
 
     def test_locked_when_no_driver(self):
         body = self._get_state("")
         self.assertIsNone(body["current_driver_major"])
         self.assertTrue(body["locks"]["cuda"])
-        self.assertTrue(body["locks"]["vllm"])
 
 
 class TestDriversEndpoint(unittest.TestCase):

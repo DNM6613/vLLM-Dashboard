@@ -73,7 +73,6 @@ CUDA_VER_RE = re.compile(r"^\d{1,2}\.\d{1,2}$")
 VLLM_VER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 VENV_NAME_RE = re.compile(r"^[\w./\-~]{1,128}$")
 PY_VER_RE = re.compile(r"^\d+\.\d{1,2}$")
-PKG_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9.+\-]*$")
 URL_RE = re.compile(r"^https?://[\w.\-]+(?::\d+)?(/\S*)?$")
 
 TASK_STATUSES = ("queued", "running", "success", "failed",
@@ -928,13 +927,6 @@ def _run_reboot(ctx: TaskContext) -> None:
         ctx.log("Reboot command issued. The server should be back within 1-3 minutes.")
 
 
-def _run_conflict_cleanup(ctx: TaskContext, packages: list[str]) -> None:
-    quoted = " ".join(packages)  # pre-validated names, safe for apt
-    with ctx.step(0):
-        ctx.run_long(f"apt-get remove --purge -y {quoted} && apt-get autoremove -y",
-                     timeout=1800)
-
-
 def _run_rollback_vllm(ctx: TaskContext, target_version: str, venv_path: str,
                        mirrors: dict[str, Any]) -> None:
     py_bin = f"{venv_path}/bin/python"
@@ -1118,21 +1110,6 @@ def start_reboot_task() -> Task:
     _require_remote()
     task = task_manager.create("reboot", "Reboot server", ["Reboot server"])
     task_manager.submit(task, _run_reboot)
-    return task
-
-
-def start_conflict_cleanup(packages: list[str]) -> Task:
-    _require_remote()
-    if not packages or len(packages) > 64:
-        raise DeploymentError("Invalid package list")
-    for name in packages:
-        if not PKG_NAME_RE.fullmatch(name or ""):
-            raise DeploymentError(f"Invalid package name: {name}")
-    task = task_manager.create("conflict_cleanup",
-                               f"Remove {len(packages)} redundant package(s)",
-                               ["Purge packages"])
-    task.result = {"packages": list(packages)}
-    task_manager.submit(task, lambda ctx: _run_conflict_cleanup(ctx, list(packages)))
     return task
 
 

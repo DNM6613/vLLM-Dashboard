@@ -12,17 +12,13 @@ vi.mock('../api/deployment', () => ({
   applyCuda: vi.fn(),
   applyDriver: vi.fn(),
   applyVllm: vi.fn(),
-  exportEnv: vi.fn(),
   getCudaInfo: vi.fn(),
   getDeployState: vi.fn(),
   getDrivers: vi.fn(),
   getPreflight: vi.fn(),
-  getTemplates: vi.fn(async () => []),
   getVllmInfo: vi.fn(),
-  importEnv: vi.fn(),
   rebootServer: vi.fn(),
   rollbackEnv: vi.fn(),
-  scanConflicts: vi.fn(),
   updateDeployState: vi.fn(),
 }));
 

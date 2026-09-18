@@ -165,11 +165,6 @@ def build_preflight_command() -> str:
         "echo '== END =='; echo DONE"
     )
 
-CONFLICT_SCAN_CMD = (
-    "dpkg -l 2>/dev/null | awk '$1 ~ /^(ii|rc|un)/ && "
-    r'$2 ~ /nvidia|cuda|cublas|cudnn|nccl|tensorrt/ {print $1 "\t" $2 "\t" $3}'
-    " | head -n 100; echo DONE"
-)
 
 def split_sections(output: str) -> dict[str, str]:
     """Split `== NAME ==` bracketed probe output into {name: body}."""
@@ -345,17 +340,6 @@ class DeploymentOps:
             "venvs": venvs,
             "vllm_version": vllm_version,
         }
-
-    def scan_conflicts(self) -> dict[str, Any]:
-        result = self.execute(CONFLICT_SCAN_CMD, timeout=30)
-        if not result["success"]:
-            return {"success": False, "error": result.get("stderr") or "conflict scan failed", "packages": []}
-        packages: list[dict[str, str]] = []
-        for line in (result.get("stdout", "") or "").splitlines():
-            parts = line.split("\t")
-            if len(parts) == 3 and parts[0] in ("ii", "rc", "un"):
-                packages.append({"state": parts[0], "name": parts[1], "version": parts[2]})
-        return {"success": True, "packages": packages}
 
     def reboot_server(self) -> dict[str, Any]:
         """Issue `sudo reboot` the same way shutdown issues poweroff."""

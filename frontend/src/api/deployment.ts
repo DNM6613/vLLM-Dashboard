@@ -102,24 +102,7 @@ export interface DeployState {
   history: { ts: string; kind: string; title: string; status: string }[];
   current_driver_major: number | null;
   pending_driver_task: { id: string; package: string; status: string } | null;
-  locks: { cuda: boolean; vllm: boolean };
-}
-
-export interface ConflictPackage {
-  state: string;
-  name: string;
-  version: string;
-  suggestion: string;
-}
-
-export interface DeployTemplate {
-  id: string;
-  name: string;
-  driver: string;
-  cuda: string;
-  cuda_install_system: boolean;
-  vllm_version: string;
-  vllm_runtime: string;
+  locks: { cuda: boolean };
 }
 
 // ---- endpoints -------------------------------------------------------------
@@ -212,31 +195,6 @@ export const rebootServer = async (): Promise<{ status: string; task_id: string 
 export const rollbackEnv = async (target: 'driver' | 'vllm'): Promise<{ status: string; task_id: string }> => {
   const response = await api.post('/deployment/rollback', { target });
   return response.data;
-};
-
-export const scanConflicts = async (): Promise<ConflictPackage[]> => {
-  const response = await api.post('/deployment/conflict-scan', null, { timeout: 60000 });
-  return response.data.packages;
-};
-
-export const cleanupConflicts = async (packages: string[]): Promise<{ status: string; task_id: string }> => {
-  const response = await api.post('/deployment/conflict-cleanup', { packages });
-  return response.data;
-};
-
-export const getTemplates = async (): Promise<DeployTemplate[]> => {
-  const response = await api.get('/deployment/templates');
-  return response.data.templates;
-};
-
-export const exportEnv = async (): Promise<{ yaml: string; filename: string }> => {
-  const response = await api.get('/deployment/export', { timeout: 90000 });
-  return response.data;
-};
-
-export const importEnv = async (yaml: string): Promise<DeployState> => {
-  const response = await api.post('/deployment/import', { yaml });
-  return response.data.state;
 };
 
 // ---- helpers -----------------------------------------------------------------

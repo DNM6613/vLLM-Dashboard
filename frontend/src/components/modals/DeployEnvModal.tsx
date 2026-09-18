@@ -1,10 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Box, Download, History, PackageSearch, Rocket, ScanLine, Upload, Wrench,
+  Box, History, Rocket, Wrench,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
-import { apiErrorMessage, cleanupConflicts } from '../../api/deployment';
-import { showToast } from '../ui/toast';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { useDeployment } from '../../hooks/useDeployment';
@@ -30,13 +28,10 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
   // Matches the backend default (system CUDA Toolkit = robust default; see
   // _default_state). The effect below resyncs from persisted state on load.
   const [cudaInstallSystem, setCudaInstallSystem] = useState(true);
-  const [conflictBusy, setConflictBusy] = useState(false);
-  const [selectedConflicts, setSelectedConflicts] = useState<Set<string>>(new Set());
-  const fileRef = useRef<HTMLInputElement | null>(null);
 
-  // Keep local tab selections in sync with persisted state (initial load +
-  // template prefill). Local radio clicks do not write state, so this does
-  // not fight the user's in-progress selection.
+  // Keep local tab selections in sync with persisted state (initial load).
+  // Local radio clicks do not write state, so this does not fight the
+  // user's in-progress selection.
   const selDriver = dep.state?.selected.driver ?? '';
   const selCuda = dep.state?.selected.cuda ?? '';
   useEffect(() => { if (selDriver) setDriverPick(selDriver); }, [selDriver]);
@@ -46,49 +41,12 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
   }, [dep.state?.selected.cuda_install_system]);
 
   const cudaLocked = Boolean(dep.state?.locks.cuda);
-  const vllmLocked = Boolean(dep.state?.locks.vllm);
 
   const TABS: { id: TabId; label: string; locked: boolean }[] = [
     { id: 'driver', label: t('GPU Driver'), locked: false },
     { id: 'cuda', label: 'CUDA', locked: cudaLocked },
-    { id: 'vllm', label: 'vLLM', locked: vllmLocked },
+    { id: 'vllm', label: 'vLLM', locked: false },
   ];
-
-  const handleExport = async () => {
-    const result = await dep.handleExport();
-    if (!result) return;
-    const blob = new Blob([result.yaml], { type: 'application/yaml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = result.filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleImportFile = async (file: File) => {
-    const text = await file.text();
-    await dep.handleImport(text);
-  };
-
-  const handleScan = async () => {
-    setConflictBusy(true);
-    setSelectedConflicts(new Set());
-    await dep.handleScanConflicts();
-    setConflictBusy(false);
-  };
-
-  const handleCleanup = async () => {
-    const packages = [...selectedConflicts];
-    if (packages.length === 0) return;
-    try {
-      await cleanupConflicts(packages);
-      setSelectedConflicts(new Set());
-      // the purge runs as a task — re-scan from the button once it finishes
-    } catch (e) {
-      showToast(apiErrorMessage(e));
-    }
-  };
 
   const snapshot = dep.state?.snapshots;
 
@@ -118,70 +76,6 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
         )}
 
         <PreflightCard preflight={dep.preflight} loading={dep.preflightLoading} onRefresh={dep.loadAll} />
-
-        {/* templates + tools */}
-        <div className="flex flex-wrap items-center gap-2">
-          {dep.templates.map((tpl) => (
-            <Button key={tpl.id} size="sm" onClick={() => dep.handleTemplate(tpl)} disabled={dep.busy}>
-              <Wrench className="w-3 h-3" />
-              {t('Template {id}: {name}', { id: tpl.id, name: t(tpl.name === 'Production stable' ? 'Production stable' : 'Cutting edge') })}
-            </Button>
-          ))}
-          <span className="w-px h-4 bg-border" aria-hidden="true" />
-          <Button size="sm" onClick={handleExport}><Download className="w-3 h-3" /> {t('Export env')}</Button>
-          <Button size="sm" onClick={() => fileRef.current?.click()}><Upload className="w-3 h-3" /> {t('Import env')}</Button>
-          <input ref={fileRef} type="file" accept=".yaml,.yml" className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImportFile(f); e.target.value = ''; }} />
-          <Button size="sm" onClick={handleScan} disabled={conflictBusy}>
-            <ScanLine className="w-3 h-3" /> {t('Conflict scan')}
-          </Button>
-        </div>
-
-        {dep.conflicts && (
-          <div className="border border-border rounded-lg p-3 space-y-2">
-            <div className="flex items-center gap-2 text-xs font-medium">
-              <PackageSearch className="w-3.5 h-3.5" />
-              {t('Residual nvidia / cuda packages ({count})', { count: dep.conflicts.length })}
-            </div>
-            {dep.conflicts.length === 0 ? (
-              <div className="text-xs text-text-muted">{t('No residual packages found.')}</div>
-            ) : (
-              <>
-                <div className="max-h-40 overflow-y-auto">
-                  <table className="w-full text-xs">
-                    <tbody>
-                      {dep.conflicts.map((pkg) => (
-                        <tr key={pkg.name} className="border-t border-border first:border-t-0">
-                          <td className="py-1 pr-2 w-6">
-                            <input
-                              type="checkbox"
-                              checked={selectedConflicts.has(pkg.name)}
-                              onChange={(e) => {
-                                const next = new Set(selectedConflicts);
-                                if (e.target.checked) next.add(pkg.name); else next.delete(pkg.name);
-                                setSelectedConflicts(next);
-                              }}
-                              className="accent-sky-400"
-                              aria-label={pkg.name}
-                            />
-                          </td>
-                          <td className="py-1 pr-2 font-mono">{pkg.name}</td>
-                          <td className="py-1 pr-2 text-text-muted">{pkg.version}</td>
-                          <td className="py-1 text-text-muted">{pkg.suggestion}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="flex justify-end">
-                  <Button size="sm" variant="danger" onClick={handleCleanup} disabled={selectedConflicts.size === 0}>
-                    {t('Purge selected ({count})', { count: selectedConflicts.size })}
-                  </Button>
-                </div>
-              </>
-            )}
-          </div>
-        )}
 
         {/* tabs */}
         <div className="flex gap-1 border-b border-border">
@@ -226,7 +120,6 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
         )}
         {activeTab === 'vllm' && (
           <VllmTab
-            locked={vllmLocked}
             info={dep.vllm}
             cudaVersion={dep.state?.selected.cuda ?? ''}
             cudaInstallSystem={Boolean(dep.state?.selected.cuda_install_system)}
