@@ -7,6 +7,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { useDeployment } from '../../hooks/useDeployment';
 import { PreflightCard } from '../deploy/PreflightCard';
+import { RiskPanel } from '../deploy/RiskPanel';
 import { MirrorPanel } from '../deploy/MirrorPanel';
 import { DriverTab } from '../deploy/DriverTab';
 import { CudaTab } from '../deploy/CudaTab';
@@ -155,6 +156,8 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
             </ul>
           </section>
         ) : null}
+
+        <RiskPanel />
       </div>
     </Modal>
   );

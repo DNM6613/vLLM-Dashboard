@@ -344,6 +344,11 @@ export const ZH: Record<string, string> = {
   'Select a task to view its log.': '选择任务以查看日志。',
   'Driver task started — follow it in the Task Center.': '驱动任务已启动 — 请到任务中心跟踪。',
   'vLLM install task started — follow it in the Task Center.': 'vLLM 安装任务已启动 — 请到任务中心跟踪。',
+
+  'Risks and Limitations': '风险与限制',
+  'Risk 1: driver change requires reboot': '风险 1：更换驱动必须重启服务器才能生效',
+  'Risk 3: open kernel driver': '风险 3：Blackwell 核心 GPU 起，仅支持 open 内核模块',
+  'Risk 5: driver purge': '风险 5：应用驱动前会 --purge 全部 nvidia-* 包，不可部分回退',
 };
 
 export const LANG_KEY = 'vllm_lang';
