@@ -221,8 +221,6 @@ export const ZH: Record<string, string> = {
     '显卡驱动 Tab 需要 ubuntu-drivers（仅支持 Ubuntu）。',
   'Configure a reachable mirror in the Mirror Sources panel.': '请在镜像源面板中配置可达的镜像。',
   'Model downloads may be slow/blocked.': '模型下载可能缓慢或被阻断。',
-  'nouveau is a fallback driver with poor performance — not suitable for vLLM':
-    'nouveau 是性能较差的回退驱动 — 不适合 vLLM',
 
   'Detected GPU: {gpus}': '检测到 GPU：{gpus}',
   'none': '无',

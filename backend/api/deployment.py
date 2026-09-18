@@ -193,8 +193,6 @@ async def get_drivers():
     for row in info["drivers"]:
         row = dict(row)
         row["installed"] = row["package"] in installed_packages
-        if row.get("nouveau"):
-            row["note"] = "nouveau is a fallback driver with poor performance — not suitable for vLLM"
         rows.append(row)
     rows.sort(key=_driver_sort_key)
     pending = ds.task_manager.pending_driver_task()
