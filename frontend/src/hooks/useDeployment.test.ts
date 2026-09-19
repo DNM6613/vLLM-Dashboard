@@ -89,6 +89,7 @@ describe('useDeployment.loadAll', () => {
     vi.mocked(api.getPreflight).mockRejectedValueOnce(new Error('timeout'));
     const { result } = renderHook(() => useDeployment(true));
     await waitFor(() => expect(result.current.preflightLoading).toBe(false));
+    expect(result.current.hasLoaded).toBe(true);
     expect(result.current.drivers).toBe(DRIVERS);
     expect(result.current.cuda).toBe(CUDA);
     expect(result.current.vllm).toBe(VLLM);
@@ -103,6 +104,7 @@ describe('useDeployment.loadAll', () => {
     stubAllGetters();
     const { result } = renderHook(() => useDeployment(true));
     await waitFor(() => expect(result.current.preflightLoading).toBe(false));
+    expect(result.current.hasLoaded).toBe(true);
     expect(result.current.preflight).toBe(PREFLIGHT);
     expect(result.current.error).toBe('');
   });

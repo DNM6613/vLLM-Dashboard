@@ -75,7 +75,7 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
           <div className="border border-danger/40 bg-danger/10 rounded-lg p-3 text-xs text-danger">{dep.error}</div>
         )}
 
-        <PreflightCard preflight={dep.preflight} loading={dep.preflightLoading} onRefresh={dep.loadAll} />
+        <PreflightCard preflight={dep.preflight} loading={dep.preflightLoading} hasLoaded={dep.hasLoaded} onRefresh={dep.loadAll} />
 
         {/* tabs */}
         <div className="flex gap-1 border-b border-border">

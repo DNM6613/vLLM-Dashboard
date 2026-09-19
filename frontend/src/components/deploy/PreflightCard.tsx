@@ -5,6 +5,11 @@ import { useI18n, type Interp } from '../../i18n';
 interface PreflightCardProps {
   preflight: Preflight | null;
   loading: boolean;
+  // First load has settled (success or partial). The Re-check button only
+  // makes sense once a check exists to "re-" do, so it stays hidden before
+  // the initial load finishes — including the first render prior to the
+  // mount-time effect kicking off the load.
+  hasLoaded: boolean;
   onRefresh: () => void;
 }
 
@@ -31,21 +36,22 @@ const STATUS_STYLE = {
   fail: 'text-danger',
 } as const;
 
-export function PreflightCard({ preflight, loading, onRefresh }: PreflightCardProps) {
+export function PreflightCard({ preflight, loading, hasLoaded, onRefresh }: PreflightCardProps) {
   const { t } = useI18n();
 
   return (
     <section className="border border-border rounded-lg p-4">
       <div className="flex items-center justify-between mb-3">
         <h4 className="text-sm font-medium">{t('Pre-flight Check')}</h4>
-        <button
-          onClick={onRefresh}
-          disabled={loading}
-          className="flex items-center gap-1 text-xs text-text-muted hover:text-text transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
-          {t('Re-check')}
-        </button>
+        {hasLoaded && !loading && (
+          <button
+            onClick={onRefresh}
+            className="flex items-center gap-1 text-xs text-text-muted hover:text-text transition-colors"
+          >
+            <RefreshCw className="w-3 h-3" />
+            {t('Re-check')}
+          </button>
+        )}
       </div>
       {loading && !preflight ? (
         <div className="flex items-center gap-2 text-xs text-text-muted py-2">

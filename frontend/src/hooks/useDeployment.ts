@@ -25,6 +25,11 @@ import {
 export function useDeployment(open: boolean) {
   const [preflight, setPreflight] = useState<Preflight | null>(null);
   const [preflightLoading, setPreflightLoading] = useState(false);
+  // Becomes true once the first loadAll settles (success or partial). The
+  // Re-check button must not flash on the first render before the mount-time
+  // effect kicks off loadAll — preflightLoading alone starts false, so the
+  // button would appear for a frame on page open.
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [drivers, setDrivers] = useState<DriverList | null>(null);
   const [cuda, setCuda] = useState<CudaInfo | null>(null);
   const [vllm, setVllm] = useState<VllmInfo | null>(null);
@@ -55,6 +60,7 @@ export function useDeployment(open: boolean) {
       track(setVllm, getVllmInfo, 'vllm'),
     ]);
     setPreflightLoading(false);
+    setHasLoaded(true);
     if (failures.length === 0) {
       setError('');
     } else {
@@ -190,6 +196,7 @@ export function useDeployment(open: boolean) {
   return {
     preflight,
     preflightLoading,
+    hasLoaded,
     drivers,
     cuda,
     vllm,
