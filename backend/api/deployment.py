@@ -203,7 +203,12 @@ async def get_drivers():
     active_data = None
     if active is not None:
         active_data = active.to_dict()
-        active_data["log_tail"] = ds.task_manager.tail(active.id, 12)
+        # In-memory tail first; after a dashboard restart the deque is empty,
+        # so fall back to the log file so finished tasks still show their
+        # last lines in the driver tab panel.
+        active_data["log_tail"] = (
+            ds.task_manager.tail(active.id, 12) or ds.task_manager.file_tail(active.id, 12)
+        )
     return {
         "gpu_models": info.get("gpu_models", []),
         "drivers": rows,

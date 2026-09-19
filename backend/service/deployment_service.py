@@ -456,6 +456,22 @@ class DeploymentTaskManager:
             tail = self._tails.get(task_id)
             return list(tail)[-n:] if tail else []
 
+    def file_tail(self, task_id: str, n: int = 12) -> list[str]:
+        """Last n log lines from the log file (in-memory tail is empty after restarts)."""
+        path = os.path.join(LOG_DIR, f"{task_id}.log")
+        try:
+            with open(path, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                f.seek(max(0, size - 8192))
+                data = f.read()
+        except OSError:
+            return []
+        lines = data.decode("utf-8", "replace").splitlines()
+        if size > 8192 and lines:
+            lines = lines[1:]  # drop the possibly truncated first line
+        return lines[-n:]
+
     def read_log(self, task_id: str, offset: int = 0) -> tuple[str, int]:
         """Log content from byte ``offset`` (incremental fetch) + new offset."""
         with self._lock:

@@ -341,6 +341,28 @@ class TestTaskManager(unittest.TestCase):
         self.assertEqual([s["status"] for s in task.steps], ["done", "done"])
         self.assertIn("hello from step 0", "\n".join(mgr.tail(task.id)))
 
+    def test_file_tail_after_restart(self):
+        mgr = ds.DeploymentTaskManager()
+        task = mgr.create("driver", "unit-test", ["step-a"])
+
+        def runner(ctx):
+            with ctx.step(0):
+                ctx.log("line one")
+                ctx.log("line two")
+
+        mgr.submit(task, runner)
+        self._wait_terminal(task)
+        # A fresh manager (dashboard restart) loses the in-memory tail but
+        # the log file remains on disk.
+        fresh = ds.DeploymentTaskManager()
+        self.assertEqual(fresh.tail(task.id), [])
+        lines = fresh.file_tail(task.id, 5)
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[0].endswith("-- step-a --"))
+        self.assertTrue(lines[1].endswith("line one"))
+        self.assertTrue(lines[2].endswith("line two"))
+        self.assertEqual(fresh.file_tail("dep_missing", 5), [])
+
     def test_submit_deployment_error_sets_failure_and_suggestion(self):
         mgr = ds.DeploymentTaskManager()
         task = mgr.create("vllm", "unit-test", ["step-a"])
