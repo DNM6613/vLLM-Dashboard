@@ -1,10 +1,92 @@
 import { useState } from 'react';
-import { AlertTriangle, CheckCircle2, Power, Star } from 'lucide-react';
-import type { DriverList } from '../../api/deployment';
+import { AlertTriangle, CheckCircle2, Loader2, Minus, Power, Star, XCircle } from 'lucide-react';
+import type { DeployTask, DriverList } from '../../api/deployment';
 import { useI18n } from '../../i18n';
 import { Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { TagChip } from './TagChip';
+
+// Finished outcomes stay visible for a day, then clear out on their own.
+const FRESH_MS = 24 * 3600 * 1000;
+
+function isFreshFinished(task: DeployTask): boolean {
+  if (!task.finished_at) return true;
+  const age = Date.now() - new Date(task.finished_at).getTime();
+  return Number.isFinite(age) && age <= FRESH_MS;
+}
+
+function stepIcon(status: string) {
+  if (status === 'done') return <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />;
+  if (status === 'running') return <Loader2 className="w-3.5 h-3.5 text-accent animate-spin shrink-0" />;
+  if (status === 'failed') return <XCircle className="w-3.5 h-3.5 text-danger shrink-0" />;
+  if (status === 'cancelled' || status === 'skipped') return <Minus className="w-3.5 h-3.5 text-text-muted shrink-0" />;
+  return <span className="w-3.5 h-3.5 rounded-full border border-text-muted/40 shrink-0" />;
+}
+
+function TaskPanel({ task }: { task: DeployTask }) {
+  const { t } = useI18n();
+  const active = task.status === 'queued' || task.status === 'running';
+  const pkg = String(task.result?.package ?? '');
+  const tone = task.status === 'failed'
+    ? 'border-danger/40 bg-danger/10'
+    : task.status === 'success'
+      ? 'border-success/40 bg-success/10'
+      : active
+        ? 'border-accent/40 bg-accent/10'
+        : 'border-border bg-bg-hover/30';
+  const headIcon = task.status === 'failed' ? (
+    <XCircle className="w-4 h-4 text-danger shrink-0" />
+  ) : task.status === 'success' ? (
+    <CheckCircle2 className="w-4 h-4 text-success shrink-0" />
+  ) : active ? (
+    <Loader2 className="w-4 h-4 text-accent animate-spin shrink-0" />
+  ) : (
+    <Minus className="w-4 h-4 text-text-muted shrink-0" />
+  );
+  const showSteps = active || task.status === 'failed';
+  return (
+    <div className={`border rounded-lg p-3 ${tone}`}>
+      <div className="flex items-center gap-2">
+        {headIcon}
+        <span className="text-xs font-medium flex-1 min-w-0 truncate">
+          {t('Driver task progress')}{pkg ? ` · ${pkg}` : ''}
+        </span>
+        <span className="text-[11px] text-text-muted shrink-0">{t(task.status)}</span>
+      </div>
+      {showSteps && (
+        <ul className="mt-2 space-y-1">
+          {task.steps.map((s, i) => (
+            <li key={i} className="flex items-center gap-2 text-xs">
+              {stepIcon(s.status)}
+              <span className={s.status === 'pending' ? 'text-text-muted' : ''}>{t(s.name)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {task.status === 'failed' && (
+        <div className="mt-2 space-y-1">
+          {task.error && <div className="text-[11px] font-mono text-danger break-all">{task.error}</div>}
+          {task.suggestion && (
+            <div className="text-[11px] text-text-muted">{t('Suggestion')}: {task.suggestion}</div>
+          )}
+        </div>
+      )}
+      {task.status === 'success' && pkg && (
+        <div className="mt-2 text-xs text-text-muted">
+          {t('Driver {pkg} installed and verified.', { pkg })}
+        </div>
+      )}
+      {task.log_tail?.length ? (
+        <pre className="mt-2 max-h-28 overflow-y-auto bg-bg rounded px-2 py-1.5 font-mono text-[11px] leading-relaxed text-text-muted whitespace-pre-wrap break-all">
+          {task.log_tail.join('\n')}
+        </pre>
+      ) : null}
+      {active && (
+        <div className="mt-2 text-[11px] text-text-muted">{t('Full log: Task Center (bottom-right).')}</div>
+      )}
+    </div>
+  );
+}
 
 interface DriverTabProps {
   data: DriverList | null;
@@ -75,6 +157,12 @@ export function DriverTab({ data, picked, onPick, onApply, onReboot, busy }: Dri
             </div>
           </div>
         </div>
+      )}
+
+      {data.active_task && data.active_task.status !== 'awaiting_reboot' &&
+        (data.active_task.status === 'queued' || data.active_task.status === 'running' ||
+          isFreshFinished(data.active_task)) && (
+        <TaskPanel task={data.active_task} />
       )}
 
       <div className="border border-border rounded-lg overflow-hidden">

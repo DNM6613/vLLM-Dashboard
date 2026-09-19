@@ -141,10 +141,11 @@ def _default_state() -> dict[str, Any]:
         "selected": {
             "driver": "",
             "cuda": "",
-            # Built-in runtime is the default; the system CUDA Toolkit
-            # (nvcc, needed by some models for JIT/AOT kernel compilation)
-            # is an explicit opt-in.
-            "cuda_install_system": False,
+            # System CUDA Toolkit is the robust default: it provides nvcc for
+            # JIT/AOT kernel compilation that some models require at startup.
+            # The vLLM built-in runtime alone covers most cases but can fail
+            # to start models that need the compiler.
+            "cuda_install_system": True,
             "vllm_version": "",
             "vllm_runtime": "builtin",
         },

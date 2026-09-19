@@ -20,8 +20,7 @@ export function CudaTab({
   onInstallSystemChange, onApply, busy,
 }: CudaTabProps) {
   const { t } = useI18n();
-  const [showAdvanced, setShowAdvanced] = useState(true);
-  const [customVersion, setCustomVersion] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [acting, setActing] = useState(false);
 
   if (locked) {
@@ -37,7 +36,7 @@ export function CudaTab({
     return <div className="text-xs text-text-muted py-6 text-center">{t('Loading...')}</div>;
   }
 
-  const version = customVersion.trim() || pickedVersion;
+  const version = pickedVersion;
   const required = version ? info.min_driver[version] : undefined;
   const incompatible = required != null && info.driver_major != null && info.driver_major < required;
   const selMajor = info.selected_driver_major;
@@ -90,7 +89,7 @@ export function CudaTab({
                 <tr
                   key={v}
                   className={`border-t border-border ${installSystem ? 'cursor-pointer' : 'opacity-50'} ${pickedVersion === v ? 'bg-bg-hover/60' : installSystem ? 'hover:bg-bg-hover/30' : ''}`}
-                  onClick={installSystem ? () => { setCustomVersion(''); onPickVersion(v); } : undefined}
+                  onClick={installSystem ? () => onPickVersion(v) : undefined}
                 >
                   <td className="px-3 py-2">
                     <input
@@ -146,19 +145,37 @@ export function CudaTab({
         {t('Advanced options')}
       </button>
       {showAdvanced && (
-        <div>
-          <label className="block text-xs text-text-muted mb-1" htmlFor="cuda-custom">
-            {t('Custom CUDA version (for testing)')}
+        <div className="space-y-1.5 border border-border rounded-lg p-3">
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <input
+              type="radio"
+              name="cuda-mode"
+              checked={installSystem}
+              onChange={() => onInstallSystemChange(true)}
+              className="accent-sky-400"
+            />
+            <span>
+              {t('Install system CUDA Toolkit (recommended — most robust)')}
+              <span className="block text-text-muted pl-4">
+                {t('apt install from the NVIDIA repo + PATH / LD_LIBRARY_PATH environment (persisted)')}
+              </span>
+            </span>
           </label>
-          <input
-            id="cuda-custom"
-            type="text"
-            value={customVersion}
-            disabled={!installSystem}
-            onChange={(e) => setCustomVersion(e.target.value.replace(/[^0-9.]/g, ''))}
-            placeholder="12.4"
-            className="w-full px-3 py-1.5 bg-bg rounded-lg border border-border text-text focus:border-accent focus:outline-none font-mono text-sm disabled:opacity-50"
-          />
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <input
+              type="radio"
+              name="cuda-mode"
+              checked={!installSystem}
+              onChange={() => onInstallSystemChange(false)}
+              className="accent-sky-400"
+            />
+            <span>
+              {t('Skip system CUDA (may fail without nvcc)')}
+              <span className="block text-text-muted pl-4">
+                {t('No system CUDA is installed; the vLLM tab interlocks with the toolkit already on the server.')}
+              </span>
+            </span>
+          </label>
         </div>
       )}
 
@@ -170,39 +187,6 @@ export function CudaTab({
           })}
         </div>
       )}
-
-      <div className="space-y-1.5 border border-border rounded-lg p-3">
-        <label className="flex items-center gap-2 text-xs cursor-pointer">
-          <input
-            type="radio"
-            name="cuda-mode"
-            checked={installSystem}
-            onChange={() => onInstallSystemChange(true)}
-            className="accent-sky-400"
-          />
-          <span>
-            {t('Install system CUDA Toolkit (recommended — most robust)')}
-            <span className="block text-text-muted pl-4">
-              {t('apt install from the NVIDIA repo + PATH / LD_LIBRARY_PATH environment (persisted)')}
-            </span>
-          </span>
-        </label>
-        <label className="flex items-center gap-2 text-xs cursor-pointer">
-          <input
-            type="radio"
-            name="cuda-mode"
-            checked={!installSystem}
-            onChange={() => onInstallSystemChange(false)}
-            className="accent-sky-400"
-          />
-          <span>
-            {t('Skip system CUDA (may fail without nvcc)')}
-            <span className="block text-text-muted pl-4">
-              {t('No system CUDA is installed; the vLLM tab interlocks with the toolkit already on the server.')}
-            </span>
-          </span>
-        </label>
-      </div>
 
       <div className="flex items-center justify-between pt-1">
         <div className="text-xs text-text-muted">

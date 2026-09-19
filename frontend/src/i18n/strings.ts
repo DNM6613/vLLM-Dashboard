@@ -272,7 +272,6 @@ export const ZH: Record<string, string> = {
   'Installed driver {major} supports up to CUDA {max}': '已装驱动 {major} 最高支持 CUDA {max}',
   'Selected driver {major} supports up to CUDA {max}': '已选驱动 {major} 最高支持 CUDA {max}',
   'Advanced options': '高级选项',
-  'Custom CUDA version (for testing)': '自定义 CUDA 版本（测试用）',
   'Current driver {major} cannot use CUDA {ver} — go back to the GPU Driver tab and upgrade the driver first.':
     '当前驱动 {major} 无法使用 CUDA {ver} — 请返回显卡驱动 Tab 先升级驱动。',
   'Install system CUDA Toolkit (recommended — most robust)': '安装系统 CUDA Toolkit（推荐 — 最稳妥）',
@@ -340,6 +339,14 @@ export const ZH: Record<string, string> = {
   'Select a task to view its log.': '选择任务以查看日志。',
   'Driver task started — follow it in the Task Center.': '驱动任务已启动 — 请到任务中心跟踪。',
   'vLLM install task started — follow it in the Task Center.': 'vLLM 安装任务已启动 — 请到任务中心跟踪。',
+  'Stop vLLM service': '停止 vLLM 服务',
+  'Uninstall old driver': '卸载旧驱动',
+  'Install target driver': '安装目标驱动',
+  'Wait for reboot': '等待重启',
+  'Driver task progress': '驱动任务进度',
+  'Full log: Task Center (bottom-right).': '完整日志见右下角任务中心。',
+  'Suggestion': '建议',
+  'Driver {pkg} installed and verified.': '驱动 {pkg} 已安装并验证生效。',
 
   'Risks and Limitations': '风险与限制',
   'Risk 1: driver change requires reboot': '更换驱动必须重启服务器才能生效',

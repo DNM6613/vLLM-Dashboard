@@ -25,9 +25,9 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
   const [activeTab, setActiveTab] = useState<TabId>('driver');
   const [driverPick, setDriverPick] = useState('');
   const [cudaPick, setCudaPick] = useState('');
-  // Matches the backend default (built-in runtime; see _default_state).
-  // The effect below resyncs from persisted state on load.
-  const [cudaInstallSystem, setCudaInstallSystem] = useState(false);
+  // Matches the backend default (system CUDA Toolkit = robust default; see
+  // _default_state). The effect below resyncs from persisted state on load.
+  const [cudaInstallSystem, setCudaInstallSystem] = useState(true);
 
   // Keep local tab selections in sync with persisted state (initial load).
   // Local radio clicks do not write state, so this does not fight the

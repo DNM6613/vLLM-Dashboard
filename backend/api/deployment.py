@@ -196,6 +196,14 @@ async def get_drivers():
         rows.append(row)
     rows.sort(key=_driver_sort_key)
     pending = ds.task_manager.pending_driver_task()
+    # Latest driver-kind task (any status) with its log tail — the driver
+    # tab renders live progress and outcomes in place of a manual trip to
+    # the task center.
+    active = next((t for t in ds.task_manager.list(50) if t.kind == "driver"), None)
+    active_data = None
+    if active is not None:
+        active_data = active.to_dict()
+        active_data["log_tail"] = ds.task_manager.tail(active.id, 12)
     return {
         "gpu_models": info.get("gpu_models", []),
         "drivers": rows,
@@ -207,6 +215,7 @@ async def get_drivers():
             {"id": pending.id, "package": pending.result.get("package", ""), "status": pending.status}
             if pending else None
         ),
+        "active_task": active_data,
     }
 
 

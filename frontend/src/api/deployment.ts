@@ -27,6 +27,7 @@ export interface DriverList {
   min_driver: number;
   driver_min_cuda: Record<string, string>;
   pending_task: { id: string; package: string; status: string } | null;
+  active_task: DeployTask | null;
 }
 
 export interface PreflightItem {

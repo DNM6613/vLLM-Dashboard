@@ -541,8 +541,8 @@ class TestCudaEndpoint(unittest.TestCase):
         body = self._get_cuda("13.0\n")
         self.assertEqual(body["current_toolkit"], "13.0")
         self.assertEqual(body["driver_major"], 595)
-        # built-in runtime default
-        self.assertFalse(body["install_system"])
+        # flipped robust default
+        self.assertTrue(body["install_system"])
 
     def test_no_nvcc_sentinel_becomes_empty(self):
         body = self._get_cuda("NO_NVCC\n")
