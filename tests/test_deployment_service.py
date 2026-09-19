@@ -363,6 +363,21 @@ class TestTaskManager(unittest.TestCase):
         self.assertTrue(lines[2].endswith("line two"))
         self.assertEqual(fresh.file_tail("dep_missing", 5), [])
 
+    def test_ordering_stable_across_restart(self):
+        # Task file order flips with every restart re-read; list() and
+        # pending_driver_task() must not depend on dict insertion order.
+        mgr = ds.DeploymentTaskManager()
+        t1 = mgr.create("driver", "first", ["s"])
+        t2 = mgr.create("driver", "second", ["s"])
+        t1.created_at = "2026-09-19 01:00:00"
+        t2.created_at = "2026-09-19 02:00:00"
+        t1.status = "awaiting_reboot"
+        t2.status = "awaiting_reboot"
+        mgr._persist_locked()
+        fresh = ds.DeploymentTaskManager()
+        self.assertEqual([t.id for t in fresh.list(10)], [t2.id, t1.id])
+        self.assertEqual(fresh.pending_driver_task().id, t2.id)
+
     def test_submit_deployment_error_sets_failure_and_suggestion(self):
         mgr = ds.DeploymentTaskManager()
         task = mgr.create("vllm", "unit-test", ["step-a"])

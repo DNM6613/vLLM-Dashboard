@@ -406,15 +406,17 @@ class DeploymentTaskManager:
             return self._tasks.get(task_id)
 
     def list(self, limit: int = 30) -> list[Task]:
+        # created_at (fixed-format, same clock) orders deterministically —
+        # dict insertion order flips after a restart re-reads the task file.
         with self._lock:
-            tasks = list(self._tasks.values())
-        return list(reversed(tasks))[:limit]
+            tasks = sorted(self._tasks.values(), key=lambda t: t.created_at, reverse=True)
+        return tasks[:limit]
 
     def pending_driver_task(self) -> Task | None:
         with self._lock:
             candidates = [t for t in self._tasks.values()
                           if t.kind == "driver" and t.status == "awaiting_reboot"]
-        return candidates[-1] if candidates else None
+        return max(candidates, key=lambda t: t.created_at) if candidates else None
 
     def cancel(self, task_id: str) -> bool:
         with self._lock:
