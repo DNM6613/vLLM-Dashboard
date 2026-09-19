@@ -20,7 +20,7 @@ export function CudaTab({
   onInstallSystemChange, onApply, busy,
 }: CudaTabProps) {
   const { t } = useI18n();
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(true);
   const [customVersion, setCustomVersion] = useState('');
   const [acting, setActing] = useState(false);
 

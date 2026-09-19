@@ -141,11 +141,10 @@ def _default_state() -> dict[str, Any]:
         "selected": {
             "driver": "",
             "cuda": "",
-            # System CUDA Toolkit is the robust default: it provides nvcc for
-            # JIT/AOT kernel compilation that some models require at startup.
-            # The vLLM built-in runtime alone covers most cases but can fail
-            # to start models that need the compiler.
-            "cuda_install_system": True,
+            # Built-in runtime is the default; the system CUDA Toolkit
+            # (nvcc, needed by some models for JIT/AOT kernel compilation)
+            # is an explicit opt-in.
+            "cuda_install_system": False,
             "vllm_version": "",
             "vllm_runtime": "builtin",
         },
@@ -736,11 +735,11 @@ def _run_driver(ctx: TaskContext, package: str, target_major: int | None) -> Non
             ctx.log(f"warning: stop_vllm: {stop.get('error')}")
     with ctx.step(1):
         ctx.run_long(
-            "apt-get remove --purge -y 'nvidia-*' && apt-get autoremove -y && apt-get autoclean",
+            "sudo apt-get remove --purge -y 'nvidia-*' && sudo apt-get autoremove -y && sudo apt-get autoclean",
             timeout=1800,
         )
     with ctx.step(2):
-        ctx.run_long(f"apt-get update -y && apt-get install -y {package}", timeout=3600)
+        ctx.run_long(f"sudo apt-get update -y && sudo apt-get install -y {package}", timeout=3600)
         deployment_state.set_snapshot("driver", current_pkg=package)
     with ctx.manager._lock:
         ctx.task.status = "awaiting_reboot"
@@ -780,7 +779,7 @@ def _run_cuda(ctx: TaskContext, version: str, pkg: str) -> None:
     with ctx.step(0):
         ctx.run_long(repo_script, timeout=900)
     with ctx.step(1):
-        ctx.run_long(f"apt-get install -y {pkg}", timeout=3600)
+        ctx.run_long(f"sudo apt-get install -y {pkg}", timeout=3600)
     with ctx.step(2):
         env_script = (
             "sudo tee /etc/profile.d/vllm-cuda.sh >/dev/null <<'VDBEOF'\n"
