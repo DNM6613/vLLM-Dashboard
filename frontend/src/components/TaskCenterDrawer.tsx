@@ -52,7 +52,7 @@ export function TaskCenterDrawer({ tasks }: TaskCenterDrawerProps) {
       {list.length > 0 && (
         <button
           onClick={() => (drawerOpen ? closeDrawer() : openDrawer())}
-          className="fixed bottom-5 right-5 z-40 flex items-center gap-2 px-3.5 py-2 rounded-full bg-bg-card border border-border shadow-lg text-sm text-text hover:bg-bg-hover transition-colors"
+          className="fixed bottom-5 right-5 z-[60] flex items-center gap-2 px-3.5 py-2 rounded-full bg-bg-card border border-border shadow-lg text-sm text-text hover:bg-bg-hover transition-colors"
           aria-label={t('Task center')}
         >
           {activeCount > 0 ? (
@@ -69,7 +69,7 @@ export function TaskCenterDrawer({ tasks }: TaskCenterDrawerProps) {
       )}
 
       {drawerOpen && (
-        <aside className="fixed top-0 right-0 h-full w-full max-w-md z-30 bg-bg-card border-l border-border shadow-2xl flex flex-col">
+        <aside className="fixed top-0 right-0 h-full w-full max-w-md z-50 bg-bg-card border-l border-border shadow-2xl flex flex-col">
           <header className="flex items-center justify-between px-4 py-3 border-b border-border">
             <h3 className="text-sm font-medium">{t('Task center')}</h3>
             <button onClick={closeDrawer} className="text-text-muted hover:text-text" aria-label={t('Close')}>
