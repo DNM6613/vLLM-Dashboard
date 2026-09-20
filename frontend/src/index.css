@@ -86,6 +86,14 @@
   animation: top-stack-in 0.15s ease-out;
 }
 
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 .xterm-viewport {
   scrollbar-width: none;
   -ms-overflow-style: none;
