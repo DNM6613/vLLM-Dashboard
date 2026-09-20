@@ -44,7 +44,7 @@ export function LaunchConfigModal({ modelName, modelPath, command, onCommandChan
           id="lc-env-vars"
           value={envVars}
           onChange={(e) => onEnvVarsChange(e.target.value)}
-          className={`${FIELD_CLASS} h-28 mb-3`}
+          className={`${FIELD_CLASS} h-32 mb-3`}
           placeholder={t('# KEY=VALUE per line (export prefix ok), applied before the start command\nHF_ENDPOINT=https://hf-mirror.com')}
         />
       </div>
