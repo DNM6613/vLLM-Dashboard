@@ -147,7 +147,12 @@ export function HomePage() {
   }, [fetchHardwareMetrics]);
 
   useEffect(() => {
-    fetchModelStatus().catch((err) => { console.error('Initial model status error:', err); });
+    // Model status is polled over HTTP (5s) instead of riding the hardware WS frames:
+    // independent cadence, and no per-frame model fetch.
+    const poll = () => fetchModelStatus().catch((err) => { console.error('Model status poll error:', err); });
+    void poll();
+    const timer = setInterval(poll, 5000);
+    return () => clearInterval(timer);
   }, [fetchModelStatus]);
 
   return (

@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import { getWsUrl } from '../api/client';
 import { useHardwareStore } from '../stores/hardware';
-import { useModelStatusStore } from '../stores/modelStatus';
 
 export function useHardwareWebSocket() {
   useEffect(() => {
@@ -9,13 +8,6 @@ export function useHardwareWebSocket() {
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let isManualClose = false;
     let retryCount = 0;
-    let lastFrameAt = 0;
-    const stallTimer = setInterval(() => {
-      if (lastFrameAt && Date.now() - lastFrameAt > 15000) {
-        const s = useModelStatusStore.getState();
-        if (s.model !== null) s.clearModel();
-      }
-    }, 5000);
 
     const connect = () => {
       const socket = new WebSocket(getWsUrl('/ws/hardware'));
@@ -27,9 +19,7 @@ export function useHardwareWebSocket() {
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'gpu_metrics') {
-            lastFrameAt = Date.now();
             useHardwareStore.getState().addMetrics(data.data);
-            useModelStatusStore.getState().setModel(data.data.model ?? null);
           }
         } catch {  }
       };
@@ -46,7 +36,6 @@ export function useHardwareWebSocket() {
 
     return () => {
       isManualClose = true;
-      clearInterval(stallTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (ws) ws.close();
     };

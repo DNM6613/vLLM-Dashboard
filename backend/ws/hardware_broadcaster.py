@@ -11,8 +11,6 @@ from ..config.remote_client import config_manager
 from ..executor.remote_executor import get_remote_executor
 from ..middleware import ws_api_key_valid, ws_connections_total
 from ..monitor.gpu_metrics import map_nvidia_smi_gpus
-from ..monitor.model_monitor import _disconnected_payload as _model_disconnected_payload
-from ..monitor.model_monitor import fetch_model_status
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +41,6 @@ def _get_hardware_snapshot():
         "disk": get_disk_info_local(),
     }
 
-async def _fetch_model_status():
-    try:
-        return await fetch_model_status()
-    except Exception as e:
-        logger.error(f"Failed to fetch vLLM model status: {e}")
-        return _model_disconnected_payload()
-
 class HardwareBroadcaster:
 
     _POLL_INTERVAL = 0.5
@@ -71,13 +62,11 @@ class HardwareBroadcaster:
     async def _poll_loop(self) -> None:
         while self._clients:
             gpus, sys_metrics = await asyncio.to_thread(_get_hardware_snapshot)
-            model_status = await _fetch_model_status()
             data = {
                 "gpus": gpus,
                 "cpu": sys_metrics.get("cpu"),
                 "memory": sys_metrics.get("memory"),
                 "disk": sys_metrics.get("disk"),
-                "model": model_status,
                 "timestamp": time.time(),
             }
             if not gpus:
