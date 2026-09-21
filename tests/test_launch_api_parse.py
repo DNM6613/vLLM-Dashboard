@@ -154,12 +154,35 @@ class TestResolveLaunchApi(unittest.TestCase):
     def test_no_candidates_returns_none(self):
         self.assertEqual(mlc.resolve_launch_api(), (None, None))
 
-    def test_stopped_models_ignored(self):
+    def test_stopped_model_does_not_shadow_running(self):
+        mlc.state_machine = _FakeState(
+            [_FakeModel("a", ModelStatus.STOPPED),
+             _FakeModel("b", ModelStatus.RUNNING)],
+            current_id=None)
+        self._configs["a"] = {
+            "start_command": "vllm serve /m --port 8400", "env_vars": ""}
+        self._configs["b"] = {
+            "start_command": "vllm serve /m --port 8401 --api-key kb",
+            "env_vars": ""}
+        self.assertEqual(mlc.resolve_launch_api(), (8401, "kb"))
+
+    def test_no_serving_current_model_config_still_resolves(self):
+        # Deadlock breaker: state says stopped (vLLM started outside the
+        # dashboard), but the current model's config must still be probed
+        # so the API key can be resolved and the state re-synced.
+        mlc.state_machine = _FakeState(
+            [_FakeModel("a", ModelStatus.STOPPED)], current_id="a")
+        self._configs["a"] = {
+            "start_command": "vllm serve /m --port 8402",
+            "env_vars": "export VLLM_API_KEY=sk-a"}
+        self.assertEqual(mlc.resolve_launch_api(), (8402, "sk-a"))
+
+    def test_no_serving_no_current_uses_any_model(self):
         mlc.state_machine = _FakeState(
             [_FakeModel("a", ModelStatus.STOPPED)], current_id=None)
         self._configs["a"] = {
-            "start_command": "vllm serve /m --port 8400", "env_vars": ""}
-        self.assertEqual(mlc.resolve_launch_api(), (None, None))
+            "start_command": "vllm serve /m --port 8403", "env_vars": ""}
+        self.assertEqual(mlc.resolve_launch_api(), (8403, None))
 
     def test_running_model_config_used(self):
         mlc.state_machine = _FakeState(
