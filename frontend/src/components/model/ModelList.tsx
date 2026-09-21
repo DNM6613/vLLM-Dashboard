@@ -1,5 +1,5 @@
-import { memo, useState } from 'react';
-import { Folder, FolderDown, RefreshCw, Loader2, Play, Square, Settings, Trash2, Gauge, HardDrive, AlertCircle, AlertTriangle, Copy, Eye, EyeOff, Globe, Key } from 'lucide-react';
+import { memo } from 'react';
+import { Folder, FolderDown, RefreshCw, Loader2, Play, Square, Settings, Trash2, Gauge, HardDrive, AlertCircle, AlertTriangle, Copy, Globe, Key } from 'lucide-react';
 import { formatSize, fmtNum } from '../../utils/format';
 import { copyText } from '../../utils/clipboard';
 import { ModelStatus } from '../../types';
@@ -35,21 +35,28 @@ interface ModelListProps {
 
 function ModelApiInfo({ endpoint, apiKey }: { endpoint: string | null; apiKey: string | null }) {
   const { t } = useI18n();
-  const [revealed, setRevealed] = useState(false);
+  const copy = (text: string) => {
+    void copyText(text).then((ok) => {
+      showToast(ok ? t('Copied') : t('Copy failed'), ok ? 'info' : 'error');
+    });
+  };
   return (
     <div className="mt-1 space-y-1">
       {endpoint && (
         <div className="flex items-center gap-1.5 text-xs font-mono text-text-muted" title={t('OpenAI Endpoint')}>
           <Globe className="w-3 h-3 shrink-0" />
           <span className="truncate">{endpoint}</span>
+          <IconButton size="xs" ariaLabel={t('Copy OpenAI endpoint')} onClick={() => copy(endpoint)}>
+            <Copy className="w-3 h-3 text-text-muted" />
+          </IconButton>
         </div>
       )}
       {apiKey && (
         <div className="flex items-center gap-1.5 text-xs font-mono text-text-muted">
           <Key className="w-3 h-3 shrink-0" />
-          <span className="truncate">{revealed ? apiKey : '********'}</span>
-          <IconButton size="xs" ariaLabel={revealed ? t('Hide API Key') : t('Show API Key')} onClick={() => setRevealed(v => !v)}>
-            {revealed ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+          <span className="truncate">{apiKey}</span>
+          <IconButton size="xs" ariaLabel={t('Copy API Key')} onClick={() => copy(apiKey)}>
+            <Copy className="w-3 h-3 text-text-muted" />
           </IconButton>
         </div>
       )}
