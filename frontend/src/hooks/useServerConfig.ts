@@ -12,7 +12,7 @@ const BMC_DISCONNECT_HOLD_MS = 30_000;
 export function useServerConfig() {
   const { t } = useI18n();
   const [serverConfig, setServerConfig] = useState<ServerConfigType>({
-    id: 'default', host: '', port: 8000, use_auth: false, ssh_port: 22,
+    id: 'default', host: '', use_auth: false, ssh_port: 22,
     ssh_username: '', ssh_password: '', ssh_key_path: '', venv_name: '.vllm',
     model_save_path: '',
     bmc_host: '', bmc_username: '', bmc_password: '',

@@ -24,6 +24,10 @@ from .settings import settings
 
 logger = logging.getLogger(__name__)
 
+# vLLM's default API port, used when neither the launch command (--port) nor
+# the environment (PORT) specifies one.
+VLLM_DEFAULT_PORT = 8000
+
 HEALTH_REACH_PROBE_TIMEOUT = 2
 
 _shared_http_client: httpx.AsyncClient | None = None
@@ -56,9 +60,9 @@ class ApiTarget:
 
     The port and API key come from the launch config of the model currently
     being served (``--port`` / ``--api-key`` flags or ``PORT`` / ``API_KEY``
-    env vars); the stored server config is the fallback. ``api_key`` is the
-    effective key (the one actually sent in the Authorization header, or
-    ``None`` when the API is unauthenticated).
+    env vars); when no port is specified there, the vLLM default port is
+    used. ``api_key`` is the effective key (the one actually sent in the
+    Authorization header, or ``None`` when the API is unauthenticated).
     """
     base_url: str
     port: int
@@ -70,7 +74,7 @@ def resolve_api_target(config: ServerConfig | None = None) -> ApiTarget:
         config = config_manager.get_config()
     port, parsed_key = resolve_launch_api()
     if port is None:
-        port = config.port
+        port = VLLM_DEFAULT_PORT
     api_key = parsed_key
     if api_key is None and config.use_auth and config.api_key:
         api_key = config.api_key

@@ -47,7 +47,6 @@ export interface SoftwareInfo {
 export interface ServerConfig {
   id: string;
   host: string;
-  port: number;
   api_key?: string;
   use_auth: boolean;
   ssh_port: number;

@@ -31,7 +31,6 @@ class ServerConfig(BaseModel):
 
     id: str = "default"
     host: str = ""
-    port: int = Field(8000, ge=1, le=65535)
     api_key: str | None = None
     use_auth: bool = False
     extra_headers: dict[str, str] = {}
@@ -176,15 +175,6 @@ class ServerConfig(BaseModel):
             if not isinstance(val, str) or len(val) > 256:
                 raise ValueError("extra_headers values must be strings (max 256 chars)")
         return v
-
-    def get_base_url(self) -> str:
-        return f"http://{self.host}:{self.port}"
-
-    def get_api_url(self, path: str = "") -> str:
-        base = self.get_base_url()
-        if path:
-            return f"{base}/{path.lstrip('/')}"
-        return base
 
     def is_remote(self) -> bool:
         return self.host != "" and self.host not in ("localhost", "127.0.0.1")
