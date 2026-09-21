@@ -146,6 +146,12 @@ def resolve_launch_api() -> tuple[int | None, str | None]:
     model. The first candidate whose launch config yields a port or key
     wins. Returns ``(None, None)`` when nothing yields a value — callers
     fall back to the stored server config.
+
+    When no model is tracked as serving, the current model (any status) and
+    then any other model are still tried: otherwise a stale ``stopped``
+    state (e.g. vLLM started outside the dashboard) means the API key is
+    never resolved, every probe 401s, and the status sync can never flip
+    the state back to running.
     """
     models = state_machine.get_all_models()
     # Only trust the current model id if that model is actually serving; a
@@ -162,6 +168,12 @@ def resolve_launch_api() -> tuple[int | None, str | None]:
     for status in (ModelStatus.LOADING, ModelStatus.RUNNING):
         for model in models:
             if model.id not in candidates and model.status == status:
+                candidates.append(model.id)
+    if not candidates:
+        if current_id:
+            candidates.append(current_id)
+        for model in models:
+            if model.id not in candidates:
                 candidates.append(model.id)
     for model_id in candidates:
         config = launch_config_manager.load_config(model_id)
