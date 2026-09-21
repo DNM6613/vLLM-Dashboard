@@ -218,3 +218,5 @@ class StateMachine:
             del self.models[model_id]
             self._schedule_save()
             return True
+
+state_machine = StateMachine()

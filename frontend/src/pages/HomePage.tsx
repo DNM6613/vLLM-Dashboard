@@ -52,6 +52,7 @@ export function HomePage() {
   useHardwareWebSocket();
 
   const fetchModelStatus = useModelStatusStore(s => s.fetchModelStatus);
+  const modelRuntimeStatus = useModelStatusStore(s => s.model);
 
   useEffect(() => {
     if (sshConnected) return;
@@ -105,6 +106,11 @@ export function HomePage() {
       await handleBenchmark(pending);
     })();
   }, [models, handleBenchmark, benchmarkingIds]);
+
+  const openaiEndpoint = modelRuntimeStatus?.api_port != null && serverConfig.host
+    ? `http://${serverConfig.host}:${modelRuntimeStatus.api_port}/v1`
+    : null;
+  const openaiApiKey = modelRuntimeStatus?.api_key ?? null;
 
   const serverOn = sshConnected || apiConnected;
 
@@ -252,6 +258,8 @@ export function HomePage() {
               onOpenBenchmark={openBenchmarkModal}
               download={downloadProgressInfo}
               onCancelDownload={handleCancelDownload}
+              openaiEndpoint={openaiEndpoint}
+              openaiApiKey={openaiApiKey}
             />
           </div>
         </div>

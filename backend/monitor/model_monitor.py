@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 from prometheus_client.parser import text_string_to_metric_families
 
-from ..config.remote_client import config_manager, get_auth_headers, get_http_client
+from ..config.remote_client import config_manager, get_http_client, resolve_api_target
 from ..config.server_config import ServerConfig
 
 logger = logging.getLogger(__name__)
@@ -155,10 +155,13 @@ class ModelStatusTracker:
 
 model_status_tracker = ModelStatusTracker()
 
-def _disconnected_payload(timestamp: float | None = None) -> dict[str, Any]:
+def _disconnected_payload(timestamp: float | None = None, api_port: int | None = None,
+                          api_key: str | None = None) -> dict[str, Any]:
     return {
         "status": "disconnected",
         "models": [],
+        "api_port": api_port,
+        "api_key": api_key,
         "running_requests": None,
         "waiting_requests": None,
         "kv_cache_usage_pct": None,
@@ -181,23 +184,23 @@ def _to_ms(seconds: float | None) -> float | None:
 async def fetch_model_status(config: ServerConfig | None = None) -> dict[str, Any]:
     if config is None:
         config = config_manager.get_config()
+    target = resolve_api_target(config)
     if not config.host:
-        return _disconnected_payload()
+        return _disconnected_payload(api_port=target.port, api_key=target.api_key)
 
     now = time.time()
     client = get_http_client()
-    headers = get_auth_headers(config)
     try:
         response = await client.get(
-            f"{config.get_base_url()}/metrics",
+            f"{target.base_url}/metrics",
             timeout=METRICS_FETCH_TIMEOUT,
-            headers=headers,
+            headers=target.headers,
         )
         response.raise_for_status()
         parsed = parse_vllm_metrics(response.text)
     except Exception as e:
         logger.debug("Fetch vLLM /metrics failed: %s", e)
-        return _disconnected_payload(now)
+        return _disconnected_payload(now, api_port=target.port, api_key=target.api_key)
 
     counters = {
         key: parsed[key]
@@ -231,6 +234,8 @@ async def fetch_model_status(config: ServerConfig | None = None) -> dict[str, An
     return {
         "status": "connected",
         "models": sorted(parsed["models"]),
+        "api_port": target.port,
+        "api_key": target.api_key,
         "running_requests": parsed["running_requests"],
         "waiting_requests": parsed["waiting_requests"],
         "kv_cache_usage_pct": parsed["kv_cache_usage_pct"],
