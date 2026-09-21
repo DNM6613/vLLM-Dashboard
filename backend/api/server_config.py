@@ -22,7 +22,6 @@ router = APIRouter(prefix="/api/v1/config", tags=["config"])
 class ServerConfigUpdate(BaseModel):
     id: str | None = None
     host: str | None = None
-    port: int | None = None
     api_key: str | None = None
     use_auth: bool | None = None
     ssh_port: int | None = None

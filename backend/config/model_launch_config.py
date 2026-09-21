@@ -145,7 +145,7 @@ def resolve_launch_api() -> tuple[int | None, str | None]:
     in-flight start the backend must probe to detect), then any RUNNING
     model. The first candidate whose launch config yields a port or key
     wins. Returns ``(None, None)`` when nothing yields a value — callers
-    fall back to the stored server config.
+    fall back to the vLLM default port.
 
     When no model is tracked as serving, the current model (any status) and
     then any other model are still tried: otherwise a stale ``stopped``
