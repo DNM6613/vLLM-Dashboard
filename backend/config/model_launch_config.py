@@ -81,9 +81,11 @@ def parse_launch_api(start_command: str, env_vars: str) -> tuple[int | None, str
     """Extract the vLLM API port and API key from a model launch config.
 
     Scans the start command for ``--port`` / ``--api-key`` / ``--api-keys``
-    flags and falls back to ``PORT`` / ``API_KEY`` environment variables;
-    command flags take precedence. Returns ``(port, api_key)`` — either may
-    be ``None`` when not specified.
+    flags and falls back to environment variables: ``PORT`` for the port,
+    ``VLLM_API_KEY`` then ``API_KEY`` for the key (vLLM itself reads
+    ``VLLM_API_KEY`` when no ``--api-key`` flag is given). Command flags
+    take precedence. Returns ``(port, api_key)`` — either may be ``None``
+    when not specified.
     """
     port: int | None = None
     api_key: str | None = None
@@ -121,11 +123,17 @@ def parse_launch_api(start_command: str, env_vars: str) -> tuple[int | None, str
             env_pairs = parse_env_vars(env_vars or "")
         except ValueError:
             env_pairs = []
+        vllm_api_key: str | None = None
+        generic_api_key: str | None = None
         for key, value in env_pairs:
             if key == "PORT" and port is None:
                 port = _to_port(value)
-            elif key == "API_KEY" and api_key is None:
-                api_key = value or None
+            elif key == "VLLM_API_KEY" and vllm_api_key is None:
+                vllm_api_key = value or None
+            elif key == "API_KEY" and generic_api_key is None:
+                generic_api_key = value or None
+        if api_key is None:
+            api_key = vllm_api_key or generic_api_key
 
     return port, api_key
 

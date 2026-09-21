@@ -50,6 +50,43 @@ class TestParseLaunchApi(unittest.TestCase):
             (None, "k2"),
         )
 
+    def test_vllm_api_key_env(self):
+        # vLLM reads VLLM_API_KEY when no --api-key flag is given
+        self.assertEqual(
+            mlc.parse_launch_api(
+                "vllm serve /m",
+                'export VLLM_API_KEY="sk-my-secret-key-121541"'),
+            (None, "sk-my-secret-key-121541"),
+        )
+
+    def test_vllm_api_key_env_with_command_port(self):
+        # production launch config shape: --port in the command, key in env
+        cmd = (
+            "vllm serve unsloth/Qwen3.8-27B-NVFP4 \\\n"
+            "  --enable-prefix-caching \\\n"
+            "  --port 8000"
+        )
+        self.assertEqual(
+            mlc.parse_launch_api(
+                cmd,
+                "export HF_HUB_OFFLINE=1\n"
+                'export VLLM_API_KEY="sk-my-secret-key-121541"'),
+            (8000, "sk-my-secret-key-121541"),
+        )
+
+    def test_command_wins_over_vllm_api_key_env(self):
+        self.assertEqual(
+            mlc.parse_launch_api(
+                "vllm serve /m --api-key c1", "VLLM_API_KEY=e1"),
+            (None, "c1"),
+        )
+
+    def test_vllm_api_key_wins_over_generic_api_key(self):
+        self.assertEqual(
+            mlc.parse_launch_api("vllm serve /m", "VLLM_API_KEY=v1\nAPI_KEY=g1"),
+            (None, "v1"),
+        )
+
     def test_nothing_specified(self):
         self.assertEqual(mlc.parse_launch_api("vllm serve /m", ""), (None, None))
 
