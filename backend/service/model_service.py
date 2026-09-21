@@ -10,11 +10,11 @@ from datetime import datetime
 
 from fastapi import HTTPException
 
-from ..config.model_launch_config import launch_config_manager
-from ..config.remote_client import config_manager, get_auth_headers, get_http_client
+from ..config.model_launch_config import launch_config_manager, parse_env_vars
+from ..config.remote_client import config_manager, get_http_client, resolve_api_target
 from ..config.settings import settings
 from ..console.session_manager import console_session_manager
-from ..controller.state_machine import StateMachine
+from ..controller.state_machine import state_machine
 from ..executor.remote.model_ops import DL_PROBE_SENTINEL, DL_PROCESS_PATTERN
 from ..executor.remote.process_ops import (
     _STOP_SELF_SENTINEL,
@@ -26,59 +26,6 @@ from ..executor.remote_executor import get_remote_executor
 from ..schemas.model import ModelInfo, ModelStatus
 
 logger = logging.getLogger(__name__)
-
-state_machine = StateMachine()
-
-_ENV_KEY_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
-
-def _strip_shell_comment(line: str) -> str:
-    """Drop a shell comment (``#`` at word start) while honoring quotes.
-
-    shlex.split does not treat ``#`` as a comment, so a trailing
-    ``# comment`` would otherwise fold into the value. A ``#`` only starts
-    a comment when it is at the beginning of the line or preceded by
-    whitespace, and never inside single/double quotes.
-    """
-    in_single = False
-    in_double = False
-    for i, ch in enumerate(line):
-        if ch == "'" and not in_double:
-            in_single = not in_single
-        elif ch == '"' and not in_single:
-            in_double = not in_double
-        elif ch == "#" and not in_single and not in_double:
-            if i == 0 or line[i - 1].isspace():
-                return line[:i].rstrip()
-    return line
-
-def _parse_env_vars(env_vars: str) -> list[tuple[str, str]]:
-    parsed: list[list[str]] = []
-    for raw_line in env_vars.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        line = _strip_shell_comment(line)
-        if not line:
-            continue
-        try:
-            tokens = shlex.split(line)
-        except ValueError:
-            raise ValueError(f"unparseable env line: {line!r}")
-        tokens = [t for t in tokens if t != "export"]
-        current: int | None = None
-        for token in tokens:
-            if "=" in token:
-                key, _sep, value = token.partition("=")
-                if not _ENV_KEY_RE.match(key):
-                    raise ValueError(f"expected KEY=VALUE: {line!r}")
-                parsed.append([key, value])
-                current = len(parsed) - 1
-            else:
-                if current is None:
-                    raise ValueError(f"expected KEY=VALUE: {line!r}")
-                prev_val = parsed[current][1]
-                parsed[current][1] = f"{prev_val} {token}".strip() if prev_val else token
-    return [(k, v) for k, v in parsed]
 
 LOADING_GRACE_SECONDS = 120
 
@@ -128,12 +75,12 @@ async def _sync_status_once(timeout: float, track_current: bool = False,
                             warn_unreachable: bool = False) -> int:
     config = config_manager.get_config()
     client = get_http_client()
-    auth_headers = get_auth_headers(config)
+    target = resolve_api_target(config)
     try:
         response = await client.get(
-            config.get_api_url('/v1/models'),
+            f"{target.base_url}/v1/models",
             timeout=timeout,
-            headers=auth_headers,
+            headers=target.headers,
         )
         response.raise_for_status()
         remote_models = response.json().get("data", [])
@@ -149,7 +96,7 @@ async def _sync_status_once(timeout: float, track_current: bool = False,
     vllm_process_exists = True
     strict_present: bool | None = None
     if (has_loading or has_running) and not remote_model_ids:
-        strict_present = await _check_vllm_present_strict(config.host, config.port)
+        strict_present = await _check_vllm_present_strict(config.host, target.port)
         vllm_process_exists = (strict_present is True)
 
     changed = 0
@@ -325,9 +272,9 @@ async def _benchmark_precheck(model_id: str) -> tuple:
 
     config = config_manager.get_config()
     client = get_http_client()
-    auth_headers = get_auth_headers(config)
+    target = resolve_api_target(config)
     try:
-        resp = await client.get(config.get_api_url('/v1/models'), timeout=10.0, headers=auth_headers)
+        resp = await client.get(f"{target.base_url}/v1/models", timeout=10.0, headers=target.headers)
         resp.raise_for_status()
         remote_models = resp.json().get("data", [])
     except httpx.HTTPError as e:
@@ -342,7 +289,7 @@ async def _benchmark_precheck(model_id: str) -> tuple:
             status_code=400,
             detail=f"Model '{model_id}' is not loaded on vLLM. Loaded models: {sorted(remote_ids)}"
         )
-    return client, auth_headers, vllm_model_id
+    return client, target.headers, vllm_model_id
 
 def _model_delete_target(resolved_path: str) -> str:
     return re.sub(r"/snapshots/[^/]+/?$", "", resolved_path)
@@ -454,11 +401,12 @@ async def start_model(model_id: str) -> dict:
         raise HTTPException(status_code=400, detail="Start command not configured")
 
     try:
-        parsed_env = _parse_env_vars(config.get("env_vars", ""))
+        parsed_env = parse_env_vars(config.get("env_vars", ""))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid environment variables: {e}")
 
     state_machine.update_model_status(model_id, ModelStatus.LOADING)
+    state_machine.set_current_model(model_id)
 
     executor = get_remote_executor()
     activate_cmd = executor._get_activate_cmd()
@@ -672,7 +620,7 @@ async def _unset_launch_env_vars(model_id: str) -> None:
     if not config:
         return
     try:
-        parsed_env = _parse_env_vars(config.get("env_vars", ""))
+        parsed_env = parse_env_vars(config.get("env_vars", ""))
     except ValueError as e:
         logger.warning(f"Failed to parse launch env vars for unset (model {model_id}): {e}")
         return
@@ -728,7 +676,7 @@ async def benchmark_model(model_id: str) -> dict:
         raise HTTPException(status_code=409,
                              detail=f"A benchmark is already running for model '{vllm_model_id}'")
     try:
-        url = config_manager.get_config().get_api_url('/v1/completions')
+        url = f"{resolve_api_target(config_manager.get_config()).base_url}/v1/completions"
         timeout = settings.BENCHMARK_TIMEOUT
         payload = {
             "model": vllm_model_id,

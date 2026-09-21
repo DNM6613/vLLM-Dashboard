@@ -7,11 +7,13 @@ import shlex
 import socket
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 from pydantic import ValidationError
 
+from .model_launch_config import resolve_launch_api
 from .server_config import (
     ConnectionDetail,
     DetailedConnectionStatus,
@@ -48,15 +50,41 @@ async def close_http_client() -> None:
     if client and not client.is_closed:
         await client.aclose()
 
-def get_auth_headers(config: ServerConfig | None = None) -> dict[str, str]:
+@dataclass
+class ApiTarget:
+    """A resolved vLLM API connection target.
+
+    The port and API key come from the launch config of the model currently
+    being served (``--port`` / ``--api-key`` flags or ``PORT`` / ``API_KEY``
+    env vars); the stored server config is the fallback. ``api_key`` is the
+    effective key (the one actually sent in the Authorization header, or
+    ``None`` when the API is unauthenticated).
+    """
+    base_url: str
+    port: int
+    headers: dict
+    api_key: str | None
+
+def resolve_api_target(config: ServerConfig | None = None) -> ApiTarget:
     if config is None:
         config = config_manager.get_config()
+    port, parsed_key = resolve_launch_api()
+    if port is None:
+        port = config.port
+    api_key = parsed_key
+    if api_key is None and config.use_auth and config.api_key:
+        api_key = config.api_key
     headers: dict[str, str] = {}
-    if config.use_auth and config.api_key:
-        headers["Authorization"] = f"Bearer {config.api_key}"
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     if config.extra_headers:
         headers.update(config.extra_headers)
-    return headers
+    return ApiTarget(
+        base_url=f"http://{config.host}:{port}",
+        port=port,
+        headers=headers,
+        api_key=api_key,
+    )
 
 def _get_legacy_secret_key_file() -> str:
     current_file = os.path.abspath(__file__)
@@ -268,10 +296,11 @@ class ConfigManager:
         start = time.time()
         try:
             client = get_http_client()
+            target = resolve_api_target(self.config)
             response = await client.get(
-                f"{self.config.get_base_url()}/v1/models",
+                f"{target.base_url}/v1/models",
                 timeout=3.0,
-                headers=get_auth_headers(self.config),
+                headers=target.headers,
             )
 
             if response.status_code == 200:
@@ -367,10 +396,11 @@ class ConfigManager:
     async def get_health(self) -> dict[str, Any]:
         if not self.config.host or self.config.host in ("localhost", "127.0.0.1"):
             return {"status": "no server configured"}
+        target = resolve_api_target(self.config)
         def _tcp_probe() -> bool:
             try:
                 with socket.create_connection(
-                        (self.config.host, self.config.port),
+                        (self.config.host, target.port),
                         timeout=HEALTH_REACH_PROBE_TIMEOUT):
                     return True
             except OSError:
@@ -379,12 +409,12 @@ class ConfigManager:
         if not await asyncio.to_thread(_tcp_probe):
             raise httpx.ConnectError(
                 f"host unreachable (TCP probe no response): "
-                f"{self.config.host}:{self.config.port}")
+                f"{self.config.host}:{target.port}")
         client = get_http_client()
         response = await client.get(
-            f"{self.config.get_base_url()}/health",
+            f"{target.base_url}/health",
             timeout=httpx.Timeout(5.0, connect=3.0),
-            headers=get_auth_headers(self.config),
+            headers=target.headers,
         )
         response.raise_for_status()
         try:

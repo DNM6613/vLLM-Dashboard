@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react';
-import { Settings, Key, Save, Loader2, Terminal, Globe, Radio, Power } from 'lucide-react';
+import { Settings, Save, Loader2, Terminal, Globe, Power } from 'lucide-react';
 import type { ServerConfig } from '../../types';
 import { useI18n } from '../../i18n';
 import { Button } from '../ui/Button';
@@ -15,12 +15,11 @@ interface ServerConfigModalProps {
   onClose: () => void;
 }
 
-const CRED_FIELDS = ['ssh_password', 'api_key', 'bmc_password'] as const;
+const CRED_FIELDS = ['ssh_password', 'bmc_password'] as const;
 type CredField = (typeof CRED_FIELDS)[number];
 
 const CRED_LABEL_KEY: Record<CredField, string> = {
   ssh_password: 'SSH Password',
-  api_key: 'API Key',
   bmc_password: 'BMC Password',
 };
 
@@ -29,22 +28,18 @@ const FIELD_CLASS = 'w-full px-3 py-1.5 bg-bg rounded-lg border border-border te
 export function ServerConfigModal({ config, onConfigChange, onSave, saving, message, onClose }: ServerConfigModalProps) {
   const { t } = useI18n();
   const [sshPortDraft, setSshPortDraft] = useState(String(config.ssh_port));
-  const [apiPortDraft, setApiPortDraft] = useState(String(config.port));
   const parsePort = (s: string): number | null => {
     if (!/^\d{1,5}$/.test(s)) return null;
     const n = parseInt(s, 10);
     return n >= 1 && n <= 65535 ? n : null;
   };
   const sshPort = parsePort(sshPortDraft);
-  const apiPort = parsePort(apiPortDraft);
-  const portsValid = sshPort !== null && apiPort !== null;
 
   // Credentials as they were when the modal opened ("***" mask if the
   // value is stored server-side, "" if not). Used to detect that the user
   // cleared a saved value, so the clear can be confirmed before saving.
   const initialCreds = useRef<Record<CredField, string>>({
     ssh_password: config.ssh_password ?? '',
-    api_key: config.api_key ?? '',
     bmc_password: config.bmc_password ?? '',
   });
   const [pendingClear, setPendingClear] = useState<{
@@ -83,7 +78,6 @@ export function ServerConfigModal({ config, onConfigChange, onSave, saving, mess
         onFocus={(e) => e.currentTarget.select()}
         onClick={(e) => e.currentTarget.select()}
         className={FIELD_CLASS}
-        placeholder={f === 'api_key' ? t('Optional') : ''}
       />
     </div>
   );
@@ -98,7 +92,7 @@ export function ServerConfigModal({ config, onConfigChange, onSave, saving, mess
         footer={
           <>
             <Button onClick={onClose}>{t('Cancel')}</Button>
-            <Button variant="primary" onClick={handleSaveClick} disabled={saving || !portsValid}>
+            <Button variant="primary" onClick={handleSaveClick} disabled={saving || sshPort === null}>
               {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} {t('Save')}
             </Button>
           </>
@@ -142,19 +136,6 @@ export function ServerConfigModal({ config, onConfigChange, onSave, saving, mess
                 <label htmlFor="srv-venv-name" className="block text-xs text-text-muted mb-1">{t('Python Venv Directory')}</label>
                 <input id="srv-venv-name" type="text" value={config.venv_name} onChange={(e) => onConfigChange({ ...config, venv_name: e.target.value })} className={FIELD_CLASS} placeholder=".venv" />
               </div>
-            </div>
-          </section>
-          <section className="border border-border rounded-lg p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Radio className="w-4 h-4 text-accent" />
-              <h4 className="text-sm font-medium">API</h4>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label htmlFor="srv-api-port" className="block text-xs text-text-muted mb-1">{t('API Port')}</label>
-                <input id="srv-api-port" type="text" inputMode="numeric" value={apiPortDraft} onChange={(e) => { const v = e.target.value.replace(/\D/g, ''); setApiPortDraft(v); const p = parsePort(v); if (p !== null) onConfigChange({ ...config, port: p }); }} className={FIELD_CLASS} placeholder="8000" />
-              </div>
-              {renderCredField('api_key', 'srv-api-key', t('API Key'), <Key className="w-3 h-3" />)}
             </div>
           </section>
           <section className="border border-border rounded-lg p-4">

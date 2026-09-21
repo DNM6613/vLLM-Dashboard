@@ -1,11 +1,13 @@
-import { memo } from 'react';
-import { Folder, FolderDown, RefreshCw, Loader2, Play, Square, Settings, Trash2, Gauge, HardDrive, AlertCircle, AlertTriangle } from 'lucide-react';
+import { memo, useState } from 'react';
+import { Folder, FolderDown, RefreshCw, Loader2, Play, Square, Settings, Trash2, Gauge, HardDrive, AlertCircle, AlertTriangle, Copy, Eye, EyeOff, Globe, Key } from 'lucide-react';
 import { formatSize, fmtNum } from '../../utils/format';
+import { copyText } from '../../utils/clipboard';
 import { ModelStatus } from '../../types';
 import type { ModelInfo, BenchmarkResult, DownloadProgressInfo } from '../../types';
 import { useI18n } from '../../i18n';
 import { IconButton } from '../ui/IconButton';
 import { ProgressBar } from '../ui/ProgressBar';
+import { showToast } from '../ui/toast';
 
 interface ModelListProps {
   models: ModelInfo[];
@@ -27,11 +29,37 @@ interface ModelListProps {
   onOpenBenchmark: () => void;
   download: DownloadProgressInfo | null;
   onCancelDownload: () => void;
+  openaiEndpoint: string | null;
+  openaiApiKey: string | null;
+}
+
+function ModelApiInfo({ endpoint, apiKey }: { endpoint: string | null; apiKey: string | null }) {
+  const { t } = useI18n();
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <div className="mt-1 space-y-1">
+      {endpoint && (
+        <div className="flex items-center gap-1.5 text-xs font-mono text-text-muted" title={t('OpenAI Endpoint')}>
+          <Globe className="w-3 h-3 shrink-0" />
+          <span className="truncate">{endpoint}</span>
+        </div>
+      )}
+      {apiKey && (
+        <div className="flex items-center gap-1.5 text-xs font-mono text-text-muted">
+          <Key className="w-3 h-3 shrink-0" />
+          <span className="truncate">{revealed ? apiKey : '********'}</span>
+          <IconButton size="xs" ariaLabel={revealed ? t('Hide API Key') : t('Show API Key')} onClick={() => setRevealed(v => !v)}>
+            {revealed ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+          </IconButton>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export const ModelList = memo(function ModelList({
   models, loading, refreshing, scanMessage, error, starting, deletingId, stoppingId,
-  sshConnected, benchmarkResults,
+  sshConnected, benchmarkResults, openaiEndpoint, openaiApiKey,
   onRefresh, onStart, onStop, onOpenLaunchConfig, onDelete, onOpenDownload, onOpenBenchmark,
   download, onCancelDownload,
 }: ModelListProps) {
@@ -133,6 +161,17 @@ export const ModelList = memo(function ModelList({
                   }`}
                 />
                 <span className="font-medium truncate">{model.name}</span>
+                <IconButton
+                  size="xs"
+                  ariaLabel={t('Copy model name')}
+                  onClick={() => {
+                    void copyText(model.name).then((ok) => {
+                      showToast(ok ? t('Copied') : t('Copy failed'), ok ? 'info' : 'error');
+                    });
+                  }}
+                >
+                  <Copy className="w-3 h-3 text-text-muted" />
+                </IconButton>
               </div>
               <div className="flex items-center gap-3 mt-1 text-xs">
                 {model.size_bytes && model.size_bytes > 0 && (
@@ -153,6 +192,9 @@ export const ModelList = memo(function ModelList({
                     : <span className="text-text-muted shrink-0">{t('No record')}</span>;
                 })()}
               </div>
+              {model.status === ModelStatus.RUNNING && (openaiEndpoint || openaiApiKey) && (
+                <ModelApiInfo endpoint={openaiEndpoint} apiKey={openaiApiKey} />
+              )}
             </div>
             <div className="flex items-center gap-1 ml-4">
               {(!sshConnected ||
