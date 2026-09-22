@@ -156,23 +156,106 @@ export const ModelList = memo(function ModelList({
           </div>
         )}
         {models.map((model) => (
-          <div key={model.id} className="p-4 flex items-center justify-between">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`w-2 h-2 rounded-full shrink-0 ${
-                    model.status === ModelStatus.RUNNING ? 'bg-success' :
-                    model.status === ModelStatus.LOADING ? 'bg-warning animate-pulse' :
-                    model.status === ModelStatus.FAILED ? 'bg-danger' :
-                    model.status === ModelStatus.DOWNLOADED ? 'bg-info' : 'bg-text-muted'
-                  }`}
-                />
-                <span className="font-medium truncate">{model.name}</span>
+          <div key={model.id} className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${
+                      model.status === ModelStatus.RUNNING ? 'bg-success' :
+                      model.status === ModelStatus.LOADING ? 'bg-warning animate-pulse' :
+                      model.status === ModelStatus.FAILED ? 'bg-danger' :
+                      model.status === ModelStatus.DOWNLOADED ? 'bg-info' : 'bg-text-muted'
+                    }`}
+                  />
+                  <span className="font-medium truncate">{model.name}</span>
+                  <IconButton
+                    size="xs"
+                    ariaLabel={t('Copy model name')}
+                    onClick={() => {
+                      void copyText(model.name).then((ok) => {
+                        showToast(ok ? t('Copied') : t('Copy failed'), ok ? 'info' : 'error');
+                      });
+                    }}
+                  >
+                    <Copy className="w-3 h-3 text-text-muted" />
+                  </IconButton>
+                </div>
+                <div className="flex items-center gap-3 mt-1 text-xs">
+                  {model.size_bytes && model.size_bytes > 0 && (
+                    <span className="flex items-center gap-1 text-text-muted shrink-0">
+                      <HardDrive className="w-3 h-3" />
+                      <span className="font-mono">{formatSize(model.size_bytes ?? 0)}</span>
+                    </span>
+                  )}
+                  {(() => {
+                    const latest = (benchmarkResults[model.id] || []).slice(-1)[0];
+                    return latest
+                      ? <span
+                          className="text-text-muted flex items-center gap-0.5 shrink-0"
+                          title={t('Benchmark tok/s (single 128-token run, server-side token count)')}
+                      >
+                        <Gauge className="w-3 h-3" />{fmtNum(latest.tokens_per_second)} tok/s
+                      </span>
+                      : <span className="text-text-muted shrink-0">{t('No record')}</span>;
+                  })()}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 ml-4">
+                {(!sshConnected ||
+                  model.status === ModelStatus.STOPPED ||
+                  model.status === ModelStatus.DOWNLOADED ||
+                  model.status === ModelStatus.FAILED) && (
+                  <IconButton
+                    size="sm"
+                    ariaLabel={!sshConnected ? t('Start (SSH disconnected)') : t('Start')}
+                    onClick={() => onStart(model.id)}
+                    disabled={starting || opInFlight || !sshConnected}
+                  >
+                    <Play className="w-4 h-4 text-success" />
+                  </IconButton>
+                )}
+                {sshConnected && (model.status === ModelStatus.RUNNING || model.status === ModelStatus.LOADING) && (
+                  <IconButton
+                    size="sm"
+                    ariaLabel={model.status === ModelStatus.LOADING ? t('Cancel') : t('Stop')}
+                    onClick={() => onStop(model.id)}
+                    disabled={opInFlight}
+                  >
+                    {stoppingId === model.id
+                      ? <Loader2 className="w-4 h-4 animate-spin text-warning" />
+                      : <Square className="w-4 h-4 text-warning" />}
+                  </IconButton>
+                )}
+                <IconButton
+                  size="sm"
+                  ariaLabel={t('Launch Config')}
+                  onClick={() => onOpenLaunchConfig(model.id, model.name, model.path)}
+                  disabled={opInFlight}
+                >
+                  <Settings className="w-4 h-4 text-text-muted" />
+                </IconButton>
+                <IconButton
+                  size="sm"
+                  ariaLabel={!sshConnected ? t('Delete (SSH disconnected)') : t('Delete')}
+                  onClick={() => onDelete(model.id, model.name)}
+                  disabled={!sshConnected || opInFlight}
+                >
+                  {deletingId === model.id
+                    ? <Loader2 className="w-4 h-4 animate-spin text-danger" />
+                    : <Trash2 className="w-4 h-4 text-danger" />}
+                </IconButton>
+              </div>
+            </div>
+            {model.path && (
+              <div className="flex items-center gap-1.5 mt-1 text-xs text-text-muted" title={model.path}>
+                <Folder className="w-3 h-3 shrink-0" />
+                <span className="min-w-0 truncate font-mono">{model.path}</span>
                 <IconButton
                   size="xs"
-                  ariaLabel={t('Copy model name')}
+                  ariaLabel={t('Copy model path')}
                   onClick={() => {
-                    void copyText(model.name).then((ok) => {
+                    void copyText(model.path).then((ok) => {
                       showToast(ok ? t('Copied') : t('Copy failed'), ok ? 'info' : 'error');
                     });
                   }}
@@ -180,74 +263,10 @@ export const ModelList = memo(function ModelList({
                   <Copy className="w-3 h-3 text-text-muted" />
                 </IconButton>
               </div>
-              <div className="flex items-center gap-3 mt-1 text-xs">
-                {model.size_bytes && model.size_bytes > 0 && (
-                  <span className="flex items-center gap-1 text-text-muted shrink-0">
-                    <HardDrive className="w-3 h-3" />
-                    <span className="font-mono">{formatSize(model.size_bytes ?? 0)}</span>
-                  </span>
-                )}
-                {(() => {
-                  const latest = (benchmarkResults[model.id] || []).slice(-1)[0];
-                  return latest
-                    ? <span
-                        className="text-text-muted flex items-center gap-0.5 shrink-0"
-                        title={t('Benchmark tok/s (single 128-token run, server-side token count)')}
-                    >
-                      <Gauge className="w-3 h-3" />{fmtNum(latest.tokens_per_second)} tok/s
-                    </span>
-                    : <span className="text-text-muted shrink-0">{t('No record')}</span>;
-                })()}
-              </div>
-              {model.status === ModelStatus.RUNNING && (openaiEndpoint || openaiApiKey) && (
-                <ModelApiInfo endpoint={openaiEndpoint} apiKey={openaiApiKey} />
-              )}
-            </div>
-            <div className="flex items-center gap-1 ml-4">
-              {(!sshConnected ||
-                model.status === ModelStatus.STOPPED ||
-                model.status === ModelStatus.DOWNLOADED ||
-                model.status === ModelStatus.FAILED) && (
-                <IconButton
-                  size="sm"
-                  ariaLabel={!sshConnected ? t('Start (SSH disconnected)') : t('Start')}
-                  onClick={() => onStart(model.id)}
-                  disabled={starting || opInFlight || !sshConnected}
-                >
-                  <Play className="w-4 h-4 text-success" />
-                </IconButton>
-              )}
-              {sshConnected && (model.status === ModelStatus.RUNNING || model.status === ModelStatus.LOADING) && (
-                <IconButton
-                  size="sm"
-                  ariaLabel={model.status === ModelStatus.LOADING ? t('Cancel') : t('Stop')}
-                  onClick={() => onStop(model.id)}
-                  disabled={opInFlight}
-                >
-                  {stoppingId === model.id
-                    ? <Loader2 className="w-4 h-4 animate-spin text-warning" />
-                    : <Square className="w-4 h-4 text-warning" />}
-                </IconButton>
-              )}
-              <IconButton
-                size="sm"
-                ariaLabel={t('Launch Config')}
-                onClick={() => onOpenLaunchConfig(model.id, model.name, model.path)}
-                disabled={opInFlight}
-              >
-                <Settings className="w-4 h-4 text-text-muted" />
-              </IconButton>
-              <IconButton
-                size="sm"
-                ariaLabel={!sshConnected ? t('Delete (SSH disconnected)') : t('Delete')}
-                onClick={() => onDelete(model.id, model.name)}
-                disabled={!sshConnected || opInFlight}
-              >
-                {deletingId === model.id
-                  ? <Loader2 className="w-4 h-4 animate-spin text-danger" />
-                  : <Trash2 className="w-4 h-4 text-danger" />}
-              </IconButton>
-            </div>
+            )}
+            {model.status === ModelStatus.RUNNING && (openaiEndpoint || openaiApiKey) && (
+              <ModelApiInfo endpoint={openaiEndpoint} apiKey={openaiApiKey} />
+            )}
           </div>
         ))}
       </div>
