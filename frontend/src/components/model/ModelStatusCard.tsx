@@ -106,6 +106,13 @@ export const ModelStatusCard = memo(function ModelStatusCard() {
             <Stat label={t('Prompt Throughput (tok/s)')} num={model?.prompt_tokens_per_s} format={fmtInt} />
             <Stat label={t('Generation Throughput (tok/s)')} num={model?.generation_tokens_per_s} format={fmtInt} />
             <Stat
+              label={t('Cumulative Tokens (In/Out)')}
+              num={model?.prompt_tokens_total}
+              num2={model?.generation_tokens_total}
+              allowPartial
+              format={fmtInt}
+            />
+            <Stat
               label={t('KV Cache')}
               num={model?.kv_cache_usage_pct}
               format={fmtPct}

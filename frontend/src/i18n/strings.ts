@@ -29,6 +29,7 @@ export const ZH: Record<string, string> = {
   'KV Cache': 'KV 缓存',
   'Prompt Throughput (tok/s)': '提示吞吐（tok/s）',
   'Generation Throughput (tok/s)': '生成吞吐（tok/s）',
+  'Cumulative Tokens (In/Out)': '累计 Token（输入/输出）',
   'MTP Hit Rate (Realtime/Cumulative)': 'MTP 命中率（实时/累计）',
   'Prefix Cache Hit Rate (Realtime/Cumulative)': '前缀缓存命中率（实时/累计）',
   'Avg TTFT (s)': '平均首字延迟（s）',

@@ -148,6 +148,8 @@ export interface ModelRuntimeStatus {
   kv_cache_usage_pct: number | null;
   generation_tokens_per_s: number | null;
   prompt_tokens_per_s: number | null;
+  generation_tokens_total: number | null;
+  prompt_tokens_total: number | null;
   mtp_hit_rate_pct: number | null;
   prefix_cache_hit_rate_pct: number | null;
   mtp_hit_rate_cumulative_pct: number | null;

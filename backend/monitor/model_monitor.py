@@ -167,6 +167,8 @@ def _disconnected_payload(timestamp: float | None = None, api_port: int | None =
         "kv_cache_usage_pct": None,
         "generation_tokens_per_s": None,
         "prompt_tokens_per_s": None,
+        "generation_tokens_total": None,
+        "prompt_tokens_total": None,
         "mtp_hit_rate_pct": None,
         "mtp_hit_rate_cumulative_pct": None,
         "prefix_cache_hit_rate_pct": None,
@@ -245,6 +247,12 @@ async def fetch_model_status(config: ServerConfig | None = None) -> dict[str, An
         "prompt_tokens_per_s": (
             round(rates["prompt_tokens_total"], 2)
             if rates.get("prompt_tokens_total") is not None else None),
+        "generation_tokens_total": (
+            round(parsed["gen_tokens_total"])
+            if parsed["gen_tokens_total"] is not None else None),
+        "prompt_tokens_total": (
+            round(parsed["prompt_tokens_total"])
+            if parsed["prompt_tokens_total"] is not None else None),
         "mtp_hit_rate_pct": mtp_hit_rate_pct,
         "mtp_hit_rate_cumulative_pct": mtp_hit_rate_cumulative_pct,
         "prefix_cache_hit_rate_pct": prefix_cache_hit_rate_pct,
