@@ -18,14 +18,13 @@ interface LaunchConfigModalProps {
 
 const FIELD_CLASS = 'w-full px-3 py-1.5 bg-bg rounded-lg border border-border text-text focus:border-accent focus:outline-none font-mono text-sm';
 
-// Height = content + one line of headroom, so no scrollbar is ever needed.
+// Height = content exactly: no trailing blank line, and py-1.5 keeps top/bottom padding symmetric.
 function useAutoResize(ref: RefObject<HTMLTextAreaElement | null>, value: string) {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.style.height = 'auto';
-    const lineHeight = parseFloat(getComputedStyle(el).lineHeight);
-    el.style.height = `${el.scrollHeight + (Number.isFinite(lineHeight) ? lineHeight : 20)}px`;
+    el.style.height = `${el.scrollHeight}px`;
   }, [ref, value]);
 }
 

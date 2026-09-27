@@ -50,33 +50,23 @@ describe('LaunchConfigModal textarea auto-resize', () => {
     vi.restoreAllMocks();
   });
 
-  it('sizes each textarea to content (scrollHeight) + one line (lineHeight)', () => {
-    vi.spyOn(window, 'getComputedStyle').mockReturnValue({ lineHeight: '20px' } as unknown as CSSStyleDeclaration);
+  it('sizes each textarea to content exactly (scrollHeight, no trailing blank line)', () => {
     const { env, cmd } = renderModal();
-    expect(env.style.height).toBe('120px');
-    expect(cmd.style.height).toBe('120px');
-  });
-
-  it('falls back to a 20px line when computed lineHeight is not numeric', () => {
-    vi.spyOn(window, 'getComputedStyle').mockReturnValue({ lineHeight: 'normal' } as unknown as CSSStyleDeclaration);
-    ctl.value = 60;
-    const { env } = renderModal();
-    expect(env.style.height).toBe('80px');
+    expect(env.style.height).toBe('100px');
+    expect(cmd.style.height).toBe('100px');
   });
 
   it('hides scrollbars on both textareas', () => {
-    vi.spyOn(window, 'getComputedStyle').mockReturnValue({ lineHeight: '20px' } as unknown as CSSStyleDeclaration);
     const { env, cmd } = renderModal();
     expect(env.className).toContain('no-scrollbar');
     expect(cmd.className).toContain('no-scrollbar');
   });
 
   it('grows when the content grows', () => {
-    vi.spyOn(window, 'getComputedStyle').mockReturnValue({ lineHeight: '20px' } as unknown as CSSStyleDeclaration);
     const { env } = renderModal();
-    expect(env.style.height).toBe('120px');
+    expect(env.style.height).toBe('100px');
     ctl.value = 200;
     fireEvent.change(env, { target: { value: 'A=1\nB=2' } });
-    expect(env.style.height).toBe('220px');
+    expect(env.style.height).toBe('200px');
   });
 });
