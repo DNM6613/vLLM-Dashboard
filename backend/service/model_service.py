@@ -443,8 +443,10 @@ async def start_model(model_id: str) -> dict:
             f"export {key}={shlex.quote(value)} && " for key, value in parsed_env
         ) + full_command
 
-    target = resolve_api_target(config)
-    task = asyncio.create_task(_verify_start_probe(model_id, config.host, target.port))
+    server_config = config_manager.get_config()
+    target = resolve_api_target(server_config)
+    task = asyncio.create_task(
+        _verify_start_probe(model_id, server_config.host, target.port))
     _start_probe_tasks.add(task)
     task.add_done_callback(_start_probe_tasks.discard)
 
