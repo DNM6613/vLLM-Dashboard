@@ -90,7 +90,7 @@ fi
 
 echo -e "\n[5/5] 构建前端（原生部署需要前端产物，否则 5174 仅 API + /docs）..."
 if [ -d "frontend" ] && command -v node &> /dev/null && command -v npm &> /dev/null; then
-    (cd frontend && npm install && npm run build)
+    (cd frontend && npm ci && npm run build)
     if [ -f static/index.html ]; then
         rm -rf static
     elif [ -d static ]; then
@@ -102,7 +102,7 @@ if [ -d "frontend" ] && command -v node &> /dev/null && command -v npm &> /dev/n
 else
     echo "  ⚠ node/npm 不可用或 frontend 目录缺失，已跳过前端构建"
     echo "  原生部署需先构建前端，否则 http://localhost:5174 仅提供 API 与 /docs"
-    echo "  安装 Node.js 18+ 后重跑本脚本，或手动执行: cd frontend && npm install && npm run build && cp -r dist ../static"
+    echo "  安装 Node.js 18+ 后重跑本脚本，或手动执行: cd frontend && npm ci && npm run build && cp -r dist ../static"
 fi
 
 echo -e "\n========================================"

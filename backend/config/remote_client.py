@@ -222,9 +222,15 @@ class ConfigManager:
                 if isinstance(value, str) and value:
                     config_dict[field] = _encrypt_credential(fernet, value)
         except Exception as e:
-            logger.warning(
-                "Config credential encryption failed; saving plaintext: %s", e
+            # Never fall back to plaintext credentials on disk — abort the
+            # save so the previous on-disk config (already encrypted) stays.
+            logger.error(
+                "Config credential encryption failed; save aborted: %s", e
             )
+            raise RuntimeError(
+                "无法加密凭据，配置保存已中止（磁盘保留旧配置）；"
+                "请检查 data/.secret_key 后重试"
+            ) from e
         tmp_file = self.config_file + ".tmp"
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(config_dict, f, indent=2, ensure_ascii=False)
@@ -238,18 +244,30 @@ class ConfigManager:
 
     def update_config(self, config: ServerConfig) -> ServerConfig:
         with self._lock:
+            previous = self.config
             self.config = config
-            self._save_config()
+            try:
+                self._save_config()
+            except Exception:
+                # Keep memory and disk in agreement when the save fails.
+                self.config = previous
+                raise
             self._ssh_version = None
             return self.config
 
     def merge_config(self, update_data: dict[str, Any]) -> ServerConfig:
         with self._lock:
+            previous = self.config
             candidate = self.config.model_copy()
             for key, value in update_data.items():
                 setattr(candidate, key, value)
             self.config = candidate
-            self._save_config()
+            try:
+                self._save_config()
+            except Exception:
+                # Keep memory and disk in agreement when the save fails.
+                self.config = previous
+                raise
             self._ssh_version = None
             return self.config
 
@@ -363,7 +381,11 @@ class ConfigManager:
 
             with self._lock:
                 cached_version = self._ssh_version
-            cmd = "echo ok" if cached_version is not None else self._build_version_probe_cmd()
+            # "unknown" means the probe ran but vLLM's python was absent — do
+            # not cache that; vLLM may be installed later, so re-probe.
+            cmd = ("echo ok"
+                   if (cached_version is not None and cached_version != "unknown")
+                   else self._build_version_probe_cmd())
 
             ssh_start = time.time()
             result = await asyncio.to_thread(executor.execute, cmd)
@@ -371,13 +393,14 @@ class ConfigManager:
 
             if result["success"]:
                 version = cached_version
-                if version is None:
+                if version is None or version == "unknown":
                     lines = result["stdout"].strip().split('\n')
                     version = "unknown"
                     if len(lines) >= 2:
                         version = lines[1].strip() or "unknown"
-                    with self._lock:
-                        self._ssh_version = version
+                    if version != "unknown":
+                        with self._lock:
+                            self._ssh_version = version
 
                 return "ssh", ConnectionDetail(
                     status=ServerStatus.CONNECTED,

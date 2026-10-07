@@ -413,10 +413,20 @@ async def put_state(body: dict[str, Any]):
             "driver": str, "cuda": str, "cuda_install_system": bool,
             "vllm_version": str, "vllm_runtime": str,
         }
+        def _to_bool(key: str, raw: Any) -> bool:
+            # bool("false") is True — parse explicitly instead.
+            if isinstance(raw, bool):
+                return raw
+            if isinstance(raw, str) and raw.strip().lower() in ("true", "1"):
+                return True
+            if isinstance(raw, str) and raw.strip().lower() in ("false", "0"):
+                return False
+            raise HTTPException(status_code=400, detail=f"Invalid boolean for {key}")
+
         values = {}
         for key, conv in allowed_selected.items():
             if key in selected:
-                values[key] = conv(selected[key])
+                values[key] = _to_bool(key, selected[key]) if conv is bool else conv(selected[key])
         if values.get("vllm_runtime") and values["vllm_runtime"] not in ("builtin", "system"):
             raise HTTPException(status_code=400, detail="Invalid vllm_runtime")
         if values:

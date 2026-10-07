@@ -23,6 +23,51 @@ jobs:
           pip install -r requirements-lock.txt
           pip install ruff pip-audit
 
+      - name: Check lock satisfies requirements.txt
+        run: |
+          python - <<'PY'
+          import re
+
+          def canon(name):
+              return re.sub(r"[-_.]+", "-", name).lower()
+
+          def vkey(v):
+              return tuple(int(p) for p in v.split(".") if p.isdigit())
+
+          reqs = {}
+          for line in open("requirements.txt", encoding="utf-8"):
+              line = line.split("#", 1)[0].strip()
+              m = re.match(r"^([A-Za-z0-9._-]+)\s*>=\s*([\w.+-]+)$", line)
+              if m:
+                  reqs[canon(m.group(1))] = (m.group(1), m.group(2))
+
+          lock = {}
+          for line in open("requirements-lock.txt", encoding="utf-8"):
+              line = line.split("#", 1)[0].strip()
+              m = re.match(r"^([A-Za-z0-9._-]+)\s*==\s*([\w.+-]+)$", line)
+              if m:
+                  lock[canon(m.group(1))] = (m.group(1), m.group(2))
+
+          errors = []
+          for key, (name, min_v) in reqs.items():
+              if key not in lock:
+                  errors.append(f"{name}: requirements.txt 有但 lock 缺失")
+                  continue
+              lock_name, lock_v = lock[key]
+              lv, mv = vkey(lock_v), vkey(min_v)
+              n = max(len(lv), len(mv))
+              lv = lv + (0,) * (n - len(lv))
+              mv = mv + (0,) * (n - len(mv))
+              if lv < mv:
+                  errors.append(f"{name}: lock {lock_v} < 要求最低 {min_v}")
+          if errors:
+              print("requirements.txt 与 requirements-lock.txt 不一致:")
+              for e in errors:
+                  print("  -", e)
+              raise SystemExit(1)
+          print(f"OK: {len(reqs)} 个直接依赖全部满足 lock 最低版本")
+          PY
+
       - name: Lint (ruff)
         run: ruff check backend/ tests/ setup.py tools/
 

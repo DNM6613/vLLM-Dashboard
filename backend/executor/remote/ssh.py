@@ -22,6 +22,20 @@ def configure_tcp_keepalive(sock: socket.socket) -> None:
 class ChannelOpenFailure(Exception):
     pass
 
+class _RecordingHostKeyPolicy:
+    """Strict-mode missing-host-key policy. Hosts present in the persisted
+    known_hosts file are verified (a mismatch aborts the handshake in
+    paramiko); a host seen for the first time is accepted AND recorded, so
+    every later connection is actually checked. With the default
+    AutoAddPolicy a new host's key stays in memory only, making strict mode
+    a no-op."""
+
+    def missing_host_key(self, client: Any, key: Any, server_hostname: str) -> None:
+        client.get_host_keys().add(server_hostname, key.get_name(), key)
+        with _KNOWN_HOSTS_LOCK, contextlib.suppress(OSError):
+            client.get_host_keys().save(_known_hosts_path())
+
+
 def _known_hosts_path() -> str:
     current = os.path.abspath(__file__)
     project_root = os.path.dirname(
@@ -53,8 +67,6 @@ def build_ssh_client(
     client = paramiko.SSHClient()
     # Target is a user-configured trusted internal host; strict host-key
     # verification is opt-in via settings.SSH_STRICT_HOST_KEY.
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # noqa: S507
-
     sock = socket.create_connection((host, port), timeout=connect_timeout)
     sock.settimeout(None)
     configure_tcp_keepalive(sock)
@@ -65,10 +77,14 @@ def build_ssh_client(
         if not os.path.exists(known_hosts):
             with open(known_hosts, "a"):
                 pass
+            with contextlib.suppress(OSError):
+                os.chmod(known_hosts, 0o600)
         with _KNOWN_HOSTS_LOCK:
             client.load_host_keys(known_hosts)
+            client.set_missing_host_key_policy(_RecordingHostKeyPolicy())
             _ssh_handshake(client, host, port, username, password, key_path, sock)
     else:
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # noqa: S507
         _ssh_handshake(client, host, port, username, password, key_path, sock)
 
     try:

@@ -237,7 +237,6 @@ export const ZH: Record<string, string> = {
   'Driver {pkg} installed — reboot the server to activate it.':
     '驱动 {pkg} 已安装 — 重启服务器后生效。',
   'Reboot now': '立即重启',
-  'Reboot later': '稍后重启',
   'Driver package': '驱动包',
   'Tags': '标签',
   'Installed': '已安装',

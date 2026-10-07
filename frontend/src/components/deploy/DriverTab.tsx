@@ -152,7 +152,6 @@ export function DriverTab({ data, picked, onPick, onApply, onReboot, busy }: Dri
                 <Button size="sm" onClick={() => setConfirmingReboot(true)} disabled={acting || busy}>
                   <Power className="w-3 h-3" /> {t('Reboot now')}
                 </Button>
-                <Button size="sm" variant="secondary">{t('Reboot later')}</Button>
               </div>
             </div>
           </div>

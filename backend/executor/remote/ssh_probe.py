@@ -5,7 +5,7 @@ import threading
 import time
 from typing import Any
 
-from .ssh import build_ssh_client
+from .ssh import ssh_pool
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,10 @@ def _probe_once(config) -> dict[str, Any]:
         }
     client = None
     try:
-        client = build_ssh_client(
+        # Reuse the shared pool: when a healthy idle connection is pooled the
+        # probe costs one channel round-trip, not a full SSH handshake
+        # (this probe runs every second).
+        client = ssh_pool.get(
             config.host,
             config.ssh_port,
             config.ssh_username,
@@ -90,7 +93,8 @@ def _probe_once(config) -> dict[str, Any]:
     finally:
         if client is not None:
             with contextlib.suppress(Exception):
-                client.close()
+                ssh_pool.release(
+                    client, config.host, config.ssh_port, config.ssh_username)
 
 def _run_ssh_probe() -> dict[str, Any]:
     global _ssh_probe_cache, _ssh_probe_fp

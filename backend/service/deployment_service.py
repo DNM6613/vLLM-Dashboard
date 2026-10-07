@@ -193,8 +193,13 @@ class DeploymentState:
                 os.replace(STATE_FILE, STATE_FILE + ".corrupt")
             return default
         merged = _merge_default(default, data)
-        if len(merged["history"]) > 100:
-            merged["history"] = merged["history"][-100:]
+        # History entries must be dicts (the UI reads .ts/.kind/.title/.status
+        # off them); a malformed file must not crash module init.
+        history = merged["history"]
+        if not isinstance(history, list):
+            merged["history"] = []
+        else:
+            merged["history"] = [h for h in history if isinstance(h, dict)][-100:]
         return merged
 
     def _save(self) -> None:

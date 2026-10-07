@@ -384,6 +384,14 @@ def scan_models(model_dir: str) -> dict:
 _START_PROBE_DELAY = 10.0
 _start_probe_tasks: set[asyncio.Task] = set()
 
+# Single-flight start: the status check and the LOADING transition must be
+# atomic, or two concurrent calls both pass the guard and both deliver.
+_start_lock = asyncio.Lock()
+
+async def start_model(model_id: str) -> dict:
+    async with _start_lock:
+        return await _start_model(model_id)
+
 async def _verify_start_probe(model_id: str, api_host: str, api_port: int) -> None:
     # The console PTY auto-sends the start command a few seconds after
     # start_model returns. Verify the vLLM process actually appeared, so a
@@ -402,7 +410,7 @@ async def _verify_start_probe(model_id: str, api_host: str, api_port: int) -> No
         state_machine.update_model_status(model_id, ModelStatus.STOPPED)
         state_machine.clear_current_model(model_id)
 
-async def start_model(model_id: str) -> dict:
+async def _start_model(model_id: str) -> dict:
     model = state_machine.get_model(model_id)
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")

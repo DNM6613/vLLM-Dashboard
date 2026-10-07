@@ -27,6 +27,15 @@ const STATUS_DOT: Record<string, string> = {
 export function TaskCenterDrawer({ tasks }: TaskCenterDrawerProps) {
   const { t } = useI18n();
   const logRef = useRef<HTMLDivElement | null>(null);
+  // Auto-scroll follows the tail only while the user is near the bottom;
+  // scrolling up to read history must not be yanked away by new lines.
+  const stickBottomRef = useRef(true);
+
+  const handleLogScroll = () => {
+    const el = logRef.current;
+    if (!el) return;
+    stickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  };
   const {
     tasks: list,
     selectedId,
@@ -43,8 +52,13 @@ export function TaskCenterDrawer({ tasks }: TaskCenterDrawerProps) {
   const selected = list.find((x) => x.id === selectedId) ?? null;
 
   useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [logText, selectedId]);
+    const el = logRef.current;
+    if (el && stickBottomRef.current) el.scrollTop = el.scrollHeight;
+  }, [logText]);
+
+  useEffect(() => {
+    stickBottomRef.current = true;
+  }, [selectedId]);
 
   return (
     <>
@@ -142,7 +156,7 @@ export function TaskCenterDrawer({ tasks }: TaskCenterDrawerProps) {
                 </div>
               )}
             </div>
-            <div ref={logRef} className="flex-1 overflow-y-auto p-3 font-mono text-[11px] leading-relaxed text-text whitespace-pre-wrap break-all">
+            <div ref={logRef} onScroll={handleLogScroll} className="flex-1 overflow-y-auto p-3 font-mono text-[11px] leading-relaxed text-text whitespace-pre-wrap break-all">
               {logText || (
                 <span className="text-text-muted">
                   {selected ? t('Loading log...') : t('Select a task to view its log.')}

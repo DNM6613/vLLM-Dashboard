@@ -4,14 +4,19 @@ Write-Host "  vLLM-Dashboard 部署脚本" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
 Write-Host "`n[1/4] 检查 Python 安装..." -ForegroundColor Yellow
-try {
-    $pythonVersion = python --version 2>&1
-    Write-Host "  ✓ Python 已安装: $pythonVersion" -ForegroundColor Green
-} catch {
+$pyCmd = Get-Command python -ErrorAction SilentlyContinue
+if (-not $pyCmd) {
     Write-Host "  ✗ Python 未安装或未添加到 PATH" -ForegroundColor Red
     Write-Host "  请先安装 Python 3.10+: https://www.python.org/downloads/" -ForegroundColor Red
     exit 1
 }
+$pythonVersion = (python --version 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  ✗ Python 不可用（可能是 Microsoft Store 占位程序）: $pythonVersion" -ForegroundColor Red
+    Write-Host "  请先安装 Python 3.10+: https://www.python.org/downloads/" -ForegroundColor Red
+    exit 1
+}
+Write-Host "  ✓ Python 已安装: $pythonVersion" -ForegroundColor Green
 
 Write-Host "`n[2/4] 创建虚拟环境..." -ForegroundColor Yellow
 if (Test-Path "venv") {
