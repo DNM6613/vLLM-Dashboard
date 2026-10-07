@@ -17,11 +17,26 @@ interface ModalProps {
 
 const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
+// Modals can stack (e.g. a confirm dialog on top of the deploy modal); only
+// the top-most one reacts to Escape.
+const modalStack: number[] = [];
+let modalSeq = 0;
+
 export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, footer, headerAction, hideScrollbar }: ModalProps) {
   const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const modalIdRef = useRef(0);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+
+  useEffect(() => {
+    modalIdRef.current = ++modalSeq;
+    modalStack.push(modalIdRef.current);
+    return () => {
+      const i = modalStack.lastIndexOf(modalIdRef.current);
+      if (i >= 0) modalStack.splice(i, 1);
+    };
+  }, []);
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -32,6 +47,7 @@ export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, f
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (modalStack[modalStack.length - 1] !== modalIdRef.current) return;
         e.stopPropagation();
         onCloseRef.current();
         return;

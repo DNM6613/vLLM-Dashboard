@@ -18,6 +18,13 @@ DATA_VOL = os.environ.get(
 BUILD_DIR = os.environ.get("DEPLOY_BUILD_DIR", f"/home/{USER}/vllm-dashboard-build")
 TAR_LOCAL = "_server_deploy.tar"
 TAR_REMOTE = os.environ.get("DEPLOY_TAR_REMOTE", f"/home/{USER}/_server_deploy.tar")
+API_KEY = os.environ.get("DEPLOY_API_KEY", "")
+
+
+def health_wget() -> str:
+    # /health is behind the API-key gate when the container runs with a key.
+    header = f"--header='X-API-Key: {API_KEY}' " if API_KEY else ""
+    return f"wget -qO- {header}{API}/health"
 
 SHIP_FILES = ["Dockerfile", ".dockerignore", "requirements-lock.txt", "setup.py"]
 SHIP_DIRS = ["backend", "frontend"]
@@ -70,7 +77,7 @@ def probe(c: paramiko.SSHClient) -> None:
         c,
         "docker images vllm-dashboard 2>/dev/null | head -5; echo ---; "
         + f"docker ps -a --format {fmt} | grep {CONTAINER}; echo ---; "
-        + f"wget -qO- {API}/health 2>&1 | head -c 300",
+        + f"{health_wget()} 2>&1 | head -c 300",
     )
     print(o, e)
 
@@ -120,7 +127,7 @@ def deploy(c: paramiko.SSHClient) -> None:
     ok = False
     for i in range(6):
         time.sleep(5)
-        rc, o, e = remote(c, f"wget -qO- {API}/health 2>&1")
+        rc, o, e = remote(c, f"{health_wget()} 2>&1")
         body = (o or "").strip()
         if "healthy" in body:
             ok = True
@@ -144,7 +151,7 @@ def verify(c: paramiko.SSHClient) -> None:
     print(o.strip() or "(empty)")
 
     print("=== [2/7] /health + version match ===")
-    _, o, _ = remote(c, f"wget -qO- {API}/health")
+    _, o, _ = remote(c, health_wget())
     body = o.strip()
     print(body[:300])
     if "healthy" not in body:

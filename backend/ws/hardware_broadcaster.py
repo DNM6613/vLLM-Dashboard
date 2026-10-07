@@ -28,14 +28,14 @@ def _get_hardware_snapshot():
         try:
             executor = get_remote_executor()
             result = executor.get_hardware_snapshot()
+            return map_nvidia_smi_gpus(result.get("gpus", [])), {
+                "cpu": result.get("cpu"),
+                "memory": result.get("memory"),
+                "disk": result.get("disk"),
+            }
         except Exception as e:
             logger.error(f"Failed to get remote hardware snapshot: {e}")
             return [], {"cpu": None, "memory": None, "disk": None}
-        return map_nvidia_smi_gpus(result.get("gpus", [])), {
-            "cpu": result.get("cpu"),
-            "memory": result.get("memory"),
-            "disk": result.get("disk"),
-        }
     from ..api.hardware import get_cpu_info_local, get_disk_info_local, get_memory_info_local
     return _get_gpu_metrics_local(), {
         "cpu": get_cpu_info_local(),
@@ -63,27 +63,33 @@ class HardwareBroadcaster:
 
     async def _poll_loop(self) -> None:
         while self._clients:
-            # Wall-clock bound: a stalled remote SSH read must not pin this
-            # loop (or a worker thread per cycle) — on timeout fall back to
-            # the degraded payload path below.
             try:
-                gpus, sys_metrics = await probe_in_thread(
-                    _get_hardware_snapshot,
-                    settings.HARDWARE_PROBE_TIMEOUT, op="hardware snapshot")
-            except RemoteProbeTimeout:
-                gpus, sys_metrics = [], {"cpu": None, "memory": None, "disk": None}
-            data = {
-                "gpus": gpus,
-                "cpu": sys_metrics.get("cpu"),
-                "memory": sys_metrics.get("memory"),
-                "disk": sys_metrics.get("disk"),
-                "timestamp": time.time(),
-            }
-            if not gpus:
-                data["error"] = "Failed to get GPU data, check server connection and NVIDIA driver"
-            await self._broadcast(data)
-            await asyncio.sleep(
-                self._POLL_INTERVAL + (self._EMPTY_EXTRA_DELAY if not gpus else 0.0))
+                # Wall-clock bound: a stalled remote SSH read must not pin this
+                # loop (or a worker thread per cycle) — on timeout fall back to
+                # the degraded payload path below.
+                try:
+                    gpus, sys_metrics = await probe_in_thread(
+                        _get_hardware_snapshot,
+                        settings.HARDWARE_PROBE_TIMEOUT, op="hardware snapshot")
+                except RemoteProbeTimeout:
+                    gpus, sys_metrics = [], {"cpu": None, "memory": None, "disk": None}
+                data = {
+                    "gpus": gpus,
+                    "cpu": sys_metrics.get("cpu"),
+                    "memory": sys_metrics.get("memory"),
+                    "disk": sys_metrics.get("disk"),
+                    "timestamp": time.time(),
+                }
+                if not gpus:
+                    data["error"] = "Failed to get GPU data, check server connection and NVIDIA driver"
+                await self._broadcast(data)
+                await asyncio.sleep(
+                    self._POLL_INTERVAL + (self._EMPTY_EXTRA_DELAY if not gpus else 0.0))
+            except Exception as e:
+                # One broken cycle (bad mapping data, send failure, ...) must
+                # not kill the broadcast task — log and keep polling.
+                logger.error(f"Hardware broadcast cycle failed: {e}")
+                await asyncio.sleep(self._POLL_INTERVAL)
 
     async def _broadcast(self, data: dict) -> None:
         if not self._clients:
@@ -107,6 +113,11 @@ class HardwareBroadcaster:
 
 hardware_broadcaster = HardwareBroadcaster()
 
+# Application-level keepalive: starlette exposes no WS ping, and the
+# client->server direction is idle by design — without a heartbeat, middle
+# boxes that drop long-idle TCP connections leave both ends hanging.
+_KEEPALIVE_TIMEOUT = 60.0
+
 async def websocket_hardware(websocket: WebSocket):
     if not ws_api_key_valid(websocket):
         await websocket.close(code=1008)
@@ -116,7 +127,14 @@ async def websocket_hardware(websocket: WebSocket):
     hardware_broadcaster.register(websocket)
     try:
         while True:
-            await websocket.receive_text()
+            try:
+                await asyncio.wait_for(websocket.receive_text(),
+                                       timeout=_KEEPALIVE_TIMEOUT)
+            except TimeoutError:
+                # Nudge the client (the UI ignores unknown message types);
+                # a dead socket surfaces on the next receive.
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(json.dumps({"type": "keepalive"}))
     except WebSocketDisconnect:
         pass
     finally:

@@ -24,6 +24,7 @@ A management panel for vLLM inference servers: monitor model and server hardware
 - **Deployment environment**: Linux / Windows, Docker or Python 3.10+
 - **Managed target**: Linux server with SSH enabled, running the vLLM engine on NVIDIA GPU + CUDA (other GPU brands not supported yet — no test platform available)
 - **Browser**: Chrome / Edge / Firefox and other modern browsers
+- **API key (optional)**: set `VLLM_DASHBOARD_API_KEY` (or `API_KEY`) in `.env` to gate every API behind the `X-API-Key` header — the UI prompts for the key on first visit. Leave it empty (default) for open access; `tools/server_deploy.py` takes the same key as `DEPLOY_API_KEY` for its health checks.
 
 ## Installation
 

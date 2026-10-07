@@ -123,8 +123,10 @@ export const applyDriver = async (pkg: string): Promise<{ status: string; task_i
   return response.data;
 };
 
+// Backend worst case is 45s + 30s of serial SSH probes; the timeout must
+// cover that or the 504 "retry shortly" hint never reaches the UI.
 export const getCudaInfo = async (): Promise<CudaInfo> => {
-  const response = await api.get('/deployment/cuda', { timeout: 60000 });
+  const response = await api.get('/deployment/cuda', { timeout: 90000 });
   return response.data;
 };
 
@@ -201,8 +203,19 @@ export const rollbackEnv = async (target: 'driver' | 'vllm'): Promise<{ status: 
 export const API_ERROR_PREFIX = 'Request failed with status';
 
 export function apiErrorMessage(err: unknown): string {
-  const e = err as { response?: { data?: { detail?: unknown } }; message?: string };
-  const detail = e?.response?.data?.detail;
+  const e = err as {
+    response?: {
+      data?: { detail?: unknown; error?: { message?: unknown } };
+    };
+    message?: string;
+  };
+  const data = e?.response?.data;
+  // The backend's error handler serializes every HTTPException to
+  // { error: { code, message, ... } } — that is the primary shape.
+  if (data?.error && typeof data.error.message === 'string' && data.error.message) {
+    return data.error.message;
+  }
+  const detail = data?.detail;
   if (typeof detail === 'string' && detail) return detail;
   if (Array.isArray(detail) && detail.length > 0) {
     const first = detail[0] as { msg?: string };

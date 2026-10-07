@@ -157,6 +157,9 @@ model_status_tracker = ModelStatusTracker()
 
 def _disconnected_payload(timestamp: float | None = None, api_port: int | None = None,
                           api_key: str | None = None) -> dict[str, Any]:
+    # Intentional, unmasked: the UI's OpenAI row shows this key so the user
+    # can paste it into their own client — it is the user's own remote vLLM
+    # key echoed back to the operator of this dashboard.
     return {
         "status": "disconnected",
         "models": [],
@@ -233,6 +236,8 @@ async def fetch_model_status(config: ServerConfig | None = None) -> dict[str, An
         round(hit_total / query_total * 100.0, 1)
         if (query_total and hit_total is not None) else None)
 
+    # "api_key" is intentionally unmasked here too (same reason as the
+    # disconnected payload): the UI needs the real key for its OpenAI row.
     return {
         "status": "connected",
         "models": sorted(parsed["models"]),

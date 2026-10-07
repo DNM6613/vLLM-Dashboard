@@ -183,6 +183,9 @@ export const ZH: Record<string, string> = {
   'Roll back vLLM': '回滚 vLLM',
   'Reinstall the previous driver: {pkg}': '重装此前的驱动：{pkg}',
   'Reinstall the previous version: {ver}': '重装此前的版本：{ver}',
+  'Confirm roll back driver?': '确认回滚到上一个驱动？',
+  'Confirm roll back vLLM?': '确认回滚到上一个版本？',
+  'Roll back': '回滚',
 
   'Pre-flight Check': '环境预检',
   'Re-check': '重新检查',

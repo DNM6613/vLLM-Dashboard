@@ -43,6 +43,7 @@ class StateMachine:
         )
         self._debounce_timer: threading.Timer | None = None
         self._dirty = False
+        self._save_failures = 0
         self._load_state()
         atexit.register(self._flush_state)
 
@@ -112,8 +113,19 @@ class StateMachine:
                 with open(tmp_file, "w", encoding="utf-8") as f:
                     json.dump(data, f, indent=2, ensure_ascii=False, default=str)
                 os.replace(tmp_file, self._state_file)
+                self._save_failures = 0
             except Exception as e:
                 logger.error(f"保存模型状态失败: {e}")
+                # Keep the in-memory state: mark dirty again and retry with
+                # exponential backoff (a lost status change must not vanish
+                # just because one write failed).
+                self._dirty = True
+                delay = min(2.0 * (2 ** self._save_failures), 30.0)
+                self._save_failures += 1
+                timer = threading.Timer(delay, self._flush_state)
+                timer.daemon = True
+                self._debounce_timer = timer
+                timer.start()
 
     def add_model(self, model_id: str, name: str, path: str, config: dict | None = None, size_bytes: int = 0) -> ModelInfo:
         config = config or {}

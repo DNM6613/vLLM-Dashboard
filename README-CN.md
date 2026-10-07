@@ -24,6 +24,7 @@ vLLM 推理服务器管理面板：通过浏览器远程实时掌握模型与服
 - **部署环境**：Linux / Windows 系统，Docker 或 Python 3.10+ 环境
 - **管理目标**：Linux 服务器，启用 SSH 服务，运行 vLLM 推理引擎，NVIDIA GPU + CUDA 环境（因没有测试开发平台，暂不支持其他品牌）
 - **浏览器**：Chrome / Edge / Firefox 等现代浏览器
+- **API 密钥（可选）**：在 `.env` 中设置 `VLLM_DASHBOARD_API_KEY`（或别名 `API_KEY`）后，所有 API 需携带 `X-API-Key` 头访问，前端首次访问会弹窗索取密钥；留空（默认）则开放访问。`tools/server_deploy.py` 的健康检查通过 `DEPLOY_API_KEY` 传入同一密钥。
 
 ## 安装
 

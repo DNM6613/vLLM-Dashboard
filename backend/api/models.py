@@ -157,5 +157,5 @@ def get_model(model_id: str):
     return model_service.get_model(model_id)
 
 @router.delete("/{model_id:path}")
-def delete_model(model_id: str):
-    return model_service.delete_model(model_id)
+async def delete_model(model_id: str):
+    return await model_service.delete_model(model_id)

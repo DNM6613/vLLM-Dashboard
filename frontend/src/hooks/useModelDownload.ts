@@ -39,6 +39,9 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
   const [installMessage, setInstallMessage] = useState('');
   const installPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const downloadPollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Bumped on every modal open/close: an in-flight install-status request
+  // that resolves after the modal closed must not re-arm the poll chain.
+  const installSessionRef = useRef(0);
 
   useEffect(() => {
     return () => {
@@ -48,6 +51,7 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
   }, []);
 
   useEffect(() => {
+    installSessionRef.current += 1;
     if (showDownloadModal) {
       if (defaultSavePath) setDownloadModelSavePath((p) => (p ? p : defaultSavePath));
       setCliStatus(null);
@@ -72,9 +76,11 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
       let installPollCount = 0;
       const maxInstallPolls = 1200;
       const pollInstall = async () => {
+        const session = installSessionRef.current;
         installPollCount++;
         try {
           const status = await getInstallStatus(tool, logFile);
+          if (installSessionRef.current !== session) return; // modal closed meanwhile
           if (!isMountedRef.current) return;
           if (status.status === 'installing') {
             setInstallMessage(status.message || tRef.current('Installing...'));

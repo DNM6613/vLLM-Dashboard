@@ -44,8 +44,14 @@ export function useTasks() {
       return;
     }
     let cancelled = false;
+    let inFlight = false;
     logOffsetRef.current = 0;
     const load = async () => {
+      // Skip this tick if a previous load (slow SSH-backed log read) is
+      // still pending — two concurrent loads would fetch the same offset
+      // range and append it twice.
+      if (inFlight) return;
+      inFlight = true;
       try {
         const detail = await getTask(selectedId);
         if (cancelled) return;
@@ -61,6 +67,8 @@ export function useTasks() {
       } catch {
         // task may have been evicted — drop the selection
         if (!cancelled) setSelectedId(null);
+      } finally {
+        inFlight = false;
       }
     };
     load();

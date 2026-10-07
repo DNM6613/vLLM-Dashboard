@@ -137,7 +137,8 @@ export interface BenchmarkResult {
   prompt_tokens: number;
   completion_tokens: number;
   elapsed_seconds: number;
-  timestamp: number;
+  // Not returned by the backend — the UI stamps Date.now() on save.
+  timestamp?: number;
 }
 
 export interface ModelRuntimeStatus {

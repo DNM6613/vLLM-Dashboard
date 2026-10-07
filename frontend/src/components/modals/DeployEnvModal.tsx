@@ -5,6 +5,7 @@ import {
 import { useI18n } from '../../i18n';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { useDeployment } from '../../hooks/useDeployment';
 import { PreflightCard } from '../deploy/PreflightCard';
 import { RiskPanel } from '../deploy/RiskPanel';
@@ -28,6 +29,7 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
   // Matches the backend default (system CUDA Toolkit = robust default; see
   // _default_state). The effect below resyncs from persisted state on load.
   const [cudaInstallSystem, setCudaInstallSystem] = useState(true);
+  const [pendingRollback, setPendingRollback] = useState<'driver' | 'vllm' | null>(null);
 
   // Keep local tab selections in sync with persisted state (initial load).
   // Local radio clicks do not write state, so this does not fight the
@@ -55,13 +57,13 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
       footer={
         <>
           {snapshot?.driver.previous_pkg && (
-            <Button size="sm" onClick={() => dep.handleRollback('driver')} disabled={dep.busy}
+            <Button size="sm" onClick={() => setPendingRollback('driver')} disabled={dep.busy}
               title={t('Reinstall the previous driver: {pkg}', { pkg: snapshot.driver.previous_pkg })}>
               <History className="w-3 h-3" /> {t('Roll back driver')}
             </Button>
           )}
           {snapshot?.vllm.previous_version && (
-            <Button size="sm" onClick={() => dep.handleRollback('vllm')} disabled={dep.busy}
+            <Button size="sm" onClick={() => setPendingRollback('vllm')} disabled={dep.busy}
               title={t('Reinstall the previous version: {ver}', { ver: snapshot.vllm.previous_version })}>
               <History className="w-3 h-3" /> {t('Roll back vLLM')}
             </Button>
@@ -158,6 +160,26 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
         ) : null}
 
         <RiskPanel />
+
+        {pendingRollback && (
+          <ConfirmDialog
+            title={t(pendingRollback === 'driver' ? 'Confirm roll back driver?' : 'Confirm roll back vLLM?')}
+            description={t(pendingRollback === 'driver'
+              ? 'Reinstall the previous driver: {pkg}'
+              : 'Reinstall the previous version: {ver}', {
+                pkg: snapshot?.driver.previous_pkg ?? '',
+                ver: snapshot?.vllm.previous_version ?? '',
+              })}
+            confirmLabel={t('Roll back')}
+            danger
+            onConfirm={async () => {
+              const target = pendingRollback;
+              setPendingRollback(null);
+              await dep.handleRollback(target);
+            }}
+            onCancel={() => setPendingRollback(null)}
+          />
+        )}
       </div>
     </Modal>
   );

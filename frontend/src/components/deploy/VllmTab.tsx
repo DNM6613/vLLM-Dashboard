@@ -242,7 +242,7 @@ export function VllmTab({
         <Button
           variant="primary"
           onClick={handleApply}
-          disabled={busy || acting || systemBlocked || (version !== 'latest' && !/^\d+\.\d+\.\d+$/.test(version.trim())) || (envMode === 'new' && pyVersion !== '' && !/^\d+\.\d{1,2}$/.test(pyVersion))}
+          disabled={busy || acting || systemBlocked || (version !== 'latest' && !/^\d+\.\d+\.\d+$/.test(version.trim())) || (envMode === 'new' && pyVersion !== '' && !/^\d+\.\d{1,2}$/.test(pyVersion)) || (envMode === 'existing' && !venvName.trim())}
         >
           {t('Install vLLM')}
         </Button>

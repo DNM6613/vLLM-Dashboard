@@ -381,6 +381,27 @@ def scan_models(model_dir: str) -> dict:
         "removed_stale": removed_stale
     }
 
+_START_PROBE_DELAY = 10.0
+_start_probe_tasks: set[asyncio.Task] = set()
+
+async def _verify_start_probe(model_id: str, api_host: str, api_port: int) -> None:
+    # The console PTY auto-sends the start command a few seconds after
+    # start_model returns. Verify the vLLM process actually appeared, so a
+    # dead console does not leave the model stuck in LOADING until the
+    # 2-minute sync grace expires. Roll back only on a definite negative —
+    # an unknown probe result keeps the status for the sync loop to settle.
+    await asyncio.sleep(_START_PROBE_DELAY)
+    model = state_machine.get_model(model_id)
+    if not model or model.status != ModelStatus.LOADING:
+        return
+    present = await _check_vllm_present_strict(api_host, api_port)
+    if present is False:
+        logger.warning(
+            f"No vLLM process detected {_START_PROBE_DELAY:.0f}s after start "
+            f"for {model_id} — rolling back to STOPPED")
+        state_machine.update_model_status(model_id, ModelStatus.STOPPED)
+        state_machine.clear_current_model(model_id)
+
 async def start_model(model_id: str) -> dict:
     model = state_machine.get_model(model_id)
     if not model:
@@ -421,6 +442,11 @@ async def start_model(model_id: str) -> dict:
         full_command = "".join(
             f"export {key}={shlex.quote(value)} && " for key, value in parsed_env
         ) + full_command
+
+    target = resolve_api_target(config)
+    task = asyncio.create_task(_verify_start_probe(model_id, config.host, target.port))
+    _start_probe_tasks.add(task)
+    task.add_done_callback(_start_probe_tasks.discard)
 
     return {
         "status": "loading",
@@ -805,15 +831,23 @@ def get_model(model_id: str) -> ModelInfo:
         raise HTTPException(status_code=404, detail="Model not found")
     return model
 
-def delete_model(model_id: str) -> dict:
+async def delete_model(model_id: str) -> dict:
     model = state_machine.get_model(model_id)
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
 
     executor = get_remote_executor()
     if model.status in (ModelStatus.RUNNING, ModelStatus.LOADING):
-        executor.stop_vllm(force=True, model_path=model.path)
-        time.sleep(1)
+        # Deleting while a live vLLM still holds the files is data loss —
+        # verify the stop actually took effect before touching the path.
+        stop_result = await asyncio.to_thread(
+            executor.stop_vllm, force=True, model_path=model.path)
+        wait_path = model.path if stop_result.get("mode") == "scoped" else ""
+        stopped = await _wait_for_remote_stop(executor, max_wait=5, model_path=wait_path)
+        if not stopped:
+            raise HTTPException(
+                status_code=503,
+                detail="vLLM 仍在运行 — 已中止删除，请先停止模型后重试")
 
     model_path = model.path
     normalized = posixpath.normpath(model_path)
