@@ -5,17 +5,22 @@ import threading
 import time
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from ..config.remote_client import config_manager
+from ..config.settings import settings
 from ..executor.remote_executor import get_remote_executor
 from ..monitor.gpu_metrics import map_nvidia_smi_gpus
 from ..monitor.gpu_monitor import GPUMonitor
+from ..remote_probe import RemoteProbeTimeout, probe_in_thread
 from ..schemas.hardware import GPUInfo
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/hardware", tags=["hardware"])
+
+_PROBE_504_DETAIL = ("Remote probe timed out — the AI server SSH is "
+                     "intermittently slow; retry shortly")
 
 _gpu_monitor = None
 _gpu_monitor_lock = threading.Lock()
@@ -117,8 +122,18 @@ async def get_hardware_metrics():
 
     if config.is_remote():
         executor = get_remote_executor()
-        sys_info = await asyncio.to_thread(executor.get_system_info_combined)
-        gpus = await asyncio.to_thread(get_gpu_info_remote)
+        # Wall-clock bound: the executor's per-command timeout only covers
+        # channel open, so a stalled sshd would otherwise hang this polling
+        # endpoint (and leak a worker thread per request) indefinitely.
+        try:
+            sys_info = await probe_in_thread(
+                executor.get_system_info_combined,
+                settings.HARDWARE_PROBE_TIMEOUT, op="hardware system info")
+            gpus = await probe_in_thread(
+                get_gpu_info_remote,
+                settings.HARDWARE_PROBE_TIMEOUT, op="hardware GPU info")
+        except RemoteProbeTimeout as e:
+            raise HTTPException(status_code=504, detail=_PROBE_504_DETAIL) from e
         cpu_info = sys_info.get("cpu")
         memory_info = sys_info.get("memory")
         disk_info = sys_info.get("disk")
@@ -141,7 +156,12 @@ async def get_software_info():
     config = config_manager.get_config()
     if config.is_remote():
         executor = get_remote_executor()
-        return await asyncio.to_thread(executor.get_software_info)
+        try:
+            return await probe_in_thread(
+                executor.get_software_info,
+                settings.HARDWARE_PROBE_TIMEOUT, op="hardware software info")
+        except RemoteProbeTimeout as e:
+            raise HTTPException(status_code=504, detail=_PROBE_504_DETAIL) from e
     return {
         "os": "Unknown", "gpu_driver": "Unknown",
         "cuda_toolkit": "Unknown", "vllm": "Unknown",

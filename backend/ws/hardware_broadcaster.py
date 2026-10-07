@@ -8,9 +8,11 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from ..api.hardware import get_gpu_monitor
 from ..config.remote_client import config_manager
+from ..config.settings import settings
 from ..executor.remote_executor import get_remote_executor
 from ..middleware import ws_api_key_valid, ws_connections_total
 from ..monitor.gpu_metrics import map_nvidia_smi_gpus
+from ..remote_probe import RemoteProbeTimeout, probe_in_thread
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +63,15 @@ class HardwareBroadcaster:
 
     async def _poll_loop(self) -> None:
         while self._clients:
-            gpus, sys_metrics = await asyncio.to_thread(_get_hardware_snapshot)
+            # Wall-clock bound: a stalled remote SSH read must not pin this
+            # loop (or a worker thread per cycle) — on timeout fall back to
+            # the degraded payload path below.
+            try:
+                gpus, sys_metrics = await probe_in_thread(
+                    _get_hardware_snapshot,
+                    settings.HARDWARE_PROBE_TIMEOUT, op="hardware snapshot")
+            except RemoteProbeTimeout:
+                gpus, sys_metrics = [], {"cpu": None, "memory": None, "disk": None}
             data = {
                 "gpus": gpus,
                 "cpu": sys_metrics.get("cpu"),

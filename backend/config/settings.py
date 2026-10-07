@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     BENCHMARK_TIMEOUT: float = 60.0
     STATUS_SYNC_TIMEOUT: float = 5.0
     SSH_CMD_TIMEOUT: int = 10
+    # Wall-clock cap for remote hardware reads (nvidia-smi / sysinfo /
+    # software info). Must stay below the frontend's 30s axios timeout so
+    # the 504 reaches the UI before the client gives up.
+    HARDWARE_PROBE_TIMEOUT: float = 25.0
 
     @property
     def SSH_CONNECT_TIMEOUT(self) -> int:
