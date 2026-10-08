@@ -9,7 +9,6 @@ interface StatProps {
   label: string;
   num?: number | null;
   num2?: number | null;
-  num3?: number | null;
   allowPartial?: boolean;
   zeroMissingNum?: boolean;
   format?: (v: number) => string;
@@ -17,7 +16,7 @@ interface StatProps {
   perSegment?: boolean;
 }
 
-function Stat({ label, num, num2, num3, allowPartial = false, zeroMissingNum = false, format = fmtNum, suffix = '', perSegment = false }: StatProps) {
+function Stat({ label, num, num2, allowPartial = false, zeroMissingNum = false, format = fmtNum, suffix = '', perSegment = false }: StatProps) {
   const isCombined = num2 !== undefined;
   const tail = perSegment ? '' : suffix;
   const segFmt = (v: number) => format(v) + (perSegment ? suffix : '');
@@ -53,19 +52,7 @@ function Stat({ label, num, num2, num3, allowPartial = false, zeroMissingNum = f
       <div className="flex items-baseline justify-between gap-2 text-xs">
         <span className="min-w-0 truncate text-text-muted">{label}</span>
         <span className="shrink-0 whitespace-nowrap font-mono text-sm text-text">
-          {num3 !== undefined ? (
-            pairEl === 'N/A' && num3 == null ? (
-              'N/A'
-            ) : (
-              <>
-                {pairEl ?? 'N/A'}
-                {' · '}
-                {num3 != null
-                  ? <AnimatedNumber value={num3} format={format} />
-                  : 'N/A'}
-              </>
-            )
-          ) : isCombined ? (
+          {isCombined ? (
             pairEl
           ) : num != null ? (
             <AnimatedNumber value={num} format={(v) => `${format(v)}${suffix}`} />
@@ -97,10 +84,9 @@ export const ModelStatusCard = memo(function ModelStatusCard() {
         <div className="px-4 py-3">
           <div className="grid grid-cols-1 gap-y-3">
             <Stat
-              label={t('Running/Queue · Preemptions')}
+              label={t('Running/Queue')}
               num={model?.running_requests}
               num2={model?.waiting_requests}
-              num3={model?.preemptions_total}
               format={fmtInt}
             />
             <Stat label={t('Prompt Throughput (tok/s)')} num={model?.prompt_tokens_per_s} format={fmtInt} />

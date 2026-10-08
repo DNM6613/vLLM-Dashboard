@@ -25,7 +25,7 @@ export const ZH: Record<string, string> = {
   'Loading…': '加载中…',
   'CUDA': 'CUDA',
   'vLLM': 'vLLM',
-  'Running/Queue · Preemptions': '运行/排队 · 抢占',
+  'Running/Queue': '运行/排队',
   'KV Cache': 'KV 缓存',
   'Prompt Throughput (tok/s)': '提示吞吐（tok/s）',
   'Generation Throughput (tok/s)': '生成吞吐（tok/s）',

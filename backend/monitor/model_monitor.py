@@ -19,7 +19,6 @@ _TPOT_NAMES = ("vllm:inter_token_latency_seconds", "vllm:time_per_output_token_s
 _E2E_NAMES = ("vllm:e2e_request_latency_seconds", "vllm:time_to_last_token_seconds")
 _RUNNING_NAMES = ("vllm:num_requests_running",)
 _WAITING_NAMES = ("vllm:num_requests_waiting",)
-_PREEMPT_NAMES = ("vllm:num_preemptions_total",)
 _GEN_TOKEN_NAMES = ("vllm:generation_tokens_total", "vllm:num_generation_tokens_total")
 _PROMPT_TOKEN_NAMES = ("vllm:prompt_tokens_total", "vllm:num_prompt_tokens_total")
 _SPEC_DRAFT_TOKEN_NAMES = ("vllm:spec_decode_num_draft_tokens_total",)
@@ -55,7 +54,6 @@ def parse_vllm_metrics(text: str) -> dict[str, Any]:
         "running_requests": None,
         "waiting_requests": None,
         "kv_cache_usage_pct": None,
-        "preemptions_total": None,
         "gen_tokens_total": None,
         "prompt_tokens_total": None,
         "spec_draft_tokens_total": None,
@@ -93,9 +91,6 @@ def parse_vllm_metrics(text: str) -> dict[str, Any]:
                 existing = result["kv_cache_usage_pct"]
                 result["kv_cache_usage_pct"] = (
                     cand if existing is None else max(existing, cand))
-        elif _matches(_PREEMPT_NAMES, family_name):
-            total = sum(_sample_value(s) for s in samples)
-            result["preemptions_total"] = round((result["preemptions_total"] or 0) + total)
         elif _matches(_GEN_TOKEN_NAMES, family_name) or _matches(_PROMPT_TOKEN_NAMES, family_name):
             key = ("gen_tokens_total" if _matches(_GEN_TOKEN_NAMES, family_name)
                    else "prompt_tokens_total")
@@ -179,7 +174,6 @@ def _disconnected_payload(timestamp: float | None = None, api_port: int | None =
         "avg_ttft_s": None,
         "avg_tpot_ms": None,
         "avg_e2e_latency_s": None,
-        "preemptions_total": None,
         "timestamp": timestamp if timestamp is not None else time.time(),
     }
 
@@ -269,6 +263,5 @@ async def fetch_model_status(config: ServerConfig | None = None) -> dict[str, An
         "avg_e2e_latency_s": (
             round(parsed["e2e_avg_s"], 3)
             if parsed["e2e_avg_s"] is not None else None),
-        "preemptions_total": parsed["preemptions_total"],
         "timestamp": now,
     }
