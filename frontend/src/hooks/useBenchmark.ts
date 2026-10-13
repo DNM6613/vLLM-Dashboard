@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { benchmarkModel } from '../api/models';
 import { errMsgLocalized } from '../stores/model';
-import { ModelStatus, type BenchmarkResult, type ModelStatusValue } from '../types';
+import type { BenchmarkResult, ModelInfo } from '../types';
 
 const BENCHMARK_KEY = 'vllm_benchmark_results';
 
@@ -50,52 +50,29 @@ export function useBenchmark() {
   return { benchmarkResults, benchmarkingIds, benchmarkErrors, handleBenchmark, showBenchmarkModal, setShowBenchmarkModal };
 }
 
-export const AUTO_BENCH_PENDING_KEY = 'vllm_auto_bench_pending';
-const AUTO_BENCH_PENDING_TTL_MS = 30 * 60 * 1000;
-
-export function saveAutoBenchPending(modelId: string): void {
-  try {
-    localStorage.setItem(AUTO_BENCH_PENDING_KEY, JSON.stringify({ modelId, at: Date.now() }));
-  } catch {  }
-}
-
-export function readAutoBenchPending(): string | null {
-  try {
-    const raw = localStorage.getItem(AUTO_BENCH_PENDING_KEY);
-    if (!raw) return null;
-    let p: { modelId?: unknown; at?: unknown };
-    try {
-      p = JSON.parse(raw) as { modelId?: unknown; at?: unknown };
-    } catch {
-      localStorage.removeItem(AUTO_BENCH_PENDING_KEY);
-      return null;
-    }
-    if (typeof p.modelId !== 'string') {
-      localStorage.removeItem(AUTO_BENCH_PENDING_KEY);
-      return null;
-    }
-    if (typeof p.at !== 'number' || Date.now() - p.at > AUTO_BENCH_PENDING_TTL_MS) {
-      localStorage.removeItem(AUTO_BENCH_PENDING_KEY);
-      return null;
-    }
-    return p.modelId;
-  } catch {
-    return null;
+// The backend archives the latest benchmark per model on the model itself
+// (survives closing this tab). Merge those records into the local history:
+// for a model the backend reports, its record wins when it is at least as
+// recent as the newest local one.
+export function mergeBenchmarkResults(
+  models: Pick<ModelInfo, 'id' | 'benchmark'>[],
+  local: Record<string, BenchmarkResult[]>,
+): Record<string, BenchmarkResult[]> {
+  const merged: Record<string, BenchmarkResult[]> = { ...local };
+  for (const m of models) {
+    const b = m.benchmark;
+    if (!b) continue;
+    const backendTs = Date.parse(b.at);
+    if (!Number.isFinite(backendTs)) continue;
+    const localTs = merged[m.id]?.[0]?.timestamp;
+    if (localTs !== undefined && localTs > backendTs) continue;
+    merged[m.id] = [{
+      tokens_per_second: b.tokens_per_second,
+      prompt_tokens: b.prompt_tokens,
+      completion_tokens: b.completion_tokens,
+      elapsed_seconds: b.elapsed_seconds,
+      timestamp: backendTs,
+    }];
   }
-}
-
-export function clearAutoBenchPending(): void {
-  try {
-    localStorage.removeItem(AUTO_BENCH_PENDING_KEY);
-  } catch {  }
-}
-
-export type AutoBenchAction = 'fire' | 'wait';
-
-export function autoBenchAction(
-  status: ModelStatusValue | undefined,
-  benchmarking: boolean,
-): AutoBenchAction {
-  if (status === ModelStatus.RUNNING && !benchmarking) return 'fire';
-  return 'wait';
+  return merged;
 }

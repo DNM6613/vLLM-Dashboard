@@ -1,12 +1,15 @@
 import asyncio
+import json
 import logging
+import os
 import posixpath
 import re
 import shlex
 import socket
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import HTTPException
 
@@ -23,7 +26,7 @@ from ..executor.remote.process_ops import (
 )
 from ..executor.remote.ssh_probe import check_ssh_connectivity
 from ..executor.remote_executor import get_remote_executor
-from ..schemas.model import ModelInfo, ModelStatus
+from ..schemas.model import BenchmarkInfo, ModelInfo, ModelStatus
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +112,7 @@ async def _sync_status_once(timeout: float, track_current: bool = False,
                 if track_current:
                     state_machine.set_current_model(model.id)
                 changed += 1
+                _maybe_trigger_auto_bench(model.id)
             elif model.status == ModelStatus.LOADING and not vllm_process_exists:
                 if _loading_reset_allowed(model):
                     state_machine.update_model_status(model.id, ModelStatus.STOPPED)
@@ -140,6 +144,7 @@ async def _sync_status_once(timeout: float, track_current: bool = False,
                 if track_current:
                     state_machine.set_current_model(model.id)
                 changed += 1
+                _maybe_trigger_auto_bench(model.id)
     return changed
 
 def _match_served_id(model: ModelInfo, remote_ids: set[str]) -> str | None:
@@ -263,6 +268,125 @@ def _benchmark_release(key: str) -> None:
     with _benchmark_inflight_lock:
         _benchmark_inflight.discard(key)
 
+# Auto-benchmark persistence: models started through the dashboard are
+# bench-marked automatically once they reach RUNNING. The pending list and
+# the latest results live in the data directory so a dashboard restart
+# mid-load does not lose either.
+_BENCHMARK_RESULTS_FILE = (
+    Path(__file__).resolve().parent.parent.parent / "data" / "benchmark_results.json"
+)
+_AUTO_BENCH_PENDING_FILE = (
+    Path(__file__).resolve().parent.parent.parent / "data" / "auto_bench_pending.json"
+)
+_benchmark_store_lock = threading.Lock()
+_auto_bench_tasks: set[asyncio.Task] = set()
+
+
+def _load_persisted_json(path: Path, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return default
+    except Exception as e:
+        logger.warning(f"读取 {path.name} 失败: {e}")
+        return default
+
+
+def _write_persisted_json(path: Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+_benchmark_results: dict[str, dict] = _load_persisted_json(_BENCHMARK_RESULTS_FILE, {})
+_auto_bench_pending: set[str] = set(_load_persisted_json(_AUTO_BENCH_PENDING_FILE, []))
+
+
+def _persist_persisted(path: Path, data) -> None:
+    try:
+        _write_persisted_json(path, data)
+    except Exception as e:
+        logger.error(f"保存 {path.name} 失败: {e}")
+
+
+def _record_benchmark_result(model_id: str, result: dict) -> None:
+    with _benchmark_store_lock:
+        _benchmark_results[model_id] = {
+            "tokens_per_second": result["tokens_per_second"],
+            "prompt_tokens": result["prompt_tokens"],
+            "completion_tokens": result["completion_tokens"],
+            "elapsed_seconds": result["elapsed_seconds"],
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+        _persist_persisted(_BENCHMARK_RESULTS_FILE, _benchmark_results)
+
+
+def _remove_benchmark_result(model_id: str) -> None:
+    with _benchmark_store_lock:
+        if _benchmark_results.pop(model_id, None) is not None:
+            _persist_persisted(_BENCHMARK_RESULTS_FILE, _benchmark_results)
+
+
+def _get_benchmark_result(model_id: str) -> dict | None:
+    with _benchmark_store_lock:
+        return _benchmark_results.get(model_id)
+
+
+def _mark_auto_bench_pending(model_id: str) -> None:
+    with _benchmark_store_lock:
+        _auto_bench_pending.add(model_id)
+        _persist_persisted(_AUTO_BENCH_PENDING_FILE, sorted(_auto_bench_pending))
+
+
+def _take_auto_bench_pending(model_id: str) -> bool:
+    """Claim the pending flag for ``model_id`` (once); True if it was set."""
+    with _benchmark_store_lock:
+        if model_id not in _auto_bench_pending:
+            return False
+        _auto_bench_pending.discard(model_id)
+        _persist_persisted(_AUTO_BENCH_PENDING_FILE, sorted(_auto_bench_pending))
+        return True
+
+
+async def _auto_benchmark(model_id: str) -> None:
+    # Two runs like the old front-end auto-bench: the first is a warm-up,
+    # the second result is the one kept.
+    for run in (1, 2):
+        try:
+            await benchmark_model(model_id)
+        except HTTPException as e:
+            if e.status_code == 409:
+                logger.info(f"自动测速跳过 {model_id}：已有测速在进行")
+                return
+            logger.warning(f"自动测速第 {run} 轮失败 {model_id}: {e.detail}")
+        except Exception as e:
+            logger.warning(f"自动测速第 {run} 轮失败 {model_id}: {e}")
+    logger.info(f"自动测速完成 {model_id}")
+
+
+def _maybe_trigger_auto_bench(model_id: str) -> None:
+    if not _take_auto_bench_pending(model_id):
+        return
+    task = asyncio.create_task(_auto_benchmark(model_id))
+    _auto_bench_tasks.add(task)
+    task.add_done_callback(_auto_bench_tasks.discard)
+
+
+def _with_benchmark(models: list[ModelInfo]) -> list[ModelInfo]:
+    out = []
+    for m in models:
+        r = _get_benchmark_result(m.id)
+        if r:
+            try:
+                m = m.model_copy(update={"benchmark": BenchmarkInfo(**r)})
+            except Exception:
+                pass
+        out.append(m)
+    return out
+
 async def _benchmark_precheck(model_id: str) -> tuple:
     model = state_machine.get_model(model_id)
     if not model:
@@ -297,10 +421,11 @@ def _model_delete_target(resolved_path: str) -> str:
 async def list_models() -> list[ModelInfo]:
     try:
         await _sync_status_once(timeout=3.0, warn_unreachable=True)
-        return state_machine.get_all_models()
+        models = state_machine.get_all_models()
     except Exception as e:
         logger.warning(f"Auto status sync failed in list_models: {e}")
-        return state_machine.get_all_models()
+        models = state_machine.get_all_models()
+    return _with_benchmark(models)
 
 async def sync_status() -> int:
     return await _sync_status_once(
@@ -371,6 +496,8 @@ def scan_models(model_dir: str) -> dict:
                     logger.info(f"移除陈旧模型条目 {m.id}（路径已不存在: {m.path}）")
                     if state_machine.remove_model(m.id):
                         removed_stale.append(m.id)
+                        _remove_benchmark_result(m.id)
+                        _take_auto_bench_pending(m.id)
     except Exception as e:
         logger.warning(f"Stale model reconciliation failed: {e}")
 
@@ -436,6 +563,7 @@ async def _start_model(model_id: str) -> dict:
 
     state_machine.update_model_status(model_id, ModelStatus.LOADING)
     state_machine.set_current_model(model_id)
+    _mark_auto_bench_pending(model_id)
 
     executor = get_remote_executor()
     activate_cmd = executor._get_activate_cmd()
@@ -758,7 +886,7 @@ async def benchmark_model(model_id: str) -> dict:
         completion_tokens = int(usage.get("completion_tokens") or 0)
         tokens_per_second = (round(completion_tokens / elapsed, 1)
                              if elapsed > 0 and completion_tokens > 0 else 0.0)
-        return {
+        result = {
             "success": True,
             "model_id": model_id,
             "vllm_model_id": vllm_model_id,
@@ -767,6 +895,8 @@ async def benchmark_model(model_id: str) -> dict:
             "completion_tokens": completion_tokens,
             "elapsed_seconds": round(elapsed, 2),
         }
+        _record_benchmark_result(model_id, result)
+        return result
     finally:
         _benchmark_release(vllm_model_id)
 
@@ -843,7 +973,7 @@ def get_model(model_id: str) -> ModelInfo:
     model = state_machine.get_model(model_id)
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
-    return model
+    return _with_benchmark([model])[0]
 
 async def delete_model(model_id: str) -> dict:
     model = state_machine.get_model(model_id)
@@ -914,6 +1044,8 @@ async def delete_model(model_id: str) -> dict:
     if not state_machine.remove_model(model_id):
         raise HTTPException(status_code=404, detail="Model not found")
 
+    _remove_benchmark_result(model_id)
+    _take_auto_bench_pending(model_id)
     launch_config_manager.delete_config(model_id)
 
     return {"status": "success"}

@@ -16,6 +16,13 @@ class ModelConfig(BaseModel):
     name: str
     path: str
 
+class BenchmarkInfo(BaseModel):
+    tokens_per_second: float
+    prompt_tokens: int
+    completion_tokens: int
+    elapsed_seconds: float
+    at: datetime
+
 class ModelInfo(BaseModel):
     id: str
     name: str
@@ -28,3 +35,4 @@ class ModelInfo(BaseModel):
     error_message: str = ""
     size_bytes: int = 0
     loading_since: datetime | None = None
+    benchmark: BenchmarkInfo | None = None

@@ -131,6 +131,15 @@ export interface ModelInfo {
   created_at?: string;
   updated_at?: string;
   error_message?: string;
+  benchmark?: BenchmarkInfo | null;
+}
+
+export interface BenchmarkInfo {
+  tokens_per_second: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  elapsed_seconds: number;
+  at: string;
 }
 
 export interface BenchmarkResult {

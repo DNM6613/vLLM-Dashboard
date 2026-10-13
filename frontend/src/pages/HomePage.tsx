@@ -12,13 +12,7 @@ import { useModelStatusStore } from '../stores/modelStatus';
 import { useConsoleWebSocket } from '../hooks/useConsoleWebSocket';
 import { useModelManager } from '../hooks/useModelManager';
 import { useModelDownload } from '../hooks/useModelDownload';
-import {
-  autoBenchAction,
-  clearAutoBenchPending,
-  readAutoBenchPending,
-  saveAutoBenchPending,
-  useBenchmark,
-} from '../hooks/useBenchmark';
+import { mergeBenchmarkResults, useBenchmark } from '../hooks/useBenchmark';
 import { HardwareCards } from '../components/hardware/HardwareCards';
 import { SoftwareVersionBadges } from '../components/hardware/SoftwareVersionBadges';
 import { ConsolePanel } from '../components/console/ConsolePanel';
@@ -95,22 +89,10 @@ export function HomePage() {
   const openDownloadModal = useCallback(() => setShowDownloadModal(true), [setShowDownloadModal]);
   const openBenchmarkModal = useCallback(() => setShowBenchmarkModal(true), [setShowBenchmarkModal]);
 
-  const handleStartWithAutoBench = useCallback(async (modelId: string) => {
-    const ok = await handleStartModel(modelId);
-    if (ok) saveAutoBenchPending(modelId);
-  }, [handleStartModel]);
-  useEffect(() => {
-    const pending = readAutoBenchPending();
-    if (!pending) return;
-    const model = models.find(m => m.id === pending);
-    const action = autoBenchAction(model?.status, benchmarkingIds.has(pending));
-    if (action !== 'fire') return;
-    clearAutoBenchPending();
-    void (async () => {
-      await handleBenchmark(pending);
-      await handleBenchmark(pending);
-    })();
-  }, [models, handleBenchmark, benchmarkingIds]);
+  const mergedBenchmarkResults = useMemo(
+    () => mergeBenchmarkResults(models, benchmarkResults),
+    [models, benchmarkResults],
+  );
 
   const openaiEndpoint = modelRuntimeStatus?.api_port != null && serverConfig.host
     ? `http://${serverConfig.host}:${modelRuntimeStatus.api_port}/v1`
@@ -251,11 +233,11 @@ export function HomePage() {
               error={modelError}
               starting={starting}
               sshConnected={sshConnected}
-              benchmarkResults={benchmarkResults}
+              benchmarkResults={mergedBenchmarkResults}
               deletingId={deletingId}
               stoppingId={stoppingId}
               onRefresh={handleRefresh}
-              onStart={handleStartWithAutoBench}
+              onStart={handleStartModel}
               onStop={handleStopModel}
               onOpenLaunchConfig={handleOpenLaunchConfig}
               onDelete={handleDeleteModel}
@@ -327,7 +309,7 @@ export function HomePage() {
       {showBenchmarkModal && (
         <BenchmarkModal
           models={models}
-          benchmarkResults={benchmarkResults}
+          benchmarkResults={mergedBenchmarkResults}
           benchmarkingIds={benchmarkingIds}
           benchmarkErrors={benchmarkErrors}
           onBenchmark={handleBenchmark}
