@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react';
-import { Settings, Settings2, Save, Loader2, Terminal, Globe, Power } from 'lucide-react';
+import { Settings, Settings2, Save, Loader2, Terminal, Globe, Power, Download } from 'lucide-react';
 import type { ServerConfig } from '../../types';
 import { useI18n } from '../../i18n';
 import { Button } from '../ui/Button';
@@ -16,12 +16,13 @@ interface ServerConfigModalProps {
   onOpenDeployEnv: () => void;
 }
 
-const CRED_FIELDS = ['ssh_password', 'bmc_password'] as const;
+const CRED_FIELDS = ['ssh_password', 'bmc_password', 'hf_token'] as const;
 type CredField = (typeof CRED_FIELDS)[number];
 
 const CRED_LABEL_KEY: Record<CredField, string> = {
   ssh_password: 'SSH Password',
   bmc_password: 'BMC Password',
+  hf_token: 'HF Token',
 };
 
 const FIELD_CLASS = 'w-full px-3 py-1.5 bg-bg rounded-lg border border-border text-text focus:border-accent focus:outline-none font-mono text-sm';
@@ -42,6 +43,7 @@ export function ServerConfigModal({ config, onConfigChange, onSave, saving, mess
   const initialCreds = useRef<Record<CredField, string>>({
     ssh_password: config.ssh_password ?? '',
     bmc_password: config.bmc_password ?? '',
+    hf_token: config.hf_token ?? '',
   });
   const [pendingClear, setPendingClear] = useState<{
     payload: Partial<ServerConfig>;
@@ -155,6 +157,15 @@ export function ServerConfigModal({ config, onConfigChange, onSave, saving, mess
                 <input id="srv-bmc-username" type="text" value={config.bmc_username || ''} onChange={(e) => onConfigChange({ ...config, bmc_username: e.target.value })} className={FIELD_CLASS} />
               </div>
               {renderCredField('bmc_password', 'srv-bmc-password', t('BMC Password'))}
+            </div>
+          </section>
+          <section className="border border-border rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Download className="w-4 h-4 text-accent" />
+              <h4 className="text-sm font-medium">{t('Hugging Face')}</h4>
+            </div>
+            <div title={t('Used by model downloads to access gated (approval-required) repos; leave empty for public repos', undefined)}>
+              {renderCredField('hf_token', 'srv-hf-token', t('HF Token'))}
             </div>
           </section>
         </div>

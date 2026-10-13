@@ -80,6 +80,17 @@ class TestGetDownloadStatus(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertIn("ConnectionError", result["reason"])
 
+    def test_exited_with_gated_repo_denial_is_failed(self):
+        # Gated repo without an approved HF token: `hf` exits with
+        # "Error: Access denied. This repository requires approval." —
+        # must be reported as failed with the reason, not "stopped".
+        tail = ("Fetching 20 files:  10%|█         | 2/20 [00:02<00:19,  1.08s/it]\n"
+                "Error: Access denied. This repository requires approval.")
+        stdout = _status_stdout(pid="", mtime=int(time.time()), tail=tail)
+        result = self._run(stdout, size_bytes=56 * 1024)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("Access denied", result["reason"])
+
     def test_exited_without_marker_or_error_is_stopped(self):
         # Process died mid-download: no completion marker, no detected error.
         # Must NOT be reported as "complete" (the model may be partial).

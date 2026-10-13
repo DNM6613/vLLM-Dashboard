@@ -115,7 +115,7 @@ def _migrate_legacy_encrypted(stored: str) -> str:
         )
         return ""
 
-_CRED_FIELDS = ("ssh_password", "bmc_password", "api_key")
+_CRED_FIELDS = ("ssh_password", "bmc_password", "api_key", "hf_token")
 
 def _fernet():
     """Return a Fernet instance, creating the key file if it does not exist yet.

@@ -91,6 +91,10 @@ export const ZH: Record<string, string> = {
   'SSH Key Path': 'SSH 密钥路径',
   'BMC Username': 'BMC 用户名',
   'BMC Password': 'BMC 密码',
+  'Hugging Face': 'Hugging Face',
+  'HF Token': 'HF 令牌',
+  'Used by model downloads to access gated (approval-required) repos; leave empty for public repos':
+    '模型下载访问需审批（gated）仓库时使用；公共仓库可留空',
   'Save': '保存',
   'Clear saved credentials?': '清空已保存的凭据？',
   'The saved values for the following will be erased — you will need to enter them again: {fields}':

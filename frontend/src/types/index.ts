@@ -58,6 +58,7 @@ export interface ServerConfig {
   bmc_host: string;
   bmc_username: string;
   bmc_password?: string;
+  hf_token?: string;
 }
 
 export interface ServerHealth {

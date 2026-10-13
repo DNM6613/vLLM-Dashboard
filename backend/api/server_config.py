@@ -33,8 +33,9 @@ class ServerConfigUpdate(BaseModel):
     bmc_host: str | None = None
     bmc_username: str | None = None
     bmc_password: str | None = None
+    hf_token: str | None = None
 
-_CREDENTIAL_FIELDS = ("ssh_password", "bmc_password", "api_key")
+_CREDENTIAL_FIELDS = ("ssh_password", "bmc_password", "api_key", "hf_token")
 
 def _mask_credentials(config: ServerConfig) -> ServerConfig:
     return config.model_copy(update={

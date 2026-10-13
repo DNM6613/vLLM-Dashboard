@@ -230,6 +230,13 @@ class ModelOps:
                 f"export HF_ENDPOINT={shlex.quote(settings.HF_ENDPOINT)} && "
                 "export HF_HUB_DISABLE_XET=1 && "
             )
+        # Gated repos reject anonymous downloads; inject the configured HF
+        # token so `hf download` authenticates. Independent of the mirror —
+        # the upstream endpoint needs it too.
+        from ...config.remote_client import config_manager
+        hf_token = (config_manager.get_config().hf_token or "").strip()
+        if hf_token:
+            env_prefix += f"export HF_TOKEN={shlex.quote(hf_token)} && "
 
         # The wrapper bash lives for the whole download (it execs `hf` as its
         # last command), so its PID is a reliable liveness marker. Written to
@@ -262,10 +269,18 @@ class ModelOps:
             endpoints = [mirror, "https://huggingface.co"] if mirror else ["https://huggingface.co"]
         else:
             endpoints = ["https://huggingface.co", mirror] if mirror else ["https://huggingface.co"]
+        # Gated repos can hide file metadata from anonymous API calls; send
+        # the configured token as Bearer auth so usedStorage stays available.
+        from ...config.remote_client import config_manager
+        hf_token = (config_manager.get_config().hf_token or "").strip()
+        auth_header = (
+            f"-H {shlex.quote(f'Authorization: Bearer {hf_token}')} "
+            if hf_token else ""
+        )
         for endpoint in dict.fromkeys(endpoints):
             url = shlex.quote(f"{endpoint}/api/models/{model_repo}")
             cmd = (
-                f"curl -sS --max-time 15 {url} "
+                f"curl -sS --max-time 15 {auth_header}{url} "
                 "| grep -o '\"usedStorage\":[0-9]*' | head -1 | cut -d: -f2"
             )
             result = self.execute(cmd)

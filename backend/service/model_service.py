@@ -544,7 +544,10 @@ def get_download_status(log_file: str, repo: str = "", save_path: str = "",
             "command not found" in line or
             "Traceback" in line or "Exception" in line or
             "OSError" in line or "ConnectionError" in line or
-            "is deprecated and no longer works" in line):
+            "is deprecated and no longer works" in line or
+            # Gated repo without an approved HF token: `hf` exits with
+            # "Error: Access denied. This repository requires approval."
+            "Access denied" in line or "requires approval" in line):
             has_fatal_error = True
             break
 
@@ -616,7 +619,8 @@ def get_download_status(log_file: str, repo: str = "", save_path: str = "",
             line.strip() for line in log_content.split("\n")
             if ("ERROR" in line or "Traceback" in line or "Exception" in line
                     or "command not found" in line or "OSError" in line
-                    or "ConnectionError" in line or "not found" in line)
+                    or "ConnectionError" in line or "not found" in line
+                    or "Access denied" in line)
         ]
         reason = " | ".join(reason_lines[-3:])[:500]
         return {

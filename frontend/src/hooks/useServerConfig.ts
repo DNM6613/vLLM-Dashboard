@@ -15,7 +15,7 @@ export function useServerConfig() {
     id: 'default', host: '', use_auth: false, ssh_port: 22,
     ssh_username: '', ssh_password: '', ssh_key_path: '', venv_name: '.vllm',
     model_save_path: '',
-    bmc_host: '', bmc_username: '', bmc_password: '',
+    bmc_host: '', bmc_username: '', bmc_password: '', hf_token: '',
   });
   const [savingConfig, setSavingConfig] = useState(false);
   const [configMessage, setConfigMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);

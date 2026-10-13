@@ -48,6 +48,8 @@ class ServerConfig(BaseModel):
 
     model_save_path: str = ""
 
+    hf_token: str | None = None
+
     @field_validator('venv_name')
     @classmethod
     def validate_venv_name(cls, v: str) -> str:
@@ -158,6 +160,20 @@ class ServerConfig(BaseModel):
             raise ValueError("api_key must be a string")
         if v and len(v) > 256:
             raise ValueError("api_key too long (max 256 chars)")
+        return v
+
+    @field_validator('hf_token', mode='before')
+    @classmethod
+    def validate_hf_token(cls, v):
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError("hf_token must be a string")
+        v = v.strip()
+        if not v:
+            return None
+        if len(v) > 256:
+            raise ValueError("hf_token too long (max 256 chars)")
         return v
 
     @field_validator('extra_headers', mode='before')
