@@ -8,9 +8,11 @@ import { showToast } from '../components/ui/toast';
 interface UseModelDownloadParams {
   defaultSavePath: string;
   onSavePathPersisted: (path: string) => void;
+  hfToken: string;
+  onSaveHfToken: (value: string) => Promise<void>;
 }
 
-export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseModelDownloadParams) {
+export function useModelDownload({ defaultSavePath, onSavePathPersisted, hfToken, onSaveHfToken }: UseModelDownloadParams) {
   const { t } = useI18n();
   const tRef = useRef(t);
   tRef.current = t;
@@ -25,6 +27,15 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
   const [downloadModelName, setDownloadModelName] = useState('');
   const [downloadModelSavePath, setDownloadModelSavePath] = useState('');
   const [hfMirror, setHfMirror] = useState(true);
+  const [hfTokenDraft, setHfTokenDraft] = useState('');
+  // Value the field held when the modal opened — the API masks a stored
+  // token as '***', so only an actual edit (value differs from this)
+  // triggers a config save; an untouched '***' must not be re-sent.
+  const hfTokenInitialRef = useRef('');
+  const hfTokenParamRef = useRef(hfToken);
+  hfTokenParamRef.current = hfToken;
+  const saveHfTokenRef = useRef(onSaveHfToken);
+  saveHfTokenRef.current = onSaveHfToken;
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [activeDownloadName, setActiveDownloadName] = useState('');
@@ -54,6 +65,8 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
     installSessionRef.current += 1;
     if (showDownloadModal) {
       if (defaultSavePath) setDownloadModelSavePath((p) => (p ? p : defaultSavePath));
+      setHfTokenDraft(hfTokenParamRef.current);
+      hfTokenInitialRef.current = hfTokenParamRef.current;
       setCliStatus(null);
       setCheckingCli(true);
       setInstallingCli(false);
@@ -121,6 +134,16 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
     if (!downloadModelName.trim()) return;
     const repoName = downloadModelName.trim();
     const savePathForDownload = downloadModelSavePath.trim();
+    if (hfTokenDraft !== hfTokenInitialRef.current) {
+      try {
+        await saveHfTokenRef.current(hfTokenDraft);
+        hfTokenInitialRef.current = hfTokenDraft;
+      } catch (e: unknown) {
+        const msg = errMsgLocalized(e);
+        showToast(tRef.current('Failed to save HF token') + (msg ? `: ${msg}` : ''), 'error');
+        return;
+      }
+    }
     downloadRepoRef.current = repoName;
     cancelRequestedRef.current = false;
     setDownloading(true);
@@ -217,6 +240,8 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted }: UseMo
     setDownloadModelSavePath,
     hfMirror,
     setHfMirror,
+    hfToken: hfTokenDraft,
+    setHfToken: setHfTokenDraft,
     downloading,
     downloadProgress,
     downloadSizeBytes,

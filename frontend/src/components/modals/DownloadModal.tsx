@@ -11,6 +11,8 @@ interface DownloadModalProps {
   onSavePathChange: (value: string) => void;
   hfMirror: boolean;
   onHfMirrorChange: (value: boolean) => void;
+  hfToken: string;
+  onHfTokenChange: (value: string) => void;
   checkingCli: boolean;
   cliStatus: CliStatus | null;
   installingCli: boolean;
@@ -25,6 +27,7 @@ const FIELD_CLASS = 'w-full px-3 py-1.5 bg-bg rounded-lg border border-border te
 export function DownloadModal({
   modelName, onModelNameChange,
   savePath, onSavePathChange, hfMirror, onHfMirrorChange,
+  hfToken, onHfTokenChange,
   checkingCli, cliStatus, installingCli,
   installMessage, onInstallCli, onDownload, onClose,
 }: DownloadModalProps) {
@@ -87,6 +90,11 @@ export function DownloadModal({
               <span>{t('Official (huggingface.co)')}</span>
             </label>
           </div>
+        </div>
+        <div>
+          <label htmlFor="dl-hf-token" className="block text-xs text-text-muted mb-1">{t('HF Token')}</label>
+          <input id="dl-hf-token" type="password" value={hfToken} onChange={(e) => onHfTokenChange(e.target.value)} className={FIELD_CLASS} placeholder="hf_..." />
+          <p className="text-[11px] text-text-muted mt-1">{t('Used by model downloads to access gated (approval-required) repos; leave empty for public repos')}</p>
         </div>
       </div>
     </Modal>

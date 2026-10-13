@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Settings, Power, Loader2, Sun, Moon } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { updateServerConfig } from '../api/serverConfig';
 import { useTheme } from '../hooks/useTheme';
 import { invalidateHardwareFetch, invalidateSoftwareFetch, useHardwareStore } from '../stores/hardware';
 import { useModelStore, errMsgLocalized } from '../stores/model';
@@ -72,7 +73,11 @@ export function HomePage() {
 
   const { connectConsole, startConsoleForModel, sendConsoleInput, sendConsoleResize } = useConsoleWebSocket();
   const { refreshing, scanMessage, starting, showLaunchConfigModal, setShowLaunchConfigModal, launchConfigModelName, launchConfigModelPath, launchCommand, setLaunchCommand, launchEnvVars, setLaunchEnvVars, savingLaunchConfig, handleRefresh, handleStartModel, handleStopModel, handleOpenLaunchConfig, handleSaveLaunchConfig, handleDeleteModel, deletingId, stoppingId, deleteRequest, confirmDelete, cancelDelete, stopRequest, confirmStop, cancelStop } = useModelManager({ startConsoleForModel, sshConnected, connectConsole });
-  const { showDownloadModal, setShowDownloadModal, downloadModelName, setDownloadModelName, downloadModelSavePath, setDownloadModelSavePath, hfMirror, setHfMirror, downloading, downloadProgress, downloadSizeBytes, downloadTotalSizeBytes, downloadStalledSecs, activeDownloadName, cliStatus, checkingCli, installingCli, installMessage, handleInstallCli, handleDownloadModel, handleCancelDownload } = useModelDownload({ defaultSavePath: serverConfig.model_save_path ?? '', onSavePathPersisted: (path: string) => setServerConfig((c) => ({ ...c, model_save_path: path })) });
+  const saveHfToken = useCallback(async (value: string) => {
+    const updated = await updateServerConfig({ hf_token: value.trim() ? value : null });
+    setServerConfig(updated);
+  }, [setServerConfig]);
+  const { showDownloadModal, setShowDownloadModal, downloadModelName, setDownloadModelName, downloadModelSavePath, setDownloadModelSavePath, hfMirror, setHfMirror, hfToken: downloadHfToken, setHfToken: setDownloadHfToken, downloading, downloadProgress, downloadSizeBytes, downloadTotalSizeBytes, downloadStalledSecs, activeDownloadName, cliStatus, checkingCli, installingCli, installMessage, handleInstallCli, handleDownloadModel, handleCancelDownload } = useModelDownload({ defaultSavePath: serverConfig.model_save_path ?? '', onSavePathPersisted: (path: string) => setServerConfig((c) => ({ ...c, model_save_path: path })), hfToken: serverConfig.hf_token ?? '', onSaveHfToken: saveHfToken });
 
   const [showDeployEnv, setShowDeployEnv] = useState(false);
   const tasks = useTasks();
@@ -293,6 +298,8 @@ export function HomePage() {
           onSavePathChange={setDownloadModelSavePath}
           hfMirror={hfMirror}
           onHfMirrorChange={setHfMirror}
+          hfToken={downloadHfToken}
+          onHfTokenChange={setDownloadHfToken}
           checkingCli={checkingCli}
           cliStatus={cliStatus}
           installingCli={installingCli}

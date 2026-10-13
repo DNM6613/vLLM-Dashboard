@@ -91,7 +91,6 @@ export const ZH: Record<string, string> = {
   'SSH Key Path': 'SSH 密钥路径',
   'BMC Username': 'BMC 用户名',
   'BMC Password': 'BMC 密码',
-  'Hugging Face': 'Hugging Face',
   'HF Token': 'HF 令牌',
   'Used by model downloads to access gated (approval-required) repos; leave empty for public repos':
     '模型下载访问需审批（gated）仓库时使用；公共仓库可留空',
@@ -131,6 +130,7 @@ export const ZH: Record<string, string> = {
   'Domestic (hf-mirror.com)': '国内镜像（hf-mirror.com）',
   'Official (huggingface.co)': '官方（huggingface.co）',
   'Download': '下载',
+  'Failed to save HF token': 'HF 令牌保存失败',
 
   'Token Benchmark': 'Token 测速',
   'No running model': '没有运行中的模型',
