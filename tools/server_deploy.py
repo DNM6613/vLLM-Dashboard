@@ -10,11 +10,11 @@ import paramiko
 
 SERVER = os.environ.get("DEPLOY_TARGET", "")
 USER = os.environ.get("DEPLOY_USER", "")
-CONTAINER = os.environ.get("DEPLOY_CONTAINER", "vllm-dashboard-dev")
-API_PORT = os.environ.get("DEPLOY_API_PORT", "5173")
+CONTAINER = os.environ.get("DEPLOY_CONTAINER", "vllm-dashboard")
+API_PORT = os.environ.get("DEPLOY_API_PORT", "5174")
 API = f"http://127.0.0.1:{API_PORT}"
 DATA_VOL = os.environ.get(
-    "DEPLOY_DATA_VOL", f"/home/{USER}/vllm-dashboard-dev/data:/app/data")
+    "DEPLOY_DATA_VOL", f"/home/{USER}/vllm-dashboard/data:/app/data")
 BUILD_DIR = os.environ.get("DEPLOY_BUILD_DIR", f"/home/{USER}/vllm-dashboard-build")
 TAR_LOCAL = "_server_deploy.tar"
 TAR_REMOTE = os.environ.get("DEPLOY_TAR_REMOTE", f"/home/{USER}/_server_deploy.tar")
