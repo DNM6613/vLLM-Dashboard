@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 
 from . import remote_client as _rc
-from .server_config import ConnectionDetail, ServerStatus
+from .server_config import ConnectionDetail, DetailedConnectionStatus, ServerStatus
 from .settings import settings
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ class ConnectionProbeMixin:
         elif http_status or ssh_status:
             overall = ServerStatus.ERROR
 
-        return _rc.DetailedConnectionStatus(
+        return DetailedConnectionStatus(
             http=http_status,
             ssh=ssh_status,
             overall=overall
