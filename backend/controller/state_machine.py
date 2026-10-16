@@ -36,6 +36,7 @@ class StateMachine:
     def __init__(self, state_file: str | None = None):
         self.models: dict[str, ModelInfo] = {}
         self.current_model_id: str | None = None
+        self._pending_locked_restarts: list[str] = []
         self._lock = threading.RLock()
         self._state_file = (
             Path(state_file) if state_file
@@ -55,6 +56,8 @@ class StateMachine:
                 data = json.load(f)
             for model_id, model_data in data.get("models", {}).items():
                 try:
+                    if model_data.get("locked") and model_data.get("status") in _TRANSIENT_STATES:
+                        self._pending_locked_restarts.append(model_id)
                     if model_data.get("status") in _TRANSIENT_STATES:
                         model_data["status"] = ModelStatus.STOPPED
                         model_data["loading_since"] = None
@@ -230,5 +233,33 @@ class StateMachine:
             del self.models[model_id]
             self._schedule_save()
             return True
+
+    def set_model_locked(self, model_id: str, locked: bool) -> list[str]:
+        """Set the lock flag. Locks are exclusive: locking one model
+        unlocks any other locked model. Returns the ids that got unlocked."""
+        with self._lock:
+            if model_id not in self.models:
+                return []
+            unlocked: list[str] = []
+            if locked:
+                for mid, m in self.models.items():
+                    if mid != model_id and m.locked:
+                        m.locked = False
+                        m.updated_at = datetime.now()
+                        unlocked.append(mid)
+            self.models[model_id].locked = locked
+            self.models[model_id].updated_at = datetime.now()
+            self._schedule_save()
+            return unlocked
+
+    def take_pending_locked_restarts(self) -> list[str]:
+        """Locked models that were RUNNING/LOADING before the last process start.
+
+        The watchdog replays them as crash events at startup so a dashboard
+        restart re-starts the model the user had locked and running.
+        """
+        pending = self._pending_locked_restarts
+        self._pending_locked_restarts = []
+        return pending
 
 state_machine = StateMachine()

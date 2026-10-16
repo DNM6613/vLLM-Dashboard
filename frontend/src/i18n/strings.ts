@@ -75,6 +75,10 @@ export const ZH: Record<string, string> = {
   'Cancel': '取消',
   'Stop': '停止',
   'Launch Config': '启动配置',
+  'Lock (auto-restart on crash)': '锁定（崩溃后自动启动）',
+  'Unlock (auto-restart on crash)': '解除锁定',
+  'Locked: auto-starts after a crash or server restart; manual stop is not re-started': '已锁定：崩溃或服务器重启后自动启动；手动停止不会拉起',
+  'Lock this model: it will auto-start after a crash or server restart. Only one model can be locked at a time.': '锁定该模型：崩溃或服务器重启后自动启动。同一时间只能锁定一个模型。',
   'Delete': '删除',
   'Delete (SSH disconnected)': '删除（SSH 未连接）',
 

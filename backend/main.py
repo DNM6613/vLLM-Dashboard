@@ -34,6 +34,7 @@ from .middleware import (
     unhandled_exception_handler,
     validation_exception_handler,
 )
+from .service.model_watchdog import start_watchdog, stop_watchdog
 from .ws.hardware_broadcaster import hardware_broadcaster, websocket_hardware
 
 load_dotenv()
@@ -42,10 +43,14 @@ logger = logging.getLogger(__name__)
 
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI):
-    yield
-    await hardware_broadcaster.shutdown()
-    from .config.remote_client import close_http_client
-    await close_http_client()
+    await start_watchdog()
+    try:
+        yield
+    finally:
+        await stop_watchdog()
+        await hardware_broadcaster.shutdown()
+        from .config.remote_client import close_http_client
+        await close_http_client()
 
 app = FastAPI(title="vLLM-Dashboard", version=__version__, lifespan=lifespan)
 

@@ -66,7 +66,7 @@ export function HomePage() {
   const { benchmarkResults, benchmarkingIds, benchmarkErrors, handleBenchmark, showBenchmarkModal, setShowBenchmarkModal } = useBenchmark();
 
   const { connectConsole, startConsoleForModel, sendConsoleInput, sendConsoleResize } = useConsoleWebSocket();
-  const { refreshing, scanMessage, starting, showLaunchConfigModal, setShowLaunchConfigModal, launchConfigModelName, launchConfigModelPath, launchCommand, setLaunchCommand, launchEnvVars, setLaunchEnvVars, savingLaunchConfig, handleRefresh, handleStartModel, handleStopModel, handleOpenLaunchConfig, handleSaveLaunchConfig, handleDeleteModel, deletingId, stoppingId, deleteRequest, confirmDelete, cancelDelete, stopRequest, confirmStop, cancelStop } = useModelManager({ startConsoleForModel, sshConnected, connectConsole });
+  const { refreshing, scanMessage, starting, showLaunchConfigModal, setShowLaunchConfigModal, launchConfigModelName, launchConfigModelPath, launchCommand, setLaunchCommand, launchEnvVars, setLaunchEnvVars, savingLaunchConfig, handleRefresh, handleStartModel, handleStopModel, handleToggleLock, lockingId, handleOpenLaunchConfig, handleSaveLaunchConfig, handleDeleteModel, deletingId, stoppingId, deleteRequest, confirmDelete, cancelDelete, stopRequest, confirmStop, cancelStop } = useModelManager({ startConsoleForModel, sshConnected, connectConsole });
   const saveHfToken = useCallback(async (value: string) => {
     const updated = await updateServerConfig({ hf_token: value.trim() ? value : null });
     setServerConfig(updated);
@@ -239,6 +239,8 @@ export function HomePage() {
               onRefresh={handleRefresh}
               onStart={handleStartModel}
               onStop={handleStopModel}
+              onToggleLock={handleToggleLock}
+              lockingId={lockingId}
               onOpenLaunchConfig={handleOpenLaunchConfig}
               onDelete={handleDeleteModel}
               onOpenDownload={openDownloadModal}

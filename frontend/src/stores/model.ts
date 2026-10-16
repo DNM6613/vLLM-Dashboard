@@ -73,6 +73,10 @@ export const useModelStore = create<ModelStore>((set) => ({
     return await modelsApi.startModel(modelId);
   },
 
+  setModelLock: async (modelId, locked) => {
+    return await modelsApi.setModelLock(modelId, locked);
+  },
+
   clearError: () => set({ error: null }),
 
   scanModels: async () => {

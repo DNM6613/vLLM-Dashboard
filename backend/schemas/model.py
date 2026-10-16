@@ -35,4 +35,5 @@ class ModelInfo(BaseModel):
     error_message: str = ""
     size_bytes: int = 0
     loading_since: datetime | None = None
+    locked: bool = False
     benchmark: BenchmarkInfo | None = None

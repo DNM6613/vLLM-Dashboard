@@ -205,6 +205,18 @@ from .model_status_sync import (
 from .model_status_sync import (
     sync_status as sync_status,
 )
+from .model_watchdog import (
+    apply_model_lock as apply_model_lock,
+)
+from .model_watchdog import (
+    on_model_crash as _watchdog_on_crash,
+)
+from .model_watchdog import (
+    start_watchdog as start_watchdog,
+)
+from .model_watchdog import (
+    stop_watchdog as stop_watchdog,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +235,8 @@ __all__ = [
     "BenchmarkInfo",
     "ModelInfo",
     "ModelStatus",
+    "_watchdog_on_crash",
+    "apply_model_lock",
     "benchmark_model",
     "check_cli_tools",
     "config_manager",
@@ -243,8 +257,10 @@ __all__ = [
     "scan_models",
     "settings",
     "start_model",
+    "start_watchdog",
     "state_machine",
     "stop_download",
     "stop_model",
+    "stop_watchdog",
     "sync_status",
 ]

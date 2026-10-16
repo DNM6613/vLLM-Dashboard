@@ -13,7 +13,7 @@ interface UseModelManagerParams {
 
 export function useModelManager({ startConsoleForModel, sshConnected, connectConsole }: UseModelManagerParams) {
   const { t } = useI18n();
-  const { fetchModels, syncModelStatus, stopModel, startModel, clearError, scanModels, getLaunchConfig, saveLaunchConfig, deleteModel } = useModelStore();
+  const { fetchModels, syncModelStatus, stopModel, startModel, setModelLock, clearError, scanModels, getLaunchConfig, saveLaunchConfig, deleteModel } = useModelStore();
   const [refreshing, setRefreshing] = useState(false);
   const [scanMessage, setScanMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showLaunchConfigModal, setShowLaunchConfigModal] = useState(false);
@@ -29,6 +29,8 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
   const stoppingRef = useRef(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
+  const lockingRef = useRef(false);
+  const [lockingId, setLockingId] = useState<string | null>(null);
   const [deleteRequest, setDeleteRequest] = useState<{ modelId: string; name: string } | null>(null);
   const [stopRequest, setStopRequest] = useState<{ modelId: string; name: string } | null>(null);
 
@@ -190,6 +192,23 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
     }
   }, [startModel, fetchModels, startConsoleForModel, t]);
 
+  const handleToggleLock = useCallback(async (modelId: string, locked: boolean): Promise<boolean> => {
+    if (lockingRef.current) return false;
+    lockingRef.current = true;
+    setLockingId(modelId);
+    try {
+      await setModelLock(modelId, locked);
+      await fetchModels();
+      return true;
+    } catch (e: unknown) {
+      showToast(errMsgLocalized(e) || t('Operation failed'));
+      return false;
+    } finally {
+      lockingRef.current = false;
+      setLockingId(null);
+    }
+  }, [setModelLock, fetchModels, t]);
+
   const doStopModel = useCallback(async (modelId: string) => {
     stoppingRef.current = true;
     setStoppingId(modelId);
@@ -245,6 +264,8 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
     handleRefresh,
     handleStartModel,
     handleStopModel,
+    handleToggleLock,
+    lockingId,
     handleOpenLaunchConfig,
     handleSaveLaunchConfig,
     handleDeleteModel,

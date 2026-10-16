@@ -108,6 +108,10 @@ def get_download_status(log_file: str = Query(...), repo: str = Query(""),
 async def stop_model(model_id: str = Query(...)):
     return await model_service.stop_model(model_id)
 
+@router.post("/lock")
+def set_model_lock(model_id: str = Query(...), locked: bool = Query(True)):
+    return model_service.apply_model_lock(model_id, locked)
+
 @router.post("/benchmark")
 async def benchmark_model(model_id: str = Query(...)):
     return await model_service.benchmark_model(model_id)

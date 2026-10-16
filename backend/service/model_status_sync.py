@@ -103,6 +103,8 @@ async def _sync_status_once(timeout: float, track_current: bool = False,
                 if _loading_reset_allowed(model):
                     _ms.state_machine.update_model_status(model.id, ModelStatus.STOPPED)
                     _ms.state_machine.clear_current_model(model.id)
+                    if model.locked:
+                        _ms._watchdog_on_crash(model.id)
                     changed += 1
             elif (model.status == ModelStatus.LOADING
                   and _loading_hard_reset_allowed(model)):
@@ -123,6 +125,8 @@ async def _sync_status_once(timeout: float, track_current: bool = False,
             if not is_running and (remote_model_ids or strict_present is False):
                 _ms.state_machine.update_model_status(model.id, ModelStatus.STOPPED)
                 _ms.state_machine.clear_current_model(model.id)
+                if model.locked:
+                    _ms._watchdog_on_crash(model.id)
                 changed += 1
         elif model.status == ModelStatus.STOPPED:
             if is_running:

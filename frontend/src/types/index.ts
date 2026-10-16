@@ -131,6 +131,7 @@ export interface ModelInfo {
   created_at?: string;
   updated_at?: string;
   error_message?: string;
+  locked?: boolean;
   benchmark?: BenchmarkInfo | null;
 }
 
@@ -204,6 +205,7 @@ export interface ModelStore {
   syncModelStatus: () => Promise<{ synced: boolean; synced_count?: number; error?: string }>;
   stopModel: (modelId: string) => Promise<StopResult>;
   startModel: (modelId: string) => Promise<{ status: string; model_id: string; command: string }>;
+  setModelLock: (modelId: string, locked: boolean) => Promise<{ model_id: string; locked: boolean; unlocked: string[] }>;
   clearError: () => void;
   scanModels: () => Promise<{ count: number; error?: string; removed_stale?: string[] }>;
   getLaunchConfig: (modelId: string) => Promise<LaunchConfigResponse>;

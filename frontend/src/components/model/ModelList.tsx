@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Folder, FolderDown, RefreshCw, Loader2, Play, Square, Settings, Trash2, Gauge, HardDrive, AlertCircle, AlertTriangle, Copy, Globe, Key } from 'lucide-react';
+import { Folder, FolderDown, RefreshCw, Loader2, Play, Square, Settings, Trash2, Gauge, HardDrive, AlertCircle, AlertTriangle, Copy, Globe, Key, Lock, LockOpen } from 'lucide-react';
 import { formatSize, fmtNum } from '../../utils/format';
 import { copyText } from '../../utils/clipboard';
 import { ModelStatus } from '../../types';
@@ -18,11 +18,13 @@ interface ModelListProps {
   starting: boolean;
   deletingId: string | null;
   stoppingId: string | null;
+  lockingId: string | null;
   sshConnected: boolean;
   benchmarkResults: Record<string, BenchmarkResult[]>;
   onRefresh: () => void;
   onStart: (modelId: string) => void;
   onStop: (modelId: string) => void;
+  onToggleLock: (modelId: string, locked: boolean) => void;
   onOpenLaunchConfig: (modelId: string, modelName: string, modelPath: string) => void;
   onDelete: (modelId: string, modelName: string) => void;
   onOpenDownload: () => void;
@@ -65,9 +67,9 @@ function ModelApiInfo({ endpoint, apiKey }: { endpoint: string | null; apiKey: s
 }
 
 export const ModelList = memo(function ModelList({
-  models, loading, refreshing, scanMessage, error, starting, deletingId, stoppingId,
+  models, loading, refreshing, scanMessage, error, starting, deletingId, stoppingId, lockingId,
   sshConnected, benchmarkResults, openaiEndpoint, openaiApiKey,
-  onRefresh, onStart, onStop, onOpenLaunchConfig, onDelete, onOpenDownload, onOpenBenchmark,
+  onRefresh, onStart, onStop, onToggleLock, onOpenLaunchConfig, onDelete, onOpenDownload, onOpenBenchmark,
   download, onCancelDownload,
 }: ModelListProps) {
   const { t } = useI18n();
@@ -227,6 +229,21 @@ export const ModelList = memo(function ModelList({
                       : <Square className="w-4 h-4 text-warning" />}
                   </IconButton>
                 )}
+                <IconButton
+                  size="sm"
+                  ariaLabel={model.locked ? t('Unlock (auto-restart on crash)') : t('Lock (auto-restart on crash)')}
+                  title={model.locked
+                    ? t('Locked: auto-starts after a crash or server restart; manual stop is not re-started')
+                    : t('Lock this model: it will auto-start after a crash or server restart. Only one model can be locked at a time.')}
+                  onClick={() => onToggleLock(model.id, !model.locked)}
+                  disabled={lockingId !== null || opInFlight}
+                >
+                  {lockingId === model.id
+                    ? <Loader2 className="w-4 h-4 animate-spin text-accent" />
+                    : model.locked
+                      ? <Lock className="w-4 h-4 text-accent" />
+                      : <LockOpen className="w-4 h-4 text-text-muted" />}
+                </IconButton>
                 <IconButton
                   size="sm"
                   ariaLabel={t('Launch Config')}

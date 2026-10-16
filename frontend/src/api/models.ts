@@ -27,6 +27,11 @@ export const startModel = async (modelId: string): Promise<{ status: string; mod
   return response.data;
 };
 
+export const setModelLock = async (modelId: string, locked: boolean): Promise<{ model_id: string; locked: boolean; unlocked: string[] }> => {
+  const response = await api.post('/models/lock', null, { params: { model_id: modelId, locked } });
+  return response.data;
+};
+
 export const scanModels = async (): Promise<{ success: boolean; models: ModelInfo[]; count: number; removed_stale?: string[] }> => {
   const response = await api.post('/models/scan', null, { timeout: TIMEOUT_SCAN });
   return response.data;
