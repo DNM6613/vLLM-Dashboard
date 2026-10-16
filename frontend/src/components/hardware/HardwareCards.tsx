@@ -36,33 +36,28 @@ export const HardwareCards = memo(function HardwareCards({ sshConnected }: Hardw
             <Cpu className="w-4 h-4 text-accent" />
             <span className="text-sm font-medium">{t('CPU')}</span>
           </div>
-          <div className="text-base font-mono font-bold text-right tabular-nums">{sshConnected && cpu ? <AnimatedNumber value={cpu.usage ?? 0} format={(v) => `${fmtPct(v)}%`} /> : 'N/A'}</div>
-          {sshConnected && cpu ? (
-            <div className="text-xs text-text-muted mt-1 truncate" title={cpu.model}>
-              {cpu.model}
-            </div>
-          ) : null}
+          <div className="text-base font-mono font-bold text-center tabular-nums">{sshConnected && cpu ? <AnimatedNumber value={cpu.usage ?? 0} format={(v) => `${fmtPct(v)}%`} /> : 'N/A'}</div>
         </div>
         <div className="bg-bg-card rounded-xl p-4 border border-border shadow-md">
           <div className="flex items-center gap-2 mb-2">
             <MemoryStick className="w-4 h-4 text-accent" />
             <span className="text-sm font-medium">{t('RAM')}</span>
           </div>
-          <div className="text-base font-mono font-bold text-right tabular-nums">{sshConnected && memory && memory.total > 0 ? <AnimatedNumber value={memory.used ?? 0} format={(v) => `${formatSize(v)} / ${formatSize(memory.total ?? 0)}`} /> : 'N/A'}</div>
+          <div className="text-base font-mono font-bold text-center tabular-nums">{sshConnected && memory && memory.total > 0 ? <AnimatedNumber value={memory.used ?? 0} format={(v) => `${formatSize(v)} / ${formatSize(memory.total ?? 0)}`} /> : 'N/A'}</div>
         </div>
         <div className="bg-bg-card rounded-xl p-4 border border-border shadow-md">
           <div className="flex items-center gap-2 mb-2">
             <HardDrive className="w-4 h-4 text-accent" />
             <span className="text-sm font-medium">{t('DISK')}</span>
           </div>
-          <div className="text-base font-mono font-bold text-right tabular-nums">{sshConnected && disk && disk.total > 0 ? <AnimatedNumber value={disk.used ?? 0} format={(v) => `${formatSize(v)} / ${formatSize(disk.total ?? 0)}`} /> : 'N/A'}</div>
+          <div className="text-base font-mono font-bold text-center tabular-nums">{sshConnected && disk && disk.total > 0 ? <AnimatedNumber value={disk.used ?? 0} format={(v) => `${formatSize(v)} / ${formatSize(disk.total ?? 0)}`} /> : 'N/A'}</div>
         </div>
         <div className="bg-bg-card rounded-xl p-4 border border-border shadow-md">
           <div className="flex items-center gap-2 mb-2">
             <CircuitBoard className="w-4 h-4 text-accent" />
             <span className="text-sm font-medium">{t('GPU')}</span>
           </div>
-          <div className="text-base font-mono font-bold text-right tabular-nums">
+          <div className="text-base font-mono font-bold text-center tabular-nums">
             {live
               ? <AnimatedNumber value={totalMemoryUsed} format={(v) => `${formatSize(v * 1024 * 1024, true)} / ${formatSize(totalMemory * 1024 * 1024, true)}`} />
               : 'N/A'}
