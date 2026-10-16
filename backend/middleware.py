@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Histogram
 
 from .config.settings import settings
+from .ws import ticket as ws_ticket
 
 load_dotenv()
 
@@ -27,7 +28,7 @@ class _RequestIdLogFilter(logging.Filter):
         record.request_id = request_id_var.get()
         return True
 
-_API_KEY_QUERY_RE = re.compile(r"(api_key=)[^&\s\"']+")
+_API_KEY_QUERY_RE = re.compile(r"(api_key=|ticket=)[^&\s\"']+")
 
 class _RedactApiKeyFilter(logging.Filter):
 
@@ -128,10 +129,12 @@ async def auth_middleware(request: Request, call_next):
     return _error_response(401, "unauthorized", "Invalid or missing API key", request)
 
 def ws_api_key_valid(websocket: WebSocket) -> bool:
+    """WS auth is a one-time ticket (B2): the API key no longer travels in
+    the WS URL, so it can no longer leak via access logs / proxy logs."""
     if not _auth_enabled():
         return True
-    provided = websocket.query_params.get("api_key", "")
-    return bool(provided) and hmac.compare_digest(provided, settings.API_KEY)
+    provided = websocket.query_params.get("ticket", "")
+    return bool(provided) and ws_ticket.ticket_store.consume(provided)
 
 async def http_exception_handler(request: Request, exc: HTTPException):
     if isinstance(exc.detail, str):

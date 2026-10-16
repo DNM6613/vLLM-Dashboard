@@ -1,4 +1,4 @@
-import { Folder, Loader2 } from 'lucide-react';
+import { CheckCircle2, Folder, Loader2, TriangleAlert } from 'lucide-react';
 import type { CliStatus } from '../../types';
 import { useI18n } from '../../i18n';
 import { Button } from '../ui/Button';
@@ -51,12 +51,12 @@ export function DownloadModal({
           {!checkingCli && cliStatus && (
             (() => {
               if (cliStatus.hf_installed) {
-                return <span className="text-success flex items-center gap-1"><span className="text-xs">✓</span> {t('hf is installed')}</span>;
+                return <span className="text-success flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> {t('hf is installed')}</span>;
               }
               return (
                 <div className="flex items-center gap-2">
                   <span className="text-warning flex items-center gap-1">
-                    <span className="text-xs">⚠</span> {t('hf (huggingface_hub) not found')}
+                    <TriangleAlert className="w-3 h-3" /> {t('hf (huggingface_hub) not found')}
                   </span>
                   <Button size="sm" variant="primary" onClick={() => onInstallCli('hf')} disabled={installingCli}>
                     {installingCli ? <Loader2 className="w-3 h-3 animate-spin" /> : null}

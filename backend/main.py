@@ -20,6 +20,7 @@ from .api import (
     model_status_router,
     models_router,
     server_config_router,
+    ws_auth_router,
 )
 from .config.remote_client import config_manager
 from .config.settings import settings
@@ -80,6 +81,7 @@ app.include_router(models_router)
 app.include_router(hardware_router)
 app.include_router(server_config_router)
 app.include_router(deployment_router)
+app.include_router(ws_auth_router)
 
 app.add_api_websocket_route("/ws/hardware", websocket_hardware)
 app.add_api_websocket_route("/ws/console", websocket_console)

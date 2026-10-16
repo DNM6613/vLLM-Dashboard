@@ -1,37 +1,63 @@
-import asyncio
+"""Server config manager + shared HTTP client (facade).
+
+Split per the file-size gate (<=300 lines); this module is the
+compatibility facade — it holds ``ConfigManager`` (load / save / merge with
+encrypted credentials), the shared ``httpx`` client, the ``config_manager``
+singleton, and re-exports the split modules so existing imports keep working:
+
+* ``credentials`` — Fernet credential encryption / legacy migration
+* ``api_target`` — resolved vLLM API connection target
+* ``connection_probes`` — HTTP / SSH / TCP reachability probes (mixin)
+"""
+
+from __future__ import annotations
+
 import contextlib
 import json
 import logging
 import os
-import shlex
-import socket
 import threading
-import time
-from dataclasses import dataclass
 from typing import Any
 
 import httpx
 from pydantic import ValidationError
 
-from .model_launch_config import resolve_launch_api
+from .api_target import (
+    VLLM_DEFAULT_PORT as VLLM_DEFAULT_PORT,
+)
+from .api_target import (
+    ApiTarget as ApiTarget,
+)
+from .api_target import (
+    resolve_api_target as resolve_api_target,
+)
+from .connection_probes import ConnectionProbeMixin
+from .credentials import (
+    _CRED_FIELDS as _CRED_FIELDS,
+)
+from .credentials import (
+    _encrypt_credential as _encrypt_credential,
+)
+from .credentials import (
+    _fernet as _fernet,
+)
+from .credentials import (
+    _get_legacy_secret_key_file as _get_legacy_secret_key_file,
+)
+from .credentials import (
+    _migrate_legacy_encrypted as _migrate_legacy_encrypted,
+)
+from .model_launch_config import resolve_launch_api  # noqa: F401  (facade re-export)
 from .server_config import (
-    ConnectionDetail,
-    DetailedConnectionStatus,
     ServerConfig,
-    ServerStatus,
 )
 from .settings import settings
 
 logger = logging.getLogger(__name__)
 
-# vLLM's default API port, used when neither the launch command (--port) nor
-# the environment (PORT) specifies one.
-VLLM_DEFAULT_PORT = 8000
-
-HEALTH_REACH_PROBE_TIMEOUT = 2
-
 _shared_http_client: httpx.AsyncClient | None = None
 _shared_http_client_lock = threading.Lock()
+
 
 def get_http_client() -> httpx.AsyncClient:
     global _shared_http_client
@@ -47,6 +73,7 @@ def get_http_client() -> httpx.AsyncClient:
                 _shared_http_client = client
     return client
 
+
 async def close_http_client() -> None:
     global _shared_http_client
     with _shared_http_client_lock:
@@ -54,93 +81,8 @@ async def close_http_client() -> None:
     if client and not client.is_closed:
         await client.aclose()
 
-@dataclass
-class ApiTarget:
-    """A resolved vLLM API connection target.
 
-    The port and API key come from the launch config of the model currently
-    being served (``--port`` / ``--api-key`` flags or ``PORT`` / ``API_KEY``
-    env vars); when no port is specified there, the vLLM default port is
-    used. ``api_key`` is the effective key (the one actually sent in the
-    Authorization header, or ``None`` when the API is unauthenticated).
-    """
-    base_url: str
-    port: int
-    headers: dict
-    api_key: str | None
-
-def resolve_api_target(config: ServerConfig | None = None) -> ApiTarget:
-    if config is None:
-        config = config_manager.get_config()
-    port, parsed_key = resolve_launch_api()
-    if port is None:
-        port = VLLM_DEFAULT_PORT
-    api_key = parsed_key
-    if api_key is None and config.use_auth and config.api_key:
-        api_key = config.api_key
-    headers: dict[str, str] = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    if config.extra_headers:
-        headers.update(config.extra_headers)
-    return ApiTarget(
-        base_url=f"http://{config.host}:{port}",
-        port=port,
-        headers=headers,
-        api_key=api_key,
-    )
-
-def _get_legacy_secret_key_file() -> str:
-    current_file = os.path.abspath(__file__)
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_file)))
-    return os.path.join(project_root, "data", ".secret_key")
-
-def _migrate_legacy_encrypted(stored: str) -> str:
-    if not stored or not stored.startswith("enc:"):
-        return stored
-    key_file = _get_legacy_secret_key_file()
-    if not os.path.exists(key_file):
-        logger.warning(
-            "配置含旧版加密密码但密钥文件缺失（%s），密码已清空，请重新设置", key_file
-        )
-        return ""
-    try:
-        from cryptography.fernet import Fernet
-        with open(key_file, "rb") as f:
-            fernet = Fernet(f.read())
-        return fernet.decrypt(stored[4:].encode("utf-8")).decode("utf-8")
-    except Exception as e:
-        logger.warning(
-            "旧版加密密码解密失败（密码已清空，请重新设置）: %s", e
-        )
-        return ""
-
-_CRED_FIELDS = ("ssh_password", "bmc_password", "api_key", "hf_token")
-
-def _fernet():
-    """Return a Fernet instance, creating the key file if it does not exist yet.
-
-    Reuses the legacy ``data/.secret_key`` so already-encrypted values keep
-    decrypting; a new key is only generated on first save.
-    """
-    from cryptography.fernet import Fernet
-    key_file = _get_legacy_secret_key_file()
-    if os.path.exists(key_file):
-        with open(key_file, "rb") as f:
-            return Fernet(f.read())
-    key = Fernet.generate_key()
-    os.makedirs(os.path.dirname(key_file), exist_ok=True)
-    with open(key_file, "wb") as f:
-        f.write(key)
-    if os.name == "posix":
-        with contextlib.suppress(OSError):
-            os.chmod(key_file, 0o600)
-    return Fernet(key)
-
-def _encrypt_credential(fernet, value: str) -> str:
-    return "enc:" + fernet.encrypt(value.encode("utf-8")).decode("utf-8")
-
-class ConfigManager:
+class ConfigManager(ConnectionProbeMixin):
     def __init__(self):
         current_file = os.path.abspath(__file__)
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_file)))
@@ -271,182 +213,5 @@ class ConfigManager:
             self._ssh_version = None
             return self.config
 
-    async def check_connection(self, refresh: bool = False) -> DetailedConnectionStatus:
-        if refresh:
-            self.invalidate_ssh_version()
-
-        tasks = []
-
-        if self.config.host:
-            tasks.append(self._check_http())
-
-        if self.config.host and self.config.ssh_username:
-            tasks.append(self._check_ssh())
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        http_status = None
-        ssh_status = None
-        overall = ServerStatus.UNKNOWN
-
-        for result in results:
-            if isinstance(result, Exception):
-                continue
-            if isinstance(result, tuple):
-                method, detail = result
-                if method == "http":
-                    http_status = detail
-                elif method == "ssh":
-                    ssh_status = detail
-
-        if (http_status and http_status.status == ServerStatus.CONNECTED) or \
-           (ssh_status and ssh_status.status == ServerStatus.CONNECTED):
-            overall = ServerStatus.CONNECTED
-        elif (http_status and http_status.status == ServerStatus.DISCONNECTED) or \
-             (ssh_status and ssh_status.status == ServerStatus.DISCONNECTED):
-            overall = ServerStatus.DISCONNECTED
-        elif http_status or ssh_status:
-            overall = ServerStatus.ERROR
-
-        return DetailedConnectionStatus(
-            http=http_status,
-            ssh=ssh_status,
-            overall=overall
-        )
-
-    async def _check_http(self) -> tuple[str, ConnectionDetail]:
-        start = time.time()
-        try:
-            client = get_http_client()
-            target = resolve_api_target(self.config)
-            response = await client.get(
-                f"{target.base_url}/v1/models",
-                timeout=3.0,
-                headers=target.headers,
-            )
-
-            if response.status_code == 200:
-                latency_ms = round((time.time() - start) * 1000, 2)
-                version = "unknown"
-                try:
-                    models_data = response.json()
-                    model_list = models_data.get("data", [])
-                    version = f"{len(model_list)} 个模型已加载" if model_list else "vLLM 运行中 (无模型)"
-                except Exception:
-                    pass
-
-                return "http", ConnectionDetail(
-                    status=ServerStatus.CONNECTED,
-                    latency_ms=latency_ms,
-                    version=version
-                )
-            else:
-                return "http", ConnectionDetail(
-                    status=ServerStatus.DISCONNECTED,
-                    error=f"HTTP {response.status_code}"
-                )
-        except httpx.ConnectError:
-            return "http", ConnectionDetail(
-                status=ServerStatus.DISCONNECTED,
-                error="vLLM 未启动或无法连接"
-            )
-        except httpx.TimeoutException:
-            return "http", ConnectionDetail(
-                status=ServerStatus.DISCONNECTED,
-                error="连接超时"
-            )
-        except Exception as e:
-            return "http", ConnectionDetail(
-                status=ServerStatus.DISCONNECTED,
-                error=str(e)
-            )
-
-    def _build_version_probe_cmd(self) -> str:
-        if settings.VLLM_PYTHON_PATH:
-            return (
-                "echo ok && "
-                f"{shlex.quote(settings.VLLM_PYTHON_PATH)} -c \"import vllm; print(vllm.__version__)\" "
-                "2>/dev/null || echo unknown"
-            )
-        return (
-            "echo ok && "
-            "VLLM_PY=$(which python3 2>/dev/null || which python 2>/dev/null) && "
-            "$VLLM_PY -c \"import vllm; print(vllm.__version__)\" 2>/dev/null || echo unknown"
-        )
-
-    async def _check_ssh(self) -> tuple[str, ConnectionDetail]:
-        try:
-            from ..executor.remote_executor import get_remote_executor
-            executor = get_remote_executor()
-
-            with self._lock:
-                cached_version = self._ssh_version
-            # "unknown" means the probe ran but vLLM's python was absent — do
-            # not cache that; vLLM may be installed later, so re-probe.
-            cmd = ("echo ok"
-                   if (cached_version is not None and cached_version != "unknown")
-                   else self._build_version_probe_cmd())
-
-            ssh_start = time.time()
-            result = await asyncio.to_thread(executor.execute, cmd)
-            ssh_latency_ms = round((time.time() - ssh_start) * 1000, 2)
-
-            if result["success"]:
-                version = cached_version
-                if version is None or version == "unknown":
-                    lines = result["stdout"].strip().split('\n')
-                    version = "unknown"
-                    if len(lines) >= 2:
-                        version = lines[1].strip() or "unknown"
-                    if version != "unknown":
-                        with self._lock:
-                            self._ssh_version = version
-
-                return "ssh", ConnectionDetail(
-                    status=ServerStatus.CONNECTED,
-                    latency_ms=ssh_latency_ms,
-                    version=version
-                )
-            else:
-                self.invalidate_ssh_version()
-                return "ssh", ConnectionDetail(
-                    status=ServerStatus.DISCONNECTED,
-                    error=result['stderr'] or "Connection failed"
-                )
-        except Exception as e:
-            self.invalidate_ssh_version()
-            return "ssh", ConnectionDetail(
-                status=ServerStatus.DISCONNECTED,
-                error=str(e)
-            )
-
-    async def get_health(self) -> dict[str, Any]:
-        if not self.config.host or self.config.host in ("localhost", "127.0.0.1"):
-            return {"status": "no server configured"}
-        target = resolve_api_target(self.config)
-        def _tcp_probe() -> bool:
-            try:
-                with socket.create_connection(
-                        (self.config.host, target.port),
-                        timeout=HEALTH_REACH_PROBE_TIMEOUT):
-                    return True
-            except OSError:
-                return False
-
-        if not await asyncio.to_thread(_tcp_probe):
-            raise httpx.ConnectError(
-                f"host unreachable (TCP probe no response): "
-                f"{self.config.host}:{target.port}")
-        client = get_http_client()
-        response = await client.get(
-            f"{target.base_url}/health",
-            timeout=httpx.Timeout(5.0, connect=3.0),
-            headers=target.headers,
-        )
-        response.raise_for_status()
-        try:
-            return response.json()
-        except Exception:
-            return {"status": "healthy"}
 
 config_manager = ConfigManager()

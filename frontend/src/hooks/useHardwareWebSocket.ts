@@ -9,8 +9,22 @@ export function useHardwareWebSocket() {
     let isManualClose = false;
     let retryCount = 0;
 
-    const connect = () => {
-      const socket = new WebSocket(getWsUrl('/ws/hardware'));
+    const scheduleReconnect = () => {
+      if (isManualClose) return;
+      const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+      retryCount++;
+      reconnectTimer = setTimeout(connect, delay);
+    };
+
+    const connect = async () => {
+      let socket: WebSocket;
+      try {
+        // B2: getWsUrl is async (mints a one-time ticket when a key is stored).
+        socket = new WebSocket(await getWsUrl('/ws/hardware'));
+      } catch {
+        scheduleReconnect();
+        return;
+      }
       ws = socket;
       socket.onopen = () => {
         retryCount = 0;
@@ -24,11 +38,7 @@ export function useHardwareWebSocket() {
         } catch {  }
       };
       socket.onclose = () => {
-        if (!isManualClose) {
-          const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
-          retryCount++;
-          reconnectTimer = setTimeout(connect, delay);
-        }
+        scheduleReconnect();
       };
     };
 

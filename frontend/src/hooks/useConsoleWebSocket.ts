@@ -16,6 +16,7 @@ export function useConsoleWebSocket() {
   const consoleManualCloseRef = useRef(false);
   const consoleReconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const consoleRetryCountRef = useRef(0);
+  const consoleConnectSeqRef = useRef(0);
   const MAX_RECONNECT_ATTEMPTS = 10;
 
   const scheduleConsoleReconnect = () => {
@@ -33,16 +34,28 @@ export function useConsoleWebSocket() {
     }, delay);
   };
 
-  const connectConsoleWs = (mode: 'start' | 'console', command?: string) => {
+  const connectConsoleWs = async (mode: 'start' | 'console', command?: string) => {
+    // B2: getWsUrl is async (mints a one-time ticket when a key is stored).
+    // The seq guard makes a superseded attempt (double-click, reconnect
+    // overlapping a manual connect) drop out after the ticket round-trip
+    // instead of opening a stale second socket.
+    const seq = ++consoleConnectSeqRef.current;
     consoleManualCloseRef.current = false;
     if (consoleReconnectRef.current) { clearTimeout(consoleReconnectRef.current); consoleReconnectRef.current = null; }
-    const url = mode === 'start' ? getWsUrl('/ws/console?mode=start') : getWsUrl('/ws/console');
+    let url: string;
+    try {
+      url = mode === 'start' ? await getWsUrl('/ws/console?mode=start') : await getWsUrl('/ws/console');
+    } catch {
+      if (seq === consoleConnectSeqRef.current) scheduleConsoleReconnect();
+      return;
+    }
+    if (seq !== consoleConnectSeqRef.current) return;
     const ws = new WebSocket(url);
     consoleWsRef.current = ws;
     let startupDetected = false;
 
     ws.onopen = () => {
-      if (ws !== consoleWsRef.current) return;
+      if (seq !== consoleConnectSeqRef.current || ws !== consoleWsRef.current) return;
       useConsoleStore.getState().setConnected(true);
       consoleRetryCountRef.current = 0;
       terminalReset();
@@ -80,14 +93,14 @@ export function useConsoleWebSocket() {
       }
     };
     ws.onclose = () => {
-      if (ws !== consoleWsRef.current) return;
+      if (seq !== consoleConnectSeqRef.current || ws !== consoleWsRef.current) return;
       useConsoleStore.getState().setConnected(false);
       const { syncModelStatus, fetchModels } = useModelStore.getState();
       if (!startupDetected) syncModelStatus().then(() => fetchModels());
       if (!consoleManualCloseRef.current) scheduleConsoleReconnect();
     };
     ws.onerror = () => {
-      if (ws !== consoleWsRef.current) return;
+      if (seq !== consoleConnectSeqRef.current || ws !== consoleWsRef.current) return;
       if (mode === 'start') {
         terminalWrite(`\r\n\x1b[31m${tRef.current('✗ Connection error')}\x1b[0m\r\n`);
       }

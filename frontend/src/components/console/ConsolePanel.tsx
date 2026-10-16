@@ -8,59 +8,12 @@ import { registerTerminalSink } from '../../utils/terminalSink';
 import { decideCtrlC } from '../../utils/ctrlC';
 import { useI18n } from '../../i18n';
 import { getCurrentTheme, useTheme } from '../../hooks/useTheme';
+import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from '../../styles/terminalTheme';
 
 interface ConsolePanelProps {
   onSendInput: (data: string) => void;
   onSendResize: (cols: number, rows: number) => void;
 }
-
-const XTERM_THEME_DARK = {
-  background: '#141c28',
-  foreground: '#e6edf3',
-  cursor: '#e6edf3',
-  cursorAccent: '#141c28',
-  selectionBackground: '#264f78',
-  black: '#484f58',
-  red: '#ff7b72',
-  green: '#3fb950',
-  yellow: '#d29922',
-  blue: '#58a6ff',
-  magenta: '#bc8cff',
-  cyan: '#39c5cf',
-  white: '#b1bac4',
-  brightBlack: '#6e7681',
-  brightRed: '#ffa198',
-  brightGreen: '#56d364',
-  brightYellow: '#e3b341',
-  brightBlue: '#79c0ff',
-  brightMagenta: '#d2a8ff',
-  brightCyan: '#56d4dd',
-  brightWhite: '#f0f6fc',
-};
-
-const XTERM_THEME_LIGHT = {
-  background: '#faf6ec',
-  foreground: '#3f3a2c',
-  cursor: '#3f3a2c',
-  cursorAccent: '#faf6ec',
-  selectionBackground: '#e6dcbe',
-  black: '#57534a',
-  red: '#cf222e',
-  green: '#1a7f37',
-  yellow: '#9a6700',
-  blue: '#0550ae',
-  magenta: '#8250df',
-  cyan: '#1b7c83',
-  white: '#57534a',
-  brightBlack: '#6e6a5c',
-  brightRed: '#cf222e',
-  brightGreen: '#1a7f37',
-  brightYellow: '#9a6700',
-  brightBlue: '#0550ae',
-  brightMagenta: '#8250df',
-  brightCyan: '#1b7c83',
-  brightWhite: '#3f3a2c',
-};
 
 export const ConsolePanel = memo(function ConsolePanel({ onSendInput, onSendResize }: ConsolePanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);

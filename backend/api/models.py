@@ -146,6 +146,11 @@ def install_cli_tool(tool: str = Query(...)):
 
 @router.get("/install-status")
 def get_install_status(tool: str = Query(...), log_file: str = Query(...)):
+    if tool != "hf":
+        raise HTTPException(status_code=400, detail="Invalid tool name, must be 'hf'")
+    if not re.fullmatch(r'/tmp/cli_install_hf\.log', log_file):
+        raise HTTPException(status_code=400, detail="Invalid log file path")
+
     return model_service.get_install_status(tool, log_file)
 
 @router.post("/ensure-hf-mirror")

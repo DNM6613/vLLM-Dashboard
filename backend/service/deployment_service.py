@@ -1,44 +1,37 @@
-"""Environment-deployment service.
+"""Environment-deployment service (facade).
 
-Owns three things:
+Owns:
 
 * ``DeploymentState`` — persistent selection / snapshot / history records
-  (``data/deployment_state.json``), same JSON + atomic-write pattern as
-  ``ConfigManager``.
+  (``data/deployment_state.json``).
 * ``DeploymentTaskManager`` — async mutation tasks (driver / CUDA / vLLM /
-  reboot / rollback / conflict cleanup) run on daemon threads, with
-  per-task log files under ``data/deployment_logs/`` and persisted records
-  in ``data/deployment_tasks.json`` (stale running tasks are marked
-  ``interrupted`` on startup).
-* The mutation pipelines themselves. Long apt steps run as remote
-  ``nohup bash`` jobs (same pattern as model downloads) so their output
-  streams into the task log while the step is in flight; the sudo password
-  is delivered over SSH stdin and written to a 0600 ``/tmp`` file that the
-  wrapper ``sudo()`` function reads — it never appears on a command line.
+  reboot / rollback / conflict cleanup) run on daemon threads, with per-task
+  log files and persisted records (stale running tasks are marked
+  ``interrupted`` on startup, live remote jobs are re-attached).
+* The mutation pipelines themselves (driver / CUDA / vLLM / rollback), driven
+  step by step through ``TaskContext``.
+
+Split per the file-size gate (<=300 lines); this module is the compatibility
+facade — it holds the shared path constants and the two singletons, and
+re-exports everything from the split modules so existing imports
+(``from ..service import deployment_service as ds``) keep working unchanged:
+
+* ``deployment_common`` — errors, compat tables, validation helpers
+* ``deployment_state`` — DeploymentState persistence
+* ``deployment_task_ctx`` — Task + TaskContext (steps, sudo, long steps)
+* ``deployment_task_manager`` — task lifecycle + logs
+* ``deployment_reattach`` — restart reattach / remote job control
+* ``deployment_pipelines_env`` — driver / CUDA pipelines
+* ``deployment_pipelines_vllm`` — vLLM install / rollback / reboot
+* ``deployment_entry`` — public start_* entry points
 """
 
 from __future__ import annotations
 
-import json
-import logging
 import os
-import re
-import secrets
-import shlex
-import threading
-import time
-from collections import deque
-from collections.abc import Callable
-from contextlib import contextmanager, suppress
-from datetime import datetime
-from typing import Any
 
 from ..config.remote_client import config_manager
-from ..config.server_config import has_parent_path_segment
-from ..executor.remote.deployment_ops import CUDA_VERSION_PROBE, UV_PATH_PREFIX
 from ..executor.remote_executor import get_remote_executor
-
-logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA_DIR = os.path.join(_PROJECT_ROOT, "data")
@@ -46,1299 +39,108 @@ STATE_FILE = os.path.join(DATA_DIR, "deployment_state.json")
 TASKS_FILE = os.path.join(DATA_DIR, "deployment_tasks.json")
 LOG_DIR = os.path.join(DATA_DIR, "deployment_logs")
 
-# ---- compatibility rules (spec) -------------------------------------------
-# Minimum driver major per CUDA toolkit version — NVIDIA CUDA Toolkit release
-# notes, "Corresponding Driver Versions" table (Linux x86_64, GA rows):
-# 12.9 >= 575.51.03, 13.0 >= 580.65.06, 13.1 >= 590.44.01, 13.2 >= 595.45.04,
-# 13.3 >= 610.43.02; CUDA 13.4 corresponds to the R615 driver branch (13.4.1
-# notes). A toolkit runs on any driver at/above its minimum, so a driver's
-# practical CUDA ceiling is the highest version it meets — driver 595 tops
-# out at 13.2 (verified 2026-09-18: nvidia-smi reports "CUDA Version: 13.2"
-# for 595.91.07).
-CUDA_MIN_DRIVER: dict[str, int] = {
-    "12.9": 575, "13.0": 580, "13.1": 590, "13.2": 595,
-    "13.3": 610, "13.4": 615,
-}
-# Minimum driver for vLLM's default install: the PyPI wheel is compiled with
-# CUDA 12.9, whose minimum driver is 575.51.03 (NVIDIA CUDA release notes);
-# vLLM's docs state no independent driver floor of their own.
-VLLM_MIN_DRIVER = 575
-# Driver -> minimum CUDA floor. NVIDIA documents drivers as backward
-# compatible with older toolkits (no maximum driver per toolkit), so this
-# stays empty; the binding direction is CUDA -> driver (CUDA_MIN_DRIVER).
-DRIVER_MIN_CUDA: dict[int, str] = {}
-
-# ---- input validation ------------------------------------------------------
-DRIVER_PKG_RE = re.compile(r"^nvidia-driver-\d{3,4}(-[a-z0-9]+)*$")
-CUDA_VER_RE = re.compile(r"^\d{1,2}\.\d{1,2}$")
-VLLM_VER_RE = re.compile(r"^\d+\.\d+\.\d+$")
-VENV_NAME_RE = re.compile(r"^[\w./\-~]{1,128}$")
-PY_VER_RE = re.compile(r"^\d+\.\d{1,2}$")
-URL_RE = re.compile(r"^https?://[\w.\-]+(?::\d+)?(/\S*)?$")
-
-TASK_STATUSES = ("queued", "running", "success", "failed",
-                 "cancelled", "awaiting_reboot", "interrupted")
-TERMINAL_STATUSES = ("success", "failed", "cancelled", "interrupted")
-
-
-class DeploymentError(Exception):
-    """Fatal pipeline failure with a user-facing message."""
-
-
-class TaskCancelled(Exception):
-    """Raised between steps when the user cancels a task."""
-
-
-def _now_iso() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _major_driver_version(version: str) -> int | None:
-    m = re.match(r"^(\d{3,4})\.", (version or "").strip())
-    return int(m.group(1)) if m else None
-
-
-def _validate_venv_name(venv_name: str) -> None:
-    if not VENV_NAME_RE.fullmatch(venv_name or "") or has_parent_path_segment(venv_name):
-        raise DeploymentError(f"Invalid venv name: {venv_name}")
-
-
-def _resolve_venv_path(venv_name: str) -> str:
-    """Remote shell path for the venv (same semantics as RemoteExecutor
-    ``_get_activate_cmd``): bare name under $HOME, ``~/...`` and ``/abs``."""
-    if venv_name.startswith("/"):
-        return venv_name
-    if venv_name == "~":
-        return "$HOME"
-    if venv_name.startswith("~/"):
-        return f"$HOME/{venv_name[2:]}"
-    return f"$HOME/{venv_name}"
-
-
-def _suggest_error(message: str) -> str:
-    m = message.lower()
-    if "timed out" in m or "timeout" in m:
-        return "Network or package repository is slow. Try switching the mirror source (Mirror Sources panel) and retry."
-    if "unable to locate package" in m or "no candidate" in m:
-        return "Package not found in the configured repositories. Check the selected version."
-    if "could not get lock" in m or "dpkg lock" in m:
-        return "Another apt/dpkg process is running. Wait for it to finish, then retry."
-    if "no space left" in m:
-        return "Insufficient disk space. Free up space and retry."
-    if "password" in m or "authentication" in m or "sudo" in m:
-        return "sudo authentication failed. The SSH password must match the sudo password."
-    if "could not resolve" in m or "unreachable" in m or "curl" in m:
-        return "Network unreachable from the target server. Check its egress / mirror configuration."
-    return ""
-
-
-# ===========================================================================
-# Persistent state
-# ===========================================================================
-
-def _default_state() -> dict[str, Any]:
-    return {
-        "mirrors": {"pypi": "", "hf": "https://hf-mirror.com"},
-        "selected": {
-            "driver": "",
-            "cuda": "",
-            # System CUDA Toolkit is the robust default: it provides nvcc for
-            # JIT/AOT kernel compilation that some models require at startup.
-            # The vLLM built-in runtime alone covers most cases but can fail
-            # to start models that need the compiler.
-            "cuda_install_system": True,
-            "vllm_version": "",
-            "vllm_runtime": "builtin",
-        },
-        "snapshots": {
-            "driver": {"current_pkg": "", "previous_pkg": "", "previous_version": ""},
-            "cuda": {"installed_version": "", "toolkit_path": ""},
-            "vllm": {"version": "", "previous_version": "", "venv": ""},
-        },
-        "history": [],
-    }
-
-
-def _merge_default(default: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
-    """Deep-merge ``data`` over ``default``; unknown keys are dropped so the
-    schema stays strict as it grows."""
-    out: dict[str, Any] = {}
-    for key, dval in default.items():
-        if key not in data:
-            out[key] = dval
-        elif isinstance(dval, dict) and isinstance(data[key], dict):
-            out[key] = _merge_default(dval, data[key])
-        else:
-            out[key] = data[key]
-    return out
-
-
-class DeploymentState:
-    def __init__(self) -> None:
-        self._lock = threading.RLock()
-        self.data = self._load()
-
-    def _load(self) -> dict[str, Any]:
-        default = _default_state()
-        if not os.path.exists(STATE_FILE):
-            return default
-        try:
-            with open(STATE_FILE, encoding="utf-8") as f:
-                data = json.load(f)
-            if not isinstance(data, dict):
-                raise ValueError("top-level is not an object")
-        except (json.JSONDecodeError, OSError, ValueError) as e:
-            logger.warning("deployment state unreadable (%s); using defaults", e)
-            with suppress(OSError):
-                os.replace(STATE_FILE, STATE_FILE + ".corrupt")
-            return default
-        merged = _merge_default(default, data)
-        # History entries must be dicts (the UI reads .ts/.kind/.title/.status
-        # off them); a malformed file must not crash module init.
-        history = merged["history"]
-        if not isinstance(history, list):
-            merged["history"] = []
-        else:
-            merged["history"] = [h for h in history if isinstance(h, dict)][-100:]
-        return merged
-
-    def _save(self) -> None:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = STATE_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, indent=2, ensure_ascii=False)
-        if os.name == "posix":
-            with suppress(OSError):
-                os.chmod(tmp, 0o600)
-        os.replace(tmp, STATE_FILE)
-
-    def get(self) -> dict[str, Any]:
-        with self._lock:
-            return json.loads(json.dumps(self.data))
-
-    def update_section(self, section: str, **values: Any) -> None:
-        with self._lock:
-            target = self.data.get(section)
-            if isinstance(target, dict):
-                for key, value in values.items():
-                    if key in target:
-                        target[key] = value
-            self._save()
-
-    def set_snapshot(self, kind: str, **values: Any) -> None:
-        with self._lock:
-            target = self.data["snapshots"].get(kind)
-            if isinstance(target, dict):
-                for key, value in values.items():
-                    if key in target:
-                        target[key] = value
-            self._save()
-
-    def push_history(self, entry: dict[str, Any]) -> None:
-        with self._lock:
-            self.data["history"].append(entry)
-            self.data["history"] = self.data["history"][-100:]
-            self._save()
-
-
-# ===========================================================================
-# Task manager
-# ===========================================================================
-
-class Task:
-    def __init__(self, task_id: str, kind: str, title: str, steps: list[str]) -> None:
-        self.id = task_id
-        self.kind = kind
-        self.title = title
-        self.steps = [{"name": s, "status": "pending"} for s in steps]
-        self.current_step = -1
-        self.status = "queued"
-        self.error = ""
-        self.suggestion = ""
-        self.result: dict[str, Any] = {}
-        self.created_at = _now_iso()
-        self.started_at = ""
-        self.finished_at = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "kind": self.kind,
-            "title": self.title,
-            "status": self.status,
-            "steps": [dict(s) for s in self.steps],
-            "current_step": self.current_step,
-            "error": self.error,
-            "suggestion": self.suggestion,
-            "result": dict(self.result),
-            "created_at": self.created_at,
-            "started_at": self.started_at,
-            "finished_at": self.finished_at,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Task:
-        task = cls(data["id"], data["kind"], data["title"],
-                   [s["name"] for s in data.get("steps", [])])
-        for step, stored in zip(task.steps, data.get("steps", [])):
-            step["status"] = stored.get("status", "pending")
-        task.current_step = data.get("current_step", -1)
-        task.status = data.get("status", "queued")
-        task.error = data.get("error", "")
-        task.suggestion = data.get("suggestion", "")
-        task.result = dict(data.get("result", {}))
-        task.created_at = data.get("created_at", _now_iso())
-        task.started_at = data.get("started_at", "")
-        task.finished_at = data.get("finished_at", "")
-        return task
-
-
-class DeploymentTaskManager:
-    MAX_TASKS = 50
-    TAIL_LINES = 400
-    LOG_CHUNK = 256 * 1024
-
-    def __init__(self) -> None:
-        self._lock = threading.RLock()
-        self._tasks: dict[str, Task] = {}
-        self._cancel: dict[str, threading.Event] = {}
-        self._threads: dict[str, threading.Thread] = {}
-        self._tails: dict[str, deque] = {}
-        self._recover()
-        with self._lock:
-            self._persist_locked()
-
-    # ---- persistence ------------------------------------------------------
-    def _recover(self) -> None:
-        if not os.path.exists(TASKS_FILE):
-            return
-        try:
-            with open(TASKS_FILE, encoding="utf-8") as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning("deployment tasks file unreadable (%s); starting fresh", e)
-            return
-        if not isinstance(data, list):
-            return
-        for entry in reversed(data[-self.MAX_TASKS:]):
-            try:
-                task = Task.from_dict(entry)
-            except (KeyError, TypeError, ValueError) as e:
-                logger.warning("dropping malformed task record: %s", e)
-                continue
-            if task.status in ("queued", "running"):
-                task.status = "interrupted"
-                task.error = task.error or "Interrupted by dashboard restart"
-                task.finished_at = task.finished_at or _now_iso()
-            self._tasks[task.id] = task
-        self._reattach_interrupted()
-
-    def _reattach_interrupted(self) -> None:
-        """A dashboard restart does not stop the remote nohup job. If the
-        job's pid is still alive the task was not really interrupted — flip
-        it back to running and watch the job to completion."""
-        candidates: list[tuple[Task, dict[str, str]]] = []
-        with self._lock:
-            for task in self._tasks.values():
-                if task.status != "interrupted":
-                    continue
-                job = task.result.get("job_files")
-                if isinstance(job, dict) and job.get("pid"):
-                    candidates.append((task, dict(job)))
-        if not candidates:
-            return
-
-        def worker() -> None:
-            try:
-                executor = get_remote_executor()
-                probe = executor.execute(
-                    "for f in "
-                    + " ".join(shlex.quote(job["pid"]) for _, job in candidates)
-                    + "; do if kill -0 \"$(cat \"$f\" 2>/dev/null)\" 2>/dev/null; "
-                      "then echo \"LIVE:$f\"; fi; done; echo DONE",
-                    timeout=30)
-            except Exception as e:
-                logger.warning("deploy reattach probe failed (staying interrupted): %s", e)
-                return
-            live = {line.split(":", 1)[1]
-                    for line in (probe.get("stdout") or "").splitlines()
-                    if line.startswith("LIVE:")}
-            for task, job in candidates:
-                if job["pid"] not in live:
-                    continue
-                with self._lock:
-                    task.status = "running"
-                    task.error = ""
-                    self._cancel[task.id] = threading.Event()
-                    self._persist_locked()
-                self.log(task.id,
-                         "Dashboard restarted; remote step still running — "
-                         "watching it to completion")
-                self._watch_remote_job(task, job)
-
-        thread = threading.Thread(target=worker, name="deploy-reattach", daemon=True)
-        thread.start()
-
-    def _watch_remote_job(self, task: Task, job: dict[str, str]) -> None:
-        """Tail a pre-existing remote job to completion (restart reattach).
-        The pipeline cannot be resumed mid-way, so the task finalizes with a
-        re-run instruction once the job settles."""
-        executor = get_remote_executor()
-        log_file, pid_file, exit_file = job["log"], job["pid"], job["exit"]
-        marker = "VDB_POLL"
-        offset = 0
-        gone_polls = 0
-        deadline = time.monotonic() + 6 * 3600
-        while True:
-            with self._lock:
-                event = self._cancel.get(task.id)
-            if event is not None and event.is_set():
-                self._kill_long(task.id, pid_file)
-                self._cleanup(task.id, log_file, pid_file, exit_file)
-                with self._lock:
-                    task.status = "cancelled"
-                    task.finished_at = _now_iso()
-                    for step in task.steps:
-                        if step["status"] in ("pending", "running"):
-                            step["status"] = "skipped"
-                    self._persist_locked()
-                self._record_history(task)
-                return
-            try:
-                poll = executor.execute(
-                    f"tail -c +{offset + 1} {log_file} 2>/dev/null; echo; echo {marker}; "
-                    f"if [ -f {exit_file} ]; then cat {exit_file}; "
-                    f"elif kill -0 $(cat {pid_file} 2>/dev/null) 2>/dev/null; then echo VDB_RUNNING; "
-                    f"else echo VDB_GONE; fi",
-                    timeout=30,
-                )
-            except Exception as e:
-                self.log(task.id, f"reattach: transient error ({e}); retrying")
-                time.sleep(5)
-                continue
-            out = poll.get("stdout") or ""
-            idx = out.rfind(f"\n{marker}\n")
-            content = out[: idx + 1] if idx >= 0 else out
-            status = out[idx + len(marker) + 1:].strip() if idx >= 0 else ""
-            if content:
-                for line in content.splitlines():
-                    if line.strip():
-                        self.log(task.id, line)
-                offset += len(content.encode("utf-8"))
-            if status.startswith("VDB_EXIT:"):
-                try:
-                    code = int(status.split(":", 1)[1])
-                except ValueError:
-                    code = -1
-                self._finalize_reattached(task, code)
-                return
-            if status == "VDB_RUNNING":
-                gone_polls = 0
-            elif status == "VDB_GONE":
-                gone_polls += 1
-                if gone_polls >= 3:
-                    self._finalize_reattached(task, None)
-                    return
-            if time.monotonic() > deadline:
-                self._finalize_reattached(task, None)
-                return
-            time.sleep(2.5)
-
-    def _finalize_reattached(self, task: Task, code: int | None) -> None:
-        detail = f"exited with code {code}" if code is not None else "exited (unknown code)"
-        with self._lock:
-            task.status = "failed"
-            task.error = (
-                f"Dashboard restarted mid-task; the remote step {detail} but the "
-                f"pipeline was not resumed — re-run the task"
-            )
-            task.suggestion = ""
-            task.finished_at = _now_iso()
-            task.result.pop("job_files", None)
-            self._persist_locked()
-        self._record_history(task)
-
-    def _kill_long(self, task_id: str, pid_file: str) -> None:
-        """Kill the remote nohup job's whole process tree (wrapper bash →
-        sudo → apt). The wrapper is not a process-group leader, so walk the
-        process tree recursively instead of a group signal."""
-        with suppress(Exception):
-            get_remote_executor().execute(
-                f"P=$(cat {pid_file} 2>/dev/null); "
-                "if [ -n \"$P\" ] && kill -0 \"$P\" 2>/dev/null; then "
-                "kterm() { for c in $(ps -o pid= --ppid \"$1\" 2>/dev/null); do kterm \"$c\"; done; kill -TERM \"$1\" 2>/dev/null; }; "
-                "kkill() { for c in $(ps -o pid= --ppid \"$1\" 2>/dev/null); do kkill \"$c\"; done; kill -KILL \"$1\" 2>/dev/null; }; "
-                "kterm \"$P\"; sleep 2; kkill \"$P\"; echo VDB_KILLED; else echo VDB_GONE; fi",
-                timeout=25,
-            )
-            self.log(task_id, "Remote background step terminated")
-
-    def _cleanup(self, task_id: str, *paths: str) -> None:
-        with suppress(Exception):
-            get_remote_executor().execute(f"rm -f {' '.join(paths)}", timeout=10)
-
-    def _persist_locked(self) -> None:
-        entries = [t.to_dict() for t in list(self._tasks.values())[-self.MAX_TASKS:]]
-        os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = TASKS_FILE + ".tmp"
-        try:
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(entries, f, indent=2, ensure_ascii=False)
-            os.replace(tmp, TASKS_FILE)
-        except OSError as e:
-            logger.warning("failed to persist deployment tasks: %s", e)
-
-    # ---- lifecycle ---------------------------------------------------------
-    def create(self, kind: str, title: str, steps: list[str]) -> Task:
-        task_id = f"dep_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(4)}"
-        task = Task(task_id, kind, title, steps)
-        with self._lock:
-            self._tasks[task_id] = task
-            self._cancel[task_id] = threading.Event()
-            self._persist_locked()
-        return task
-
-    def submit(self, task: Task, runner: Callable[[TaskContext], None]) -> None:
-        def target() -> None:
-            with self._lock:
-                task.status = "running"
-                task.started_at = _now_iso()
-                self._persist_locked()
-            ctx = TaskContext(task, self)
-            try:
-                runner(ctx)
-                with self._lock:
-                    if task.status == "running":
-                        task.status = "success"
-                        task.finished_at = _now_iso()
-                        self._persist_locked()
-                self._record_history(task)
-            except TaskCancelled:
-                with self._lock:
-                    task.status = "cancelled"
-                    task.finished_at = _now_iso()
-                    for step in task.steps:
-                        if step["status"] in ("pending", "running"):
-                            step["status"] = "skipped"
-                    self._persist_locked()
-            except DeploymentError as e:
-                self._fail_locked(task, str(e))
-            except Exception as e:
-                self._fail_locked(task, f"{type(e).__name__}: {e}")
-
-        thread = threading.Thread(target=target, name=f"deploy-{task.kind}", daemon=True)
-        with self._lock:
-            self._threads[task.id] = thread
-        thread.start()
-
-    def _fail_locked(self, task: Task, message: str) -> None:
-        with self._lock:
-            task.status = "failed"
-            task.error = message
-            task.suggestion = _suggest_error(message)
-            task.finished_at = _now_iso()
-            self._persist_locked()
-        self._record_history(task)
-        logger.warning("deployment task %s failed: %s", task.id, message)
-
-    def _record_history(self, task: Task) -> None:
-        if task.status not in ("success", "failed", "cancelled"):
-            return
-        deployment_state.push_history({
-            "ts": task.finished_at or _now_iso(),
-            "kind": task.kind,
-            "title": task.title,
-            "status": task.status,
-        })
-
-    # ---- queries / control --------------------------------------------------
-    def get(self, task_id: str) -> Task | None:
-        with self._lock:
-            return self._tasks.get(task_id)
-
-    def list(self, limit: int = 30) -> list[Task]:
-        # created_at (fixed-format, same clock) orders deterministically —
-        # dict insertion order flips after a restart re-reads the task file.
-        with self._lock:
-            tasks = sorted(self._tasks.values(), key=lambda t: t.created_at, reverse=True)
-        return tasks[:limit]
-
-    def pending_driver_task(self) -> Task | None:
-        with self._lock:
-            candidates = [t for t in self._tasks.values()
-                          if t.kind == "driver" and t.status == "awaiting_reboot"]
-        return max(candidates, key=lambda t: t.created_at) if candidates else None
-
-    def cancel(self, task_id: str) -> bool:
-        with self._lock:
-            task = self._tasks.get(task_id)
-            event = self._cancel.get(task_id)
-            if task is None or event is None or task.status not in ("queued", "running"):
-                return False
-            event.set()
-            return True
-
-    def complete_driver(self, task: Task) -> None:
-        """Mark a post-reboot driver task successful (reconcile path)."""
-        with self._lock:
-            task.status = "success"
-            task.finished_at = _now_iso()
-            for step in task.steps:
-                if step["status"] != "done":
-                    step["status"] = "done"
-            self._persist_locked()
-        self._record_history(task)
-
-    # ---- logs ----------------------------------------------------------------
-    def log(self, task_id: str, message: str) -> None:
-        with self._lock:
-            if task_id not in self._tasks:
-                return
-            line = f"[{datetime.now().strftime('%H:%M:%S')}] {message}"
-            tail = self._tails.setdefault(task_id, deque(maxlen=self.TAIL_LINES))
-            tail.append(line)
-        try:
-            os.makedirs(LOG_DIR, exist_ok=True)
-            with open(os.path.join(LOG_DIR, f"{task_id}.log"), "a", encoding="utf-8") as f:
-                f.write(line + "\n")
-        except OSError as e:
-            logger.warning("failed to append deployment log for %s: %s", task_id, e)
-
-    def tail(self, task_id: str, n: int = 200) -> list[str]:
-        with self._lock:
-            tail = self._tails.get(task_id)
-            return list(tail)[-n:] if tail else []
-
-    def file_tail(self, task_id: str, n: int = 12) -> list[str]:
-        """Last n log lines from the log file (in-memory tail is empty after restarts)."""
-        path = os.path.join(LOG_DIR, f"{task_id}.log")
-        try:
-            with open(path, "rb") as f:
-                f.seek(0, os.SEEK_END)
-                size = f.tell()
-                f.seek(max(0, size - 8192))
-                data = f.read()
-        except OSError:
-            return []
-        lines = data.decode("utf-8", "replace").splitlines()
-        if size > 8192 and lines:
-            lines = lines[1:]  # drop the possibly truncated first line
-        return lines[-n:]
-
-    def read_log(self, task_id: str, offset: int = 0) -> tuple[str, int]:
-        """Log content from byte ``offset`` (incremental fetch) + new offset."""
-        with self._lock:
-            if task_id not in self._tasks:
-                return "", offset
-        path = os.path.join(LOG_DIR, f"{task_id}.log")
-        try:
-            with open(path, "rb") as f:
-                f.seek(max(0, offset))
-                data = f.read(self.LOG_CHUNK)
-        except OSError:
-            return "", offset
-        return data.decode("utf-8", "replace"), max(0, offset) + len(data)
-
-
-# ===========================================================================
-# Task execution context
-# ===========================================================================
-
-class TaskContext:
-    """Per-task plumbing: executor, logging, steps, sudo, long-running steps."""
-
-    def __init__(self, task: Task, manager: DeploymentTaskManager) -> None:
-        self.task = task
-        self.manager = manager
-        self.executor = get_remote_executor()
-        self._sudo_mode: bool | None = None  # True = passwordless sudo
-
-    # -- logging / cancellation ------------------------------------------------
-    def log(self, message: str) -> None:
-        for line in str(message).splitlines() or [""]:
-            self.manager.log(self.task.id, line)
-
-    def check_cancelled(self) -> None:
-        with self.manager._lock:
-            event = self.manager._cancel.get(self.task.id)
-        if event is not None and event.is_set():
-            raise TaskCancelled()
-
-    @contextmanager
-    def step(self, index: int):
-        self.check_cancelled()
-        name = self.task.steps[index]["name"] if index < len(self.task.steps) else f"step {index}"
-        with self.manager._lock:
-            self.task.current_step = index
-            if index < len(self.task.steps):
-                self.task.steps[index]["status"] = "running"
-            self.manager._persist_locked()
-        self.log(f"-- {name} --")
-        try:
-            yield
-        except TaskCancelled:
-            self._mark_step(index, "cancelled")
-            raise
-        except Exception:
-            self._mark_step(index, "failed")
-            raise
-        else:
-            self._mark_step(index, "done")
-
-    def _mark_step(self, index: int, status: str) -> None:
-        with self.manager._lock:
-            if index < len(self.task.steps):
-                self.task.steps[index]["status"] = status
-            self.manager._persist_locked()
-
-    # -- command execution -------------------------------------------------------
-    def exec(self, command: str, timeout: int | None = None,
-             stdin_data: str | None = None) -> dict[str, Any]:
-        self.log(f"$ {command}")
-        result = self.executor.execute(command, timeout=timeout, stdin_data=stdin_data)
-        stdout = (result.get("stdout") or "").strip()
-        stderr = (result.get("stderr") or "").strip()
-        if stdout:
-            self.log(stdout if len(stdout) <= 4000 else stdout[-4000:])
-        if stderr:
-            self.log(stderr if len(stderr) <= 2000 else stderr[-2000:])
-        return result
-
-    def sudo(self, command: str, timeout: int | None = None) -> dict[str, Any]:
-        """Run ``command`` through sudo, probing the sudo mode once per task."""
-        if self._sudo_mode is None:
-            probe = self.executor.execute("sudo -n -p '' true", timeout=10)
-            self._sudo_mode = bool(probe.get("success"))
-            if not self._sudo_mode and not self.executor.password:
-                raise DeploymentError(
-                    "sudo requires a password but no SSH password is configured "
-                    "(set it in Server Config)"
-                )
-        if self._sudo_mode:
-            return self.exec(f"sudo -n -p '' {command}", timeout=timeout)
-        return self.exec(f"sudo -S -p '' {command}", timeout=timeout,
-                         stdin_data=self.executor.password + "\n")
-
-    # -- long steps (remote nohup, streamed log) --------------------------------
-    def run_long(self, command: str, timeout: int = 1800) -> dict[str, Any]:
-        """Run ``command`` as a remote background job and stream its output.
-
-        The wrapper defines ``sudo()`` (passwordless or password-fed via a
-        0600 temp file written from SSH stdin) and records the exit code in
-        an exit file; polling reads the log incrementally every 2.5s.
-        """
-        self.check_cancelled()
-        self.sudo("true", timeout=20)  # probe mode + refresh timestamp
-
-        tid = self.task.id
-        pw_file = f"/tmp/.vdb_pw_{tid}"
-        log_file = f"/tmp/vdb_deploy_{tid}.log"
-        pid_file = f"{log_file}.pid"
-        exit_file = f"{log_file}.exit"
-        if self._sudo_mode:
-            sudo_fn = 'sudo() { command sudo -n -p "" "$@"; }'
-        else:
-            sudo_fn = f'sudo() {{ command sudo -S -p "" "$@" < {pw_file}; }}'
-        wrapper = (
-            f"{sudo_fn}; "
-            f"{command}; "
-            f'ec=$?; rm -f {pw_file}; echo "VDB_EXIT:$ec" > {exit_file}'
-        )
-        escaped = self.executor._escape_double_quoted(wrapper)
-        if self._sudo_mode:
-            launch = (
-                f"rm -f {log_file} {pid_file} {exit_file}; "
-                f'nohup bash -c "{escaped}" > {log_file} 2>&1 & '
-                f"P=$!; echo $P > {pid_file}; echo $P"
-            )
-            stdin_data: str | None = None
-        else:
-            launch = (
-                "read -r VDB_PW && printf '%s\\n' \"$VDB_PW\" > " + pw_file
-                + f" && chmod 600 {pw_file} && "
-                f"rm -f {log_file} {pid_file} {exit_file}; "
-                f'nohup bash -c "{escaped}" > {log_file} 2>&1 & '
-                f"P=$!; echo $P > {pid_file}; echo $P"
-            )
-            stdin_data = self.executor.password + "\n"
-        result = self.exec(launch, timeout=30, stdin_data=stdin_data)
-        if not result.get("success"):
-            raise DeploymentError(f"Failed to start background step: {result.get('stderr') or 'unknown error'}")
-        # Persist the remote job artifacts: on a dashboard restart the task
-        # manager re-attaches a still-live job, and cancellation needs the
-        # pid file to kill the remote process tree.
-        with self.manager._lock:
-            self.task.result["job_files"] = {
-                "log": log_file, "pid": pid_file, "exit": exit_file,
-            }
-            self.manager._persist_locked()
-
-        marker = "VDB_POLL"
-        offset = 0
-        deadline = time.monotonic() + timeout
-        gone_polls = 0
-        while True:
-            try:
-                self.check_cancelled()
-            except TaskCancelled:
-                # The local watcher dies with this thread; the remote nohup
-                # job would keep mutating the server (apt locks, half
-                # installs) — kill its whole process tree via the pid file.
-                self.manager._kill_long(self.task.id, pid_file)
-                self._cleanup_long(pw_file, log_file, pid_file, exit_file)
-                with self.manager._lock:
-                    self.task.result.pop("job_files", None)
-                    self.manager._persist_locked()
-                raise
-            if time.monotonic() > deadline:
-                self._cleanup_long(pw_file, log_file, pid_file, exit_file)
-                raise DeploymentError(f"Step timed out after {timeout}s")
-            time.sleep(2.5)
-            poll = self.executor.execute(
-                f"tail -c +{offset + 1} {log_file} 2>/dev/null; echo; echo {marker}; "
-                f"if [ -f {exit_file} ]; then cat {exit_file}; "
-                f"elif kill -0 $(cat {pid_file} 2>/dev/null) 2>/dev/null; then echo VDB_RUNNING; "
-                f"else echo VDB_GONE; fi",
-                timeout=30,
-            )
-            out = poll.get("stdout") or ""
-            idx = out.rfind(f"\n{marker}\n")
-            content = out[: idx + 1] if idx >= 0 else out
-            status = out[idx + len(marker) + 1:].strip() if idx >= 0 else ""
-            if content:
-                for line in content.splitlines():
-                    if line.strip():
-                        self.log(line)
-                offset += len(content.encode("utf-8"))
-
-            if status.startswith("VDB_EXIT:"):
-                try:
-                    code = int(status.split(":", 1)[1])
-                except ValueError:
-                    code = -1
-                self._cleanup_long(pw_file, log_file, pid_file, exit_file)
-                if code != 0:
-                    raise DeploymentError(f"Step failed (exit code {code})")
-                with self.manager._lock:
-                    self.task.result.pop("job_files", None)
-                    self.manager._persist_locked()
-                return {"success": True, "exit_code": 0}
-            if status == "VDB_RUNNING":
-                gone_polls = 0
-            elif status == "VDB_GONE":
-                gone_polls += 1
-                if gone_polls >= 3:
-                    self._cleanup_long(pw_file, log_file, pid_file, exit_file)
-                    raise DeploymentError("Background step process exited unexpectedly")
-            # empty status (transient) -> just poll again
-
-    def _cleanup_long(self, *paths: str) -> None:
-        with suppress(Exception):
-            self.executor.execute(f"rm -f {' '.join(paths)}", timeout=10)
-
-
-# ===========================================================================
-# Pipelines
-# ===========================================================================
-
-def _require_remote() -> None:
-    config = config_manager.get_config()
-    if not config.host or config.host in ("localhost", "127.0.0.1"):
-        raise DeploymentError(
-            "Environment deployment requires a remote SSH server (set the host in Server Config)"
-        )
-
-
-def check_cuda_compat(driver_major: int | None, cuda_version: str) -> str | None:
-    required = CUDA_MIN_DRIVER.get(cuda_version)
-    if required and driver_major is not None and driver_major < required:
-        return (f"Current driver {driver_major} does not meet CUDA {cuda_version}'s "
-                f"minimum requirement {required}; upgrade the driver first")
-    return None
-
-
-def _cuda_ver_key(ver: str) -> tuple[int, ...]:
-    try:
-        return tuple(int(p) for p in ver.split("."))
-    except ValueError:
-        return (0,)
-
-
-def driver_max_cuda(driver_major: int | None) -> str:
-    """Highest offered CUDA toolkit this driver can run — the largest
-    version whose minimum driver is <= the driver major. 595 -> 13.2
-    (verified 2026-09-18: nvidia-smi "CUDA Version: 13.2" on 595.91.07)."""
-    if not driver_major:
-        return ""
-    best = ""
-    for ver, need in CUDA_MIN_DRIVER.items():
-        if need <= driver_major and _cuda_ver_key(ver) > _cuda_ver_key(best):
-            best = ver
-    return best
-
-
-def _driver_pkg_major(package: str) -> int | None:
-    m = re.match(r"nvidia-driver-(\d{3,4})", package or "")
-    return int(m.group(1)) if m else None
-
-
-def _check_runtime_toolkit_compat(runtime_mode: str, cuda_selected: str,
-                                  effective_cuda: str) -> None:
-    """Interlock: the vLLM/torch CUDA family must match the effective system
-    CUDA family. Cross-family mixes (a CUDA 12.9 toolkit with a CUDA 13
-    torch backend, or a 13.x toolkit with the cu129 built-in wheel) fail at
-    model startup. builtin = cu129 (CUDA 12.x); system = cu130/cu132 for a
-    13.x selection, cu129 otherwise. When the system install is skipped, the
-    effective toolkit is whatever the server already runs — manual installs
-    included."""
-    if not (cuda_selected or "").strip():
-        # No CUDA version selected: plain vllm install — no torch family is
-        # pinned, so there is nothing to interlock.
-        return
-    torch_family = "13" if (runtime_mode == "system"
-                            and (cuda_selected or "").startswith("13")) else "12"
-    eff = (effective_cuda or "").strip()
-    eff_family = "13" if eff.startswith("13") else ("12" if eff.startswith("12") else "")
-    if eff_family and eff_family != torch_family:
-        if runtime_mode == "builtin":
-            raise DeploymentError(
-                "Built-in runtime is the CUDA 12.9 (cu129) wheel and does not "
-                "match the CUDA 13.x system toolkit — use the system CUDA "
-                "runtime (cu130/cu132) in the vLLM tab."
-            )
-        if torch_family == "13":
-            raise DeploymentError(
-                "System CUDA runtime installs a CUDA 13 torch backend "
-                "(cu130/cu132) and does not match the CUDA 12.x system "
-                "toolkit — use the built-in runtime (cu129) in the vLLM tab."
-            )
-        raise DeploymentError(
-            "The selected CUDA 12.x version does not match the CUDA 13.x "
-            "system toolkit — select a CUDA 13.x version in the CUDA tab."
-        )
-
-
-def _run_driver(ctx: TaskContext, package: str, target_major: int | None) -> None:
-    with ctx.step(0):
-        stop = ctx.executor.stop_vllm(force=False)
-        if stop.get("success"):
-            ctx.log(f"vLLM stopped (mode: {stop.get('mode')})")
-        else:
-            ctx.log(f"warning: stop_vllm: {stop.get('error')}")
-    with ctx.step(1):
-        ctx.run_long(
-            "sudo apt-get remove --purge -y 'nvidia-*' && sudo apt-get autoremove -y && sudo apt-get autoclean",
-            timeout=1800,
-        )
-    with ctx.step(2):
-        ctx.run_long(f"sudo apt-get update -y && sudo apt-get install -y {package}", timeout=3600)
-        deployment_state.set_snapshot("driver", current_pkg=package)
-    with ctx.manager._lock:
-        ctx.task.status = "awaiting_reboot"
-        if len(ctx.task.steps) > 3:
-            ctx.task.steps[3]["status"] = "running"
-        ctx.manager._persist_locked()
-    ctx.log("Driver install complete. A server reboot is required for it to take effect; "
-            "after the server is back this page verifies the new driver automatically.")
-
-
-def _run_cuda(ctx: TaskContext, version: str, pkg: str) -> None:
-    # Documented apt flow (NVIDIA CUDA installation guide): install the
-    # signed cuda-keyring package, which registers the repo itself. Repo
-    # directory is ubuntu<VERSION_ID without dot> (e.g. ubuntu2604); the repo
-    # arch directory is x86_64/arm64 — note dpkg reports amd64, so map it.
-    # The repo host geo-redirects (301) to a CDN (nvidia.cn in China), so
-    # curl must follow redirects. The former ubuntu.pkgs.nvidia.com host no
-    # longer resolves (verified on the AI server 2026-09-18).
-    #
-    # Keyring distro: the ubuntu2604 repo only carries the 13.3/13.4
-    # toolkits (no 12.x, no 13.0–13.2), so on a 26.04 target the ubuntu2404
-    # keyring is used for the rest — verified 2026-09-18: 12.9/13.0 install
-    # cleanly on 26.04 from the ubuntu2404 repo. Other Ubuntu releases use
-    # their own keyring (the ubuntu2404 repo carries 12.9–13.4).
-    repo_script = (
-        f"VER={version}; "
-        "DISTRO=ubuntu$(. /etc/os-release && echo \"$VERSION_ID\" | tr -d '.'); "
-        "ARCH=$(dpkg --print-architecture); [ \"$ARCH\" = amd64 ] && ARCH=x86_64; "
-        "[ \"$DISTRO\" != ubuntu ] || { echo 'cannot detect Ubuntu version' >&2; exit 1; }; "
-        "KEYD=$DISTRO; if [ \"$DISTRO\" = ubuntu2604 ]; then "
-        "case \"$VER\" in 13.3|13.4) ;; *) KEYD=ubuntu2404;; esac; fi; "
-        "sudo curl -fsSL -o /tmp/cuda-keyring.deb "
-        "https://developer.download.nvidia.com/compute/cuda/repos/$KEYD/$ARCH/cuda-keyring_1.1-1_all.deb; "
-        "sudo dpkg -i /tmp/cuda-keyring.deb && sudo rm -f /tmp/cuda-keyring.deb; "
-        "sudo apt-get update -y"
-    )
-    with ctx.step(0):
-        ctx.run_long(repo_script, timeout=900)
-    with ctx.step(1):
-        ctx.run_long(f"sudo apt-get install -y {pkg}", timeout=3600)
-    with ctx.step(2):
-        env_script = (
-            "sudo tee /etc/profile.d/vllm-cuda.sh >/dev/null <<'VDBEOF'\n"
-            "export CUDA_HOME=/usr/local/cuda\n"
-            "export PATH=$CUDA_HOME/bin:$PATH\n"
-            "export LD_LIBRARY_PATH=$CUDA_HOME/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\n"
-            "VDBEOF\n"
-        )
-        ctx.run_long(env_script, timeout=120)
-    with ctx.step(3):
-        # CUDA_VERSION_PROBE prints the version nvcc actually reports
-        # ("release X.Y") — the old check looked for "CUDA Version", which
-        # nvcc -V never prints, so every install failed verification.
-        verify = ctx.exec(CUDA_VERSION_PROBE, timeout=30)
-        found = (verify.get("stdout") or "").strip()
-        if not verify.get("success") or found in ("", "NO_NVCC"):
-            raise DeploymentError(
-                f"nvcc verification failed: {(verify.get('stdout') or verify.get('stderr')).strip()}"
-            )
-        deployment_state.set_snapshot("cuda", installed_version=found,
-                                      toolkit_path="/usr/local/cuda")
-    ctx.log(f"CUDA toolkit {found or version} installed and verified.")
-
-
-def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
-                                 mirrors: dict[str, Any]) -> tuple[str, str]:
-    """Return (prepare_cmd, install_cmd)."""
-    py_bin = f"{venv_path}/bin/python"
-    mirror = (mirrors.get("pypi") or "").strip()
-    index_args = f"--index-url {mirror}" if mirror else ""
-    py_version = (payload.get("python_version") or "").strip()
-
-    if payload.get("env_mode") == "new":
-        py_args = f" --python {py_version}" if PY_VER_RE.fullmatch(py_version) else ""
-        prepare = f"{UV_PATH_PREFIX}uv venv{py_args} {venv_path}"
-    else:
-        prepare = (
-            f"test -d {venv_path} && test -x {py_bin} || "
-            f"{{ echo 'virtualenv not found: {venv_path}' >&2; exit 1; }}"
-        )
-
-    version = (payload.get("version") or "latest").strip()
-    spec = "vllm" if version in ("", "latest") else f"vllm=={version}"
-
-    # Every branch below invokes uv, so each carries UV_PATH_PREFIX — a
-    # bare `uv` fails in the non-login SSH shell when uv lives in
-    # ~/.local/bin (see deployment_ops.UV_PATH_PREFIX).
-    cuda_version = (payload.get("cuda_version") or "").strip()
-    if payload.get("source_build"):
-        install = (
-            UV_PATH_PREFIX + "git clone --depth 1 https://gh-proxy.com/https://github.com/vllm-project/vllm.git /tmp/vllm-src-vdb "
-            + f"&& uv pip install {index_args} --python {py_bin} -e /tmp/vllm-src-vdb".replace("  ", " ")
-        )
-    elif not cuda_version:
-        # No CUDA version selected: plain vllm install — PyPI's default torch
-        # build applies, no torch index is pinned.
-        install = UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} {spec}".replace("  ", " ")
-    elif payload.get("runtime_mode") == "system":
-        # Torch wheels ship per CUDA toolkit version. Verified 2026-09-18:
-        # CUDA 13 has two channels — cu130 (torch 2.9.0+) and cu132 (torch
-        # 2.12.0+); cu131/cu133 do not exist (S3 AccessDenied) and cu134
-        # ships no torch wheels. 13.2 binds cu132; the other 13.x fall back
-        # to cu130 (vLLM's docs standardize on it). 12.x follows the
-        # selected version; 13.x follows the effective CUDA (the toolkit the
-        # server actually runs), not the selection.
-        eff = (payload.get("effective_cuda") or "").strip() or cuda_version
-        if eff == "13.2":
-            family = "cu132"
-        elif eff.startswith("13"):
-            family = "cu130"
-        else:
-            family = f"cu{cuda_version.replace('.', '')}"
-        torch_index = f" --extra-index-url https://download.pytorch.org/whl/{family}"
-        install = (
-            UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} {spec} torch{torch_index}".replace("  ", " ")
-        )
-    else:
-        # built-in runtime = explicit cu129 pin: the PyPI default torch build
-        # is not named after its CUDA version, so pin the cu129 index to keep
-        # the auto-bound family real instead of assumed.
-        install = (
-            UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} {spec} torch"
-            " --extra-index-url https://download.pytorch.org/whl/cu129".replace("  ", " ")
-        )
-
-    return prepare, install
-
-
-def _run_vllm(ctx: TaskContext, payload: dict[str, Any], venv_path: str,
-              previous_version: str) -> None:
-    mirrors = deployment_state.get()["mirrors"]
-    prepare, install = _build_vllm_install_commands(payload, venv_path, mirrors)
-
-    with ctx.step(0):
-        stop = ctx.executor.stop_vllm(force=False)
-        if stop.get("success"):
-            ctx.log(f"vLLM stopped (mode: {stop.get('mode')})")
-        else:
-            ctx.log(f"warning: stop_vllm: {stop.get('error')}")
-    with ctx.step(1):
-        ctx.run_long(prepare, timeout=900)
-    with ctx.step(2):
-        ctx.run_long(install, timeout=7200)
-    with ctx.step(3):
-        verify = ctx.exec(
-            f"bash -lc 'source {venv_path}/bin/activate 2>/dev/null; "
-            f"vllm --version 2>&1 | head -n 3; python -c \"import vllm; print(vllm.__version__)\"'",
-            timeout=120,
-        )
-        stdout = verify.get("stdout") or ""
-        m = re.search(r"(\d+\.\d+\.\d+)", stdout)
-        if not verify.get("success") or not m:
-            raise DeploymentError(
-                f"vLLM verification failed: {stdout.strip() or verify.get('stderr') or 'no output'}"
-            )
-        version = m.group(1)
-        deployment_state.set_snapshot("vllm", version=version,
-                                      previous_version=previous_version,
-                                      venv=payload.get("venv_name", ""))
-        ctx.log(f"vLLM {version} verified in {venv_path}.")
-
-    if payload.get("auto_register_service") and len(ctx.task.steps) > 4:
-        with ctx.step(4):
-            sup_script = (
-                "sudo mkdir -p /var/log/vllm; "
-                "sudo tee /etc/supervisor/conf.d/vllm-vdb.conf >/dev/null <<'VDBEOF'\n"
-                "[program:vllm]\n"
-                f"command={venv_path}/bin/vllm serve <MODEL_PATH> --port 8000\n"
-                "autostart=false\n"
-                "autorestart=false\n"
-                "redirect_stderr=true\n"
-                "stdout_logfile=/var/log/vllm/vllm.log\n"
-                "VDBEOF\n"
-                "if command -v supervisorctl >/dev/null 2>&1; then "
-                "sudo supervisorctl reread && sudo supervisorctl update; "
-                "else echo 'supervisorctl not detected: template written only, configure manually'; fi"
-            )
-            ctx.run_long(sup_script, timeout=300)
-            ctx.log("supervisor template written (autostart=false — edit the model path, then enable).")
-
-
-def _run_reboot(ctx: TaskContext) -> None:
-    with ctx.step(0):
-        result = ctx.executor.reboot_server()
-        if not result.get("success"):
-            raise DeploymentError(result.get("error") or "Reboot command failed")
-        ctx.log("Reboot command issued. The server should be back within 1-3 minutes.")
-
-
-def _run_rollback_vllm(ctx: TaskContext, target_version: str, venv_path: str,
-                       mirrors: dict[str, Any]) -> None:
-    py_bin = f"{venv_path}/bin/python"
-    mirror = (mirrors.get("pypi") or "").strip()
-    index_args = f"--index-url {mirror}" if mirror else ""
-    with ctx.step(0):
-        stop = ctx.executor.stop_vllm(force=False)
-        if stop.get("success"):
-            ctx.log(f"vLLM stopped (mode: {stop.get('mode')})")
-        else:
-            ctx.log(f"warning: stop_vllm: {stop.get('error')}")
-    with ctx.step(1):
-        ctx.run_long((UV_PATH_PREFIX + f"uv pip install {index_args} --python {py_bin} vllm=={target_version}").replace("  ", " "),
-                     timeout=7200)
-    with ctx.step(2):
-        verify = ctx.exec(
-            f"bash -lc 'source {venv_path}/bin/activate 2>/dev/null; "
-            f"python -c \"import vllm; print(vllm.__version__)\"'",
-            timeout=120,
-        )
-        stdout = verify.get("stdout") or ""
-        if not verify.get("success") or target_version not in stdout:
-            raise DeploymentError(
-                f"Rollback verification failed: {stdout.strip() or verify.get('stderr') or 'no output'}"
-            )
-        deployment_state.set_snapshot("vllm", version=target_version)
-        ctx.log(f"vLLM rolled back to {target_version}.")
-
-
-# ===========================================================================
-# Public start_* entry points (called by the API layer)
-# ===========================================================================
-
-def start_driver_task(package: str) -> Task:
-    _require_remote()
-    if not DRIVER_PKG_RE.fullmatch(package or ""):
-        raise DeploymentError(f"Invalid driver package name: {package}")
-    executor = get_remote_executor()
-    info = executor.get_driver_list()
-    if not info.get("success"):
-        raise DeploymentError(info.get("error") or "Failed to query driver list")
-    target_major: int | None = None
-    for row in info["drivers"]:
-        if row["package"] == package:
-            target_major = row["version"]
-            break
-    if target_major is None:
-        raise DeploymentError(f"Driver {package} is not in the available list")
-
-    installed = executor.list_installed_driver_packages()
-    current_pkg = installed["packages"][0]["name"] if installed.get("packages") else ""
-    current_major = _major_driver_version(info.get("current_driver", ""))
-    recorded = deployment_state.get()["snapshots"]["driver"]["current_pkg"]
-    deployment_state.set_snapshot(
-        "driver",
-        previous_pkg=current_pkg or recorded,
-        previous_version=str(current_major) if current_major else "",
-    )
-    deployment_state.update_section("selected", driver=package)
-
-    task = task_manager.create("driver", f"Apply driver {package}",
-                               ["Stop vLLM service", "Uninstall old driver",
-                                "Install target driver", "Wait for reboot"])
-    task.result = {"package": package, "target_major": target_major,
-                   "current_driver": info.get("current_driver", "")}
-    task_manager.submit(task, lambda ctx: _run_driver(ctx, package, target_major))
-    return task
-
-
-def start_cuda_task(version: str, install_system: bool) -> Task | None:
-    _require_remote()
-    if not install_system:
-        # Skip mode: no CUDA version is selected or needed — clear any
-        # previous selection and persist the skip flag.
-        deployment_state.update_section("selected", cuda="",
-                                        cuda_install_system=False)
-        return None
-    if not CUDA_VER_RE.fullmatch(version or ""):
-        raise DeploymentError(f"Invalid CUDA version: {version}")
-    executor = get_remote_executor()
-    info = executor.get_driver_list()
-    if not info.get("success"):
-        raise DeploymentError(info.get("error") or "Failed to query driver version")
-    driver_major = _major_driver_version(info.get("current_driver", ""))
-    problem = check_cuda_compat(driver_major, version)
-    if problem:
-        raise DeploymentError(problem)
-
-    deployment_state.update_section("selected", cuda=version,
-                                    cuda_install_system=install_system)
-
-    pkg = f"cuda-toolkit-{version.replace('.', '-')}"
-    task = task_manager.create("cuda", f"Install CUDA toolkit {version}",
-                               ["Add NVIDIA CUDA repo", f"Install {pkg}",
-                                "Write CUDA environment", "Verify nvcc"])
-    task.result = {"version": version, "package": pkg}
-    task_manager.submit(task, lambda ctx: _run_cuda(ctx, version, pkg))
-    return task
-
-
-def start_vllm_task(payload: dict[str, Any]) -> Task:
-    _require_remote()
-    version = (payload.get("version") or "latest").strip()
-    if version != "latest" and not VLLM_VER_RE.fullmatch(version):
-        raise DeploymentError(f"Invalid vLLM version: {version}")
-    if payload.get("runtime_mode") not in ("builtin", "system"):
-        raise DeploymentError("Invalid CUDA runtime mode")
-    if payload.get("env_mode") not in ("new", "existing"):
-        raise DeploymentError("Invalid Python environment mode")
-    venv_name = (payload.get("venv_name") or "").strip() or config_manager.get_config().venv_name or ".vllm"
-    _validate_venv_name(venv_name)
-    py_version = (payload.get("python_version") or "").strip()
-    if py_version and not PY_VER_RE.fullmatch(py_version):
-        raise DeploymentError(f"Invalid Python version: {py_version}")
-
-    state = deployment_state.get()
-    # The client sends the effective selection (skip-system-CUDA mode sends
-    # no version); an empty version means a plain vllm install.
-    cuda_version = (payload.get("cuda_version") or "").strip()
-    payload = {**payload, "venv_name": venv_name, "python_version": py_version,
-               "cuda_version": cuda_version}
-
-    executor = get_remote_executor()
-    if state["selected"].get("cuda_install_system"):
-        effective_cuda = cuda_version
-    else:
-        # system install skipped: the effective toolkit is whatever the server
-        # already runs (manual installs included)
-        probe = executor.execute(CUDA_VERSION_PROBE, 20)
-        effective_cuda = (probe.get("stdout") or "").strip()
-        if effective_cuda == "NO_NVCC":
-            effective_cuda = ""
-    payload["effective_cuda"] = effective_cuda
-    _check_runtime_toolkit_compat(payload["runtime_mode"], cuda_version, effective_cuda)
-    env_info = executor.get_vllm_env()
-    previous_version = env_info.get("vllm_version", "") if env_info.get("success") else ""
-
-    deployment_state.update_section("selected", vllm_version=version,
-                                    vllm_runtime=payload["runtime_mode"])
-    venv_path = _resolve_venv_path(venv_name)
-    title = (f"Install vLLM {version}" if version != "latest" else "Install vLLM (latest)")
-    steps = ["Stop vLLM service", "Prepare Python environment", "Install vLLM",
-             "Verify version"]
-    if payload.get("auto_register_service"):
-        steps.append("Write supervisor template")
-    task = task_manager.create("vllm", title, steps)
-    task.result = {"version": version, "venv": venv_name, "previous_version": previous_version}
-    task_manager.submit(task, lambda ctx: _run_vllm(ctx, payload, venv_path, previous_version))
-    return task
-
-
-def start_rollback_driver() -> Task:
-    _require_remote()
-    state = deployment_state.get()
-    previous = (state["snapshots"]["driver"].get("previous_pkg") or "").strip()
-    if not previous:
-        raise DeploymentError("No previous driver recorded — nothing to roll back to")
-    if not DRIVER_PKG_RE.fullmatch(previous):
-        raise DeploymentError(f"Invalid recorded driver package: {previous}")
-    return start_driver_task(previous)
-
-
-def start_rollback_vllm() -> Task:
-    _require_remote()
-    state = deployment_state.get()
-    target = (state["snapshots"]["vllm"].get("previous_version") or "").strip()
-    if not target:
-        raise DeploymentError("No previous vLLM version recorded — nothing to roll back to")
-    if not VLLM_VER_RE.fullmatch(target):
-        raise DeploymentError(f"Invalid recorded vLLM version: {target}")
-    venv_name = (state["snapshots"]["vllm"].get("venv")
-                 or config_manager.get_config().venv_name or ".vllm")
-    _validate_venv_name(venv_name)
-    venv_path = _resolve_venv_path(venv_name)
-    task = task_manager.create("rollback_vllm", f"Roll back vLLM to {target}",
-                               ["Stop vLLM service", f"Reinstall vllm=={target}", "Verify version"])
-    task.result = {"target_version": target, "venv": venv_name}
-    task_manager.submit(
-        task,
-        lambda ctx: _run_rollback_vllm(ctx, target, venv_path, deployment_state.get()["mirrors"]),
-    )
-    return task
-
-
-def start_reboot_task() -> Task:
-    _require_remote()
-    task = task_manager.create("reboot", "Reboot server", ["Reboot server"])
-    task_manager.submit(task, _run_reboot)
-    return task
-
-
-def reconcile_driver_task() -> Task | None:
-    """Verify a post-reboot driver install (called from read endpoints)."""
-    task = task_manager.pending_driver_task()
-    if task is None:
-        return None
-    try:
-        executor = get_remote_executor()
-        result = executor.execute(
-            "nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n 1",
-            timeout=15,
-        )
-    except Exception as e:
-        logger.info("driver reconcile skipped (server not reachable): %s", e)
-        return task
-    if not result.get("success"):
-        return task
-    current_major = _major_driver_version((result.get("stdout") or "").strip())
-    target_major = task.result.get("target_major")
-    if current_major is not None and target_major is not None and current_major == target_major:
-        task_manager.complete_driver(task)
-        deployment_state.set_snapshot("driver",
-                                      current_pkg=task.result.get("package", ""),
-                                      previous_version=str(current_major))
-        task_manager.log(task.id, f"Reboot verified: driver {current_major} active. Task complete.")
-    return task
-
-
-# Module singletons
+from .deployment_common import (
+    CUDA_MIN_DRIVER,
+    CUDA_VER_RE,
+    DRIVER_MIN_CUDA,
+    DRIVER_PKG_RE,
+    PY_VER_RE,
+    TASK_STATUSES,
+    TERMINAL_STATUSES,
+    URL_RE,
+    VENV_NAME_RE,
+    VLLM_MIN_DRIVER,
+    VLLM_VER_RE,
+    DeploymentError,
+    TaskCancelled,
+    _major_driver_version,
+    _now_iso,
+    _resolve_venv_path,
+    _suggest_error,
+    _validate_venv_name,
+)
+from .deployment_entry import (
+    _require_remote,
+    reconcile_driver_task,
+    start_cuda_task,
+    start_driver_task,
+    start_reboot_task,
+    start_rollback_driver,
+    start_rollback_vllm,
+    start_vllm_task,
+)
+from .deployment_pipelines_env import (
+    _cuda_ver_key,
+    _driver_pkg_major,
+    _run_cuda,
+    _run_driver,
+    check_cuda_compat,
+    driver_max_cuda,
+)
+from .deployment_pipelines_vllm import (
+    _build_vllm_install_commands,
+    _check_runtime_toolkit_compat,
+    _run_reboot,
+    _run_rollback_vllm,
+    _run_vllm,
+)
+from .deployment_state import (
+    DeploymentState,
+    _default_state,
+    _merge_default,
+)
+from .deployment_task_ctx import Task, TaskContext
+from .deployment_task_manager import DeploymentTaskManager
+
+__all__ = [
+    "CUDA_MIN_DRIVER",
+    "CUDA_VER_RE",
+    "DRIVER_MIN_CUDA",
+    "DRIVER_PKG_RE",
+    "PY_VER_RE",
+    "TASK_STATUSES",
+    "TERMINAL_STATUSES",
+    "URL_RE",
+    "VENV_NAME_RE",
+    "VLLM_MIN_DRIVER",
+    "VLLM_VER_RE",
+    "DeploymentError",
+    "DeploymentState",
+    "DeploymentTaskManager",
+    "Task",
+    "TaskCancelled",
+    "TaskContext",
+    "_build_vllm_install_commands",
+    "_check_runtime_toolkit_compat",
+    "_cuda_ver_key",
+    "_default_state",
+    "_driver_pkg_major",
+    "_major_driver_version",
+    "_merge_default",
+    "_now_iso",
+    "_require_remote",
+    "_resolve_venv_path",
+    "_run_cuda",
+    "_run_driver",
+    "_run_reboot",
+    "_run_rollback_vllm",
+    "_run_vllm",
+    "_suggest_error",
+    "_validate_venv_name",
+    "check_cuda_compat",
+    "config_manager",
+    "driver_max_cuda",
+    "get_remote_executor",
+    "reconcile_driver_task",
+    "start_cuda_task",
+    "start_driver_task",
+    "start_reboot_task",
+    "start_rollback_driver",
+    "start_rollback_vllm",
+    "start_vllm_task",
+]
+
+# Module singletons (deployment_state first: the task manager's history
+# recording reads it).
 deployment_state = DeploymentState()
 task_manager = DeploymentTaskManager()

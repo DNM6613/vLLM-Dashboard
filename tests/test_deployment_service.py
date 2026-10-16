@@ -306,13 +306,14 @@ class TestTaskManager(unittest.TestCase):
         self.tmp.cleanup()
 
     @staticmethod
-    def _wait_terminal(task: ds.Task, timeout: float = 5.0) -> None:
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if task.status in ds.TERMINAL_STATUSES:
-                return
-            time.sleep(0.01)
-        raise AssertionError(f"task {task.id} did not finish (status={task.status})")
+    def _wait_terminal(mgr: ds.DeploymentTaskManager, task: ds.Task, timeout: float = 5.0) -> None:
+        # Joining the worker (not just polling the status) is required: the
+        # final persist / history writes land after the terminal status flip,
+        # and tearDown's tmpdir cleanup races with them otherwise.
+        if not mgr.wait_terminal(task.id, timeout):
+            raise AssertionError(f"task {task.id} worker did not exit in time")
+        if task.status not in ds.TERMINAL_STATUSES:
+            raise AssertionError(f"task {task.id} did not finish (status={task.status})")
 
     def test_recover_marks_running_tasks_interrupted(self):
         with open(self.tasks_file, "w", encoding="utf-8") as f:
@@ -336,7 +337,7 @@ class TestTaskManager(unittest.TestCase):
                 ctx.log("step 1 done")
 
         mgr.submit(task, runner)
-        self._wait_terminal(task)
+        self._wait_terminal(mgr, task)
         self.assertEqual(task.status, "success")
         self.assertEqual([s["status"] for s in task.steps], ["done", "done"])
         self.assertIn("hello from step 0", "\n".join(mgr.tail(task.id)))
@@ -351,7 +352,7 @@ class TestTaskManager(unittest.TestCase):
                 ctx.log("line two")
 
         mgr.submit(task, runner)
-        self._wait_terminal(task)
+        self._wait_terminal(mgr, task)
         # A fresh manager (dashboard restart) loses the in-memory tail but
         # the log file remains on disk.
         fresh = ds.DeploymentTaskManager()
@@ -387,7 +388,7 @@ class TestTaskManager(unittest.TestCase):
                 raise ds.DeploymentError("No space left on device")
 
         mgr.submit(task, runner)
-        self._wait_terminal(task)
+        self._wait_terminal(mgr, task)
         self.assertEqual(task.status, "failed")
         self.assertIn("No space left on device", task.error)
         self.assertIn("disk", task.suggestion.lower())
@@ -405,7 +406,7 @@ class TestTaskManager(unittest.TestCase):
         mgr.submit(task, runner)
         started.wait(2)
         self.assertTrue(mgr.cancel(task.id))
-        self._wait_terminal(task)
+        self._wait_terminal(mgr, task)
         self.assertEqual(task.status, "cancelled")
         # never-reached steps are skipped
         self.assertEqual([s["status"] for s in task.steps], ["skipped", "skipped"])

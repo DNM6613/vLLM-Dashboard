@@ -29,13 +29,22 @@ api.interceptors.response.use(
   },
 );
 
-export const getWsUrl = (path: string): string => {
+// B2 (audit 2026-10-16): the API key no longer travels in the WS URL.
+// When a key is stored we mint a one-time short-lived ticket over HTTP
+// (key sent in the X-API-Key header) and connect with `?ticket=...` instead.
+export const fetchWsTicket = async (): Promise<string> => {
+  const res = await api.get<{ ticket: string; ttl: number }>('/auth/ws-ticket');
+  return res.data.ticket;
+};
+
+export const getWsUrl = async (path: string): Promise<string> => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const url = `${protocol}//${window.location.host}${path}`;
   const key = getStoredApiKey();
   if (!key) return url;
+  const ticket = await fetchWsTicket();
   const sep = path.includes('?') ? '&' : '?';
-  return `${url}${sep}api_key=${encodeURIComponent(key)}`;
+  return `${url}${sep}ticket=${encodeURIComponent(ticket)}`;
 };
 
 export default api;

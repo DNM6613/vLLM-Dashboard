@@ -3,6 +3,7 @@ from .hardware import router as hardware_router
 from .model_status import router as model_status_router
 from .models import router as models_router
 from .server_config import router as server_config_router
+from .ws_auth import router as ws_auth_router
 
 __all__ = [
     "deployment_router",
@@ -10,4 +11,5 @@ __all__ = [
     "model_status_router",
     "models_router",
     "server_config_router",
+    "ws_auth_router",
 ]
