@@ -1,6 +1,6 @@
 import { CheckCircle2, Folder, Loader2, TriangleAlert } from 'lucide-react';
 import type { CliStatus } from '../../types';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 

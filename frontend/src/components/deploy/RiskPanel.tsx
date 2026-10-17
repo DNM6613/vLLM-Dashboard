@@ -1,5 +1,5 @@
 import { AlertTriangle } from 'lucide-react';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 
 const RISK_KEYS = [
   'Risk 1: driver change requires reboot',

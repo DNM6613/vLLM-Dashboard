@@ -3,7 +3,7 @@ import { errMsg, useModelStore } from '../stores/model';
 import { showToast } from '../components/ui/toast';
 import { getServerConfig, getSshStatus, getServerHealth, getDashboardHealth, updateServerConfig, shutdownServer, powerOnServer, getBmcStatus, resetModelsAfterPowerOff } from '../api/serverConfig';
 import type { ServerConfig as ServerConfigType, BmcStatus } from '../types';
-import { useI18n } from '../i18n';
+import { useI18n } from '../i18n/context';
 
 const SSH_FAIL_THRESHOLD = 3;
 

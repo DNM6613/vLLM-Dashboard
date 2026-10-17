@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { VllmApplyPayload, VllmInfo } from '../../api/deployment';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 import { Button } from '../ui/Button';
 
 interface VllmTabProps {

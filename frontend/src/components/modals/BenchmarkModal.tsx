@@ -2,7 +2,7 @@ import { Gauge, Loader2 } from 'lucide-react';
 import { fmtNum } from '../../utils/format';
 import { ModelStatus } from '../../types';
 import type { ModelInfo, BenchmarkResult } from '../../types';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 import { Button } from '../ui/Button';
 import { EmptyState } from '../ui/EmptyState';
 import { Modal } from '../ui/Modal';

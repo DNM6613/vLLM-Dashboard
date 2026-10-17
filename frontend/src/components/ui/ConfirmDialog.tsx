@@ -1,7 +1,7 @@
 import { AlertTriangle } from 'lucide-react';
 import { Modal } from './Modal';
 import { Button } from './Button';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 
 interface ConfirmDialogProps {
   title: string;

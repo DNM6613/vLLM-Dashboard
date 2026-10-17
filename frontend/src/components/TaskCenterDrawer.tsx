@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { CheckCircle2, Download, Loader2, PanelRightClose, Square, X, XCircle } from 'lucide-react';
-import { useI18n } from '../i18n';
+import { useI18n } from '../i18n/context';
 import type { UseTasks } from '../hooks/useTasks';
 import type { DeployTask } from '../api/deployment';
 

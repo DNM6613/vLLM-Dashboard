@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import type { SoftwareInfo } from '../../types';
 import { useHardwareStore } from '../../stores/hardware';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 
 const FIELDS: { key: keyof SoftwareInfo; labelKey: string }[] = [
   { key: 'os', labelKey: 'OS' },

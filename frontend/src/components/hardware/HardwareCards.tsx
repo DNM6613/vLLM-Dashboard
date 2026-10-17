@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useState } from 'react';
 import { Cpu, MemoryStick, HardDrive, CircuitBoard } from 'lucide-react';
 import { fmtPct, formatSize } from '../../utils/format';
 import { useHardwareStore } from '../../stores/hardware';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 import { AnimatedNumber } from '../ui/AnimatedNumber';
 import { ProgressBar } from '../ui/ProgressBar';
 import type { GPUInfo } from '../../types';

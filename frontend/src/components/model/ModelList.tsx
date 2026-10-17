@@ -4,7 +4,7 @@ import { formatSize, fmtNum } from '../../utils/format';
 import { copyText } from '../../utils/clipboard';
 import { ModelStatus } from '../../types';
 import type { ModelInfo, BenchmarkResult, DownloadProgressInfo } from '../../types';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 import { IconButton } from '../ui/IconButton';
 import { ProgressBar } from '../ui/ProgressBar';
 import { showToast } from '../ui/toast';

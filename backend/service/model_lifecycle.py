@@ -109,6 +109,12 @@ async def _verify_start_probe(model_id: str, api_host: str, api_port: int) -> No
             f"for {model_id} — rolling back to STOPPED")
         _ms.state_machine.update_model_status(model_id, ModelStatus.STOPPED)
         _ms.state_machine.clear_current_model(model_id)
+        # A silent start failure (e.g. the console PTY was not ready and the
+        # start command was never delivered) must not orphan the watchdog:
+        # re-arm the crash event so the next attempt retries, mirroring the
+        # sync path's LOADING→STOPPED handling (incident 2026-10-17).
+        if model.locked:
+            _ms._watchdog_on_crash(model_id)
 
 
 async def _start_model(model_id: str) -> dict:

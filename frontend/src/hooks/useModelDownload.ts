@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { errMsgLocalized, useModelStore } from '../stores/model';
 import { checkCliTools, downloadModel, getDownloadStatus, getInstallStatus, installCliTool, stopDownload } from '../api/models';
 import type { CliStatus } from '../types';
-import { useI18n } from '../i18n';
+import { useI18n } from '../i18n/context';
 import { showToast } from '../components/ui/toast';
 
 interface UseModelDownloadParams {

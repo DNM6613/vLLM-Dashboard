@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 
 interface ModalProps {
   title: string;

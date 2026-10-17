@@ -1,5 +1,5 @@
 import type { DriverTag } from '../../api/deployment';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 
 const TAG_STYLES: Record<string, string> = {
   blue: 'bg-blue-500/15 text-blue-500',

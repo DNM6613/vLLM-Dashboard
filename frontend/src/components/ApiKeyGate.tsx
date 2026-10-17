@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { KeyRound, Loader2 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth';
-import { useI18n } from '../i18n';
+import { useI18n } from '../i18n/context';
 import { Button } from './ui/Button';
 import { getStoredApiKey, setStoredApiKey } from '../utils/apiKey';
 import { getDashboardHealth } from '../api/serverConfig';

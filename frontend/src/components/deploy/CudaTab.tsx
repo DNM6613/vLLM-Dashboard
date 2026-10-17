@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, Info, Lock, XCircle } from 'lucide-react';
 import type { CudaInfo } from '../../api/deployment';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 import { Button } from '../ui/Button';
 
 interface CudaTabProps {

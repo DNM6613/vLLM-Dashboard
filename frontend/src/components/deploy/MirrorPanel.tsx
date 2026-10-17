@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ChevronDown, Globe } from 'lucide-react';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 import { Button } from '../ui/Button';
 
 interface MirrorPanelProps {

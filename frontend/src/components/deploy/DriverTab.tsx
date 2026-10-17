@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, Minus, Power, Star, XCircle } from 'lucide-react';
 import type { DeployTask, DriverList } from '../../api/deployment';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 import { Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { TagChip } from './TagChip';

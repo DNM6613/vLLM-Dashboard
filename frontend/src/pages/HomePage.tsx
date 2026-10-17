@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Settings, Power, Loader2, Sun, Moon } from 'lucide-react';
-import { useI18n } from '../i18n';
+import { useI18n } from '../i18n/context';
 import { updateServerConfig } from '../api/serverConfig';
 import { useTheme } from '../hooks/useTheme';
 import { invalidateHardwareFetch, invalidateSoftwareFetch, useHardwareStore } from '../stores/hardware';

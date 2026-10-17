@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { errMsg, errMsgLocalized, invalidateModelFetch, useModelStore } from '../stores/model';
 import { useConsoleStore } from '../stores/console';
 import { ModelStatus } from '../types';
-import { useI18n } from '../i18n';
+import { useI18n } from '../i18n/context';
 import { showToast } from '../components/ui/toast';
 
 interface UseModelManagerParams {

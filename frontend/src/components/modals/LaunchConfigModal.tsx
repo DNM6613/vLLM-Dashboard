@@ -1,6 +1,6 @@
 import { Settings, Save, Loader2 } from 'lucide-react';
 import { useLayoutEffect, useRef, type RefObject } from 'react';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 

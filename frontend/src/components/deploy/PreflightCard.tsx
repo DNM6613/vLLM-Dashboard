@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, XCircle } from 'lucide-react';
 import type { Preflight } from '../../api/deployment';
-import { useI18n, type Interp } from '../../i18n';
+import { useI18n } from '../../i18n/context';
+import { displayPreflightValue } from './preflightValue';
 
 interface PreflightCardProps {
   preflight: Preflight | null;
@@ -11,23 +12,6 @@ interface PreflightCardProps {
   // mount-time effect kicking off the load.
   hasLoaded: boolean;
   onRefresh: () => void;
-}
-
-// Values embed live data (GB number, host list, kernel/OS version), so a
-// whole-string lookup would never match — translate the static frame via a
-// template and keep the data; plain values fall through to a direct lookup.
-export function displayPreflightValue(
-  item: { key: string; value: string },
-  t: (key: string, vars?: Interp) => string,
-): string {
-  const v = item.value;
-  if (item.key === 'disk' && /^[\d.]+ GB free$/.test(v)) {
-    return t('{n} GB free', { n: v.replace(' GB free', '') });
-  }
-  if (item.key === 'network' && v.startsWith('reachable: ')) {
-    return t('reachable: {hosts}', { hosts: v.slice('reachable: '.length) });
-  }
-  return t(v);
 }
 
 const STATUS_STYLE = {

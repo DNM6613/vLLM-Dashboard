@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import { Activity } from 'lucide-react';
 import { fmtInt, fmtNum, fmtPct } from '../../utils/format';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 import { useModelStatusStore } from '../../stores/modelStatus';
 import { AnimatedNumber } from '../ui/AnimatedNumber';
 

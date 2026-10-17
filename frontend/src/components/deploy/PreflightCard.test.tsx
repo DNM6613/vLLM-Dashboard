@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Preflight } from '../../api/deployment';
 import { I18nProvider } from '../../i18n';
-import { displayPreflightValue, PreflightCard } from './PreflightCard';
+import { PreflightCard } from './PreflightCard';
+import { displayPreflightValue } from './preflightValue';
 
 describe('displayPreflightValue', () => {
   it('disk: translates the frame, keeps the live number', () => {

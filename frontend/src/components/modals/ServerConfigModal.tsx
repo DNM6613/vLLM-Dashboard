@@ -1,7 +1,7 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { Settings, Settings2, Save, Loader2, Terminal, Globe, Power } from 'lucide-react';
 import type { ServerConfig } from '../../types';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { ConfirmDialog } from '../ui/ConfirmDialog';

@@ -6,7 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import { registerTerminalSink } from '../../utils/terminalSink';
 import { decideCtrlC } from '../../utils/ctrlC';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 import { getCurrentTheme, useTheme } from '../../hooks/useTheme';
 import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from '../../styles/terminalTheme';
 

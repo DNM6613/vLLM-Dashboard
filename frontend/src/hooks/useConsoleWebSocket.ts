@@ -4,7 +4,7 @@ import { useConsoleStore } from '../stores/console';
 import { useModelStore } from '../stores/model';
 import { terminalReset, terminalWrite } from '../utils/terminalSink';
 import { ModelStatus } from '../types';
-import { useI18n } from '../i18n';
+import { useI18n } from '../i18n/context';
 
 const STARTUP_MARKERS = ['application startup complete', 'uvicorn running on'];
 

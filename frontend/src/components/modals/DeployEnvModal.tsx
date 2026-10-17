@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   Box, History, Rocket, Wrench,
 } from 'lucide-react';
-import { useI18n } from '../../i18n';
+import { useI18n } from '../../i18n/context';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
@@ -38,9 +38,14 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
   const selCuda = dep.state?.selected.cuda ?? '';
   useEffect(() => { if (selDriver) setDriverPick(selDriver); }, [selDriver]);
   useEffect(() => { if (selCuda) setCudaPick(selCuda); }, [selCuda]);
+  // Key the effect on the exact values it reads (not dep.state object
+  // identity, which changes on every load) — keeps exhaustive-deps happy
+  // without re-running on unrelated state refreshes.
+  const hasState = Boolean(dep.state);
+  const persistedCudaInstallSystem = dep.state?.selected.cuda_install_system;
   useEffect(() => {
-    if (dep.state) setCudaInstallSystem(Boolean(dep.state.selected.cuda_install_system));
-  }, [dep.state?.selected.cuda_install_system]);
+    if (hasState) setCudaInstallSystem(Boolean(persistedCudaInstallSystem));
+  }, [hasState, persistedCudaInstallSystem]);
 
   const cudaLocked = Boolean(dep.state?.locks.cuda);
 
