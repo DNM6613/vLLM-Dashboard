@@ -8,6 +8,8 @@ this sub-router; all route paths are unchanged.
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -17,7 +19,37 @@ from ..service.deployment_service import DeploymentError
 from . import deployment as _dep
 from .deployment_common import _error_to_http, _probe_in_thread, _require_remote
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["deployment"])
+
+# Reboot-verification cooldown. The home page polls /tasks every 3 s; while a
+# driver task awaits reboot the target server is usually down, so probing it
+# on every tick would pile 15 s SSH attempts onto an unreachable host.
+_RECONCILE_COOLDOWN_SECONDS = 30.0
+_last_driver_reconcile = 0.0
+
+
+async def _maybe_reconcile_driver() -> None:
+    """Run the post-reboot driver verification from the task-center poll.
+
+    The task center lives on the home page, but the verification used to be
+    triggered only by GET /deployment/drivers — polled solely while the
+    deploy modal is open. Without this hook a finished reboot would leave
+    the task stuck at ``awaiting_reboot`` on the home page until someone
+    happened to open the deploy window.
+    """
+    global _last_driver_reconcile
+    if ds.task_manager.pending_driver_task() is None:
+        return
+    now = time.monotonic()
+    if now - _last_driver_reconcile < _RECONCILE_COOLDOWN_SECONDS:
+        return
+    _last_driver_reconcile = now
+    try:
+        await asyncio.to_thread(ds.reconcile_driver_task)
+    except Exception:
+        logger.exception("driver task reconcile from /tasks failed")
 
 
 # ===========================================================================
@@ -26,6 +58,7 @@ router = APIRouter(tags=["deployment"])
 
 @router.get("/tasks")
 async def list_tasks(limit: int = Query(default=30, ge=1, le=100)):
+    await _maybe_reconcile_driver()
     return {"tasks": [t.to_dict() for t in ds.task_manager.list(limit)]}
 
 

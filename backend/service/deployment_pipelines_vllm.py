@@ -64,7 +64,17 @@ def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
 
     if payload.get("env_mode") == "new":
         py_args = f" --python {py_version}" if PY_VER_RE.fullmatch(py_version) else ""
-        prepare = f"{UV_PATH_PREFIX}uv venv{py_args} {venv_path}"
+        # Refuse to touch an existing venv: `uv venv` without --clear errors
+        # out on one, and --clear would wipe a venv the running model may
+        # live in (incident 2026-10-02: the fresh-install path stopped
+        # vLLM, then died on the existing ~/.vllm). Fail fast with an
+        # actionable hint instead.
+        prepare = (
+            f"test -d {venv_path} && {{ echo 'virtualenv already exists: "
+            f"{venv_path}; choose the existing-environment mode or a "
+            f"different venv name' >&2; exit 1; }}; "
+            f"{UV_PATH_PREFIX}uv venv{py_args} {venv_path}"
+        )
     else:
         prepare = (
             f"test -d {venv_path} && test -x {py_bin} || "
@@ -118,6 +128,38 @@ def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
     return prepare, install
 
 
+def _build_supervisor_script(venv_path: str, task_id: str) -> str:
+    """Single-logical-line writer for the supervisor template.
+
+    Same no-heredoc constraint as ``_build_cuda_env_script``: through the
+    run_long wrapper + sudo() password-stdin function a heredoc writes a
+    0-byte file (the old template survived the syntax error only because a
+    valid ``if`` statement followed the terminator — the conf was still
+    written empty).
+    """
+    conf = (
+        "[program:vllm]",
+        f"command={venv_path}/bin/vllm serve <MODEL_PATH> --port 8000",
+        "autostart=false",
+        "autorestart=false",
+        "redirect_stderr=true",
+        "stdout_logfile=/var/log/vllm/vllm.log",
+    )
+    tmp = f"/tmp/vdb_vllm_conf_{task_id}"
+    return (
+        "sudo mkdir -p /var/log/vllm; "
+        "printf '%s\\n' "
+        + " ".join(f"'{line}'" for line in conf)
+        + f" > {tmp} && "
+        f"sudo cp {tmp} /etc/supervisor/conf.d/vllm-vdb.conf && "
+        f"sudo chmod 644 /etc/supervisor/conf.d/vllm-vdb.conf && "
+        f"rm -f {tmp}; "
+        "if command -v supervisorctl >/dev/null 2>&1; then "
+        "sudo supervisorctl reread && sudo supervisorctl update; "
+        "else echo 'supervisorctl not detected: template written only, configure manually'; fi"
+    )
+
+
 def _run_vllm(ctx: TaskContext, payload: dict[str, Any], venv_path: str,
               previous_version: str) -> None:
     mirrors = _ds.deployment_state.get()["mirrors"]
@@ -153,20 +195,7 @@ def _run_vllm(ctx: TaskContext, payload: dict[str, Any], venv_path: str,
 
     if payload.get("auto_register_service") and len(ctx.task.steps) > 4:
         with ctx.step(4):
-            sup_script = (
-                "sudo mkdir -p /var/log/vllm; "
-                "sudo tee /etc/supervisor/conf.d/vllm-vdb.conf >/dev/null <<'VDBEOF'\n"
-                "[program:vllm]\n"
-                f"command={venv_path}/bin/vllm serve <MODEL_PATH> --port 8000\n"
-                "autostart=false\n"
-                "autorestart=false\n"
-                "redirect_stderr=true\n"
-                "stdout_logfile=/var/log/vllm/vllm.log\n"
-                "VDBEOF\n"
-                "if command -v supervisorctl >/dev/null 2>&1; then "
-                "sudo supervisorctl reread && sudo supervisorctl update; "
-                "else echo 'supervisorctl not detected: template written only, configure manually'; fi"
-            )
+            sup_script = _build_supervisor_script(venv_path, ctx.task.id)
             ctx.run_long(sup_script, timeout=300)
             ctx.log("supervisor template written (autostart=false — edit the model path, then enable).")
 

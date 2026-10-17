@@ -74,6 +74,31 @@ def _run_driver(ctx: TaskContext, package: str, target_major: int | None) -> Non
             "after the server is back this page verifies the new driver automatically.")
 
 
+def _build_cuda_env_script(task_id: str) -> str:
+    """Single-logical-line writer for /etc/profile.d/vllm-cuda.sh.
+
+    Deliberately no heredoc: through the run_long wrapper a heredoc breaks
+    two ways — the ``; ec=$?`` continuation lands on the line after the
+    terminator (bash syntax error), and the sudo() password-stdin function
+    leaves the child with an empty stdin, so tee writes a 0-byte file
+    (incident 2026-10-02: both CUDA installs failed at this step).
+    """
+    lines = (
+        "export CUDA_HOME=/usr/local/cuda",
+        "export PATH=$CUDA_HOME/bin:$PATH",
+        "export LD_LIBRARY_PATH=$CUDA_HOME/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}",
+    )
+    tmp = f"/tmp/vdb_cuda_env_{task_id}"
+    return (
+        "printf '%s\\n' "
+        + " ".join(f"'{line}'" for line in lines)
+        + f" > {tmp} && "
+        f"sudo cp {tmp} /etc/profile.d/vllm-cuda.sh && "
+        f"sudo chmod 644 /etc/profile.d/vllm-cuda.sh && "
+        f"rm -f {tmp}"
+    )
+
+
 def _run_cuda(ctx: TaskContext, version: str, pkg: str) -> None:
     # Documented apt flow (NVIDIA CUDA installation guide): install the
     # signed cuda-keyring package, which registers the repo itself. Repo
@@ -105,14 +130,7 @@ def _run_cuda(ctx: TaskContext, version: str, pkg: str) -> None:
     with ctx.step(1):
         ctx.run_long(f"sudo apt-get install -y {pkg}", timeout=3600)
     with ctx.step(2):
-        env_script = (
-            "sudo tee /etc/profile.d/vllm-cuda.sh >/dev/null <<'VDBEOF'\n"
-            "export CUDA_HOME=/usr/local/cuda\n"
-            "export PATH=$CUDA_HOME/bin:$PATH\n"
-            "export LD_LIBRARY_PATH=$CUDA_HOME/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\n"
-            "VDBEOF\n"
-        )
-        ctx.run_long(env_script, timeout=120)
+        ctx.run_long(_build_cuda_env_script(ctx.task.id), timeout=120)
     with ctx.step(3):
         # CUDA_VERSION_PROBE prints the version nvcc actually reports
         # ("release X.Y") — the old check looked for "CUDA Version", which

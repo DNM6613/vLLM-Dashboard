@@ -18,9 +18,13 @@ Semantics (2026-10-16, user-confirmed):
   (``_check_vllm_present_strict``) because after a dashboard restart the
   in-memory status is the coerced STOPPED and the start_model 409 guard
   cannot see a live remote (audit 2026-10-17 P2-1).
-- Breaker: 3 *real* crashes within 10 minutes suspends auto-restart and
-  marks the model FAILED; observing the model LOADING/RUNNING again (e.g.
-  manual start) or re-locking resets it.
+- Breaker: 3 *real* crash/start-failure events within 10 minutes suspends
+  auto-restart and marks the model FAILED. Crash history is cleared only
+  when the model reaches RUNNING (or on unlock): an in-flight LOADING
+  attempt must NOT reset the count, or a broken start command (OOM etc.)
+  would flap forever — incident 2026-10-17 10:15 looped ~65 times because
+  every watchdog attempt set LOADING and wiped the count before it could
+  reach 3.
 """
 
 from __future__ import annotations
@@ -45,7 +49,7 @@ BREAKER_WINDOW_SECONDS = 600.0
 BREAKER_MAX_CRASHES = 3
 
 SUSPEND_MESSAGE = (
-    "自动启动已暂停：10 分钟内崩溃 {n} 次。手动启动或解除/重新锁定后恢复"
+    "自动启动已暂停：10 分钟内 {n} 次启动/运行失败。手动启动或解除/重新锁定后恢复"
 )
 
 NO_START_COMMAND_MESSAGE = "自动启动失败：未配置启动命令（在启动配置中设置后手动启动）"
@@ -143,8 +147,17 @@ async def _attempt_restart(model_id: str) -> None:
     if model is None or not model.locked:
         _clear(model_id)
         return
-    if model.status in (ModelStatus.RUNNING, ModelStatus.LOADING):
+    if model.status is ModelStatus.RUNNING:
+        # Reached RUNNING = recovered (manual start or a successful
+        # auto-start): clear crash history and any suspension.
         _clear(model_id)
+        return
+    if model.status is ModelStatus.LOADING:
+        # An in-flight attempt (ours or manual) is NOT recovery: the crash
+        # history must survive so a broken start command accumulates breaker
+        # counts instead of being wiped every flap cycle — incident
+        # 2026-10-17 10:15 looped ~65 times on exactly this. Recovery is
+        # confirmed only by reaching RUNNING.
         return
     if model_id in _suspended or model_id in _inflight:
         return
@@ -206,8 +219,12 @@ async def watchdog_tick() -> None:
         await _ms._sync_status_once(timeout=3.0)
     except Exception as e:
         logger.warning(f"Model lock watchdog: status sync failed: {e}")
+    # Recovery = the model actually reached RUNNING. A locked model in
+    # LOADING (an in-flight attempt, ours or manual) must NOT clear the
+    # crash history — see _attempt_restart (incident 2026-10-17 10:15:
+    # the clear-on-LOADING let a broken start command flap ~65 times).
     for model in state_machine.get_all_models():
-        if model.locked and model.status in (ModelStatus.RUNNING, ModelStatus.LOADING):
+        if model.locked and model.status is ModelStatus.RUNNING:
             _clear(model.id)
     for model_id in list(_crash_events):
         model = state_machine.get_model(model_id)

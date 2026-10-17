@@ -9,8 +9,10 @@ presence guard (no duplicate start command while the remote process lives),
 the deferred-restart branches (409 clear / 400 no-command FAILED / other
 defer), the 10 s delayed-task path, the A-1 tick sync gate, the start-probe
 rollback re-arming (a locked model's silently failed start must re-arm the
-watchdog, an unlocked one must not), and the HTTP surface of
-POST /api/v1/models/lock.
+watchdog, an unlocked one must not), the breaker flap guard (an in-flight
+LOADING attempt must not wipe the crash history, so a broken start command
+trips the breaker after 3 cycles instead of flapping forever — incident
+2026-10-17 10:15), and the HTTP surface of POST /api/v1/models/lock.
 """
 import asyncio
 import tempfile
@@ -106,10 +108,15 @@ class TestModelLock(unittest.TestCase):
         model_watchdog.on_model_crash(mid)
         asyncio.run(model_watchdog.watchdog_tick())
         self.assertEqual(self._started, [mid])
-        # model is now LOADING; the next tick clears the consumed event
+        # model is now LOADING: the in-flight attempt must NOT clear the
+        # event (only reaching RUNNING does), and there is no double start
+        asyncio.run(model_watchdog.watchdog_tick())
+        self.assertIn(mid, model_watchdog._crash_events)
+        self.assertEqual(self._started, [mid])
+        # the start succeeds → RUNNING clears the consumed event
+        self._sm.update_model_status(mid, ModelStatus.RUNNING)
         asyncio.run(model_watchdog.watchdog_tick())
         self.assertNotIn(mid, model_watchdog._crash_events)
-        self.assertEqual(self._started, [mid])  # no double start
 
     def test_watchdog_delivers_start_command_to_console(self):
         # Incident 2026-10-17 10:15: the watchdog path has no client to send
@@ -156,10 +163,61 @@ class TestModelLock(unittest.TestCase):
         model_watchdog._suspended.add(mid)
         model_watchdog._crash_events[mid] = [(datetime.now(), False)]
         self._sm.update_model_status(mid, ModelStatus.LOADING)  # manual start
+        # LOADING alone is NOT recovery: an in-flight attempt must not wipe
+        # the crash history (incident 2026-10-17 10:15 flap loop) — and a
+        # suspended model is not started by the tick.
+        asyncio.run(model_watchdog.watchdog_tick())
+        self.assertTrue(model_watchdog.is_suspended(mid))
+        self.assertIn(mid, model_watchdog._crash_events)
+        self.assertEqual(self._started, [])
+        # the manual start reaches RUNNING → history and suspension reset
+        self._sm.update_model_status(mid, ModelStatus.RUNNING)
         asyncio.run(model_watchdog.watchdog_tick())
         self.assertFalse(model_watchdog.is_suspended(mid))
         self.assertNotIn(mid, model_watchdog._crash_events)
         self.assertEqual(self._started, [])
+
+    def test_loading_attempt_does_not_wipe_crash_history(self):
+        # Incident 2026-10-17 10:15 regression lock: a broken start command
+        # flaps — every watchdog attempt sets LOADING, and the old
+        # clear-on-LOADING wiped the crash count each cycle so the breaker
+        # (3 in 10 min) could never trip (~65 empty cycles over 20 minutes).
+        # The history must survive the in-flight attempt; only RUNNING clears.
+        mid = self._ids[0]
+        self._sm.set_model_locked(mid, True)
+        self._sm.update_model_status(mid, ModelStatus.STOPPED)
+        model_watchdog.on_model_crash(mid)
+        asyncio.run(model_watchdog.watchdog_tick())  # attempt → LOADING
+        self.assertEqual(self._started, [mid])
+        asyncio.run(model_watchdog.watchdog_tick())
+        self.assertEqual(len(model_watchdog._crash_events[mid]), 1)
+        self.assertEqual(self._started, [mid])  # no double start
+
+    def test_flap_loop_trips_breaker_and_stops(self):
+        # A broken start command (OOM etc.) must not flap forever: 3 failed
+        # auto-start cycles trip the breaker → FAILED + suspended, and the
+        # loop stops (the old clear-on-LOADING made this loop ~65+ cycles).
+        mid = self._ids[0]
+        self._sm.set_model_locked(mid, True)
+        self._sm.update_model_status(mid, ModelStatus.STOPPED)
+        for _ in range(3):
+            model_watchdog.on_model_crash(mid)
+            asyncio.run(model_watchdog.watchdog_tick())
+            if not model_watchdog.is_suspended(mid):
+                # the attempt lands LOADING; the 10 s probe finds no
+                # process and the rollback re-arms the next cycle
+                self.assertEqual(
+                    self._sm.get_model(mid).status, ModelStatus.LOADING)
+                self._sm.update_model_status(mid, ModelStatus.STOPPED)
+        self.assertTrue(model_watchdog.is_suspended(mid))
+        model = self._sm.get_model(mid)
+        self.assertEqual(model.status, ModelStatus.FAILED)
+        self.assertIn("自动启动已暂停", model.error_message)
+        # cycles 1+2 started the model; the 3rd failure tripped the breaker
+        self.assertEqual(len(self._started), 2)
+        # and the loop is over: further ticks must not start it again
+        asyncio.run(model_watchdog.watchdog_tick())
+        self.assertEqual(len(self._started), 2)
 
     def test_synthetic_replay_events_do_not_trip_breaker(self):
         mid = self._ids[0]

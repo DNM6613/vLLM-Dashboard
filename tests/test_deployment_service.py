@@ -823,5 +823,148 @@ class TestProbeInThread(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 504)
 
 
+class TestTasksEndpointDriverReconcile(unittest.TestCase):
+    """The home page's /tasks poll must run the post-reboot driver
+    verification itself: the task center lives on the home page, but the
+    verification was triggered only by GET /deployment/drivers — polled
+    solely while the deploy modal is open — so a finished reboot left the
+    task stuck at ``awaiting_reboot`` until that modal happened to open."""
+
+    def setUp(self):
+        import backend.api.deployment_routes_tasks as tasks_api
+        self.tasks_api = tasks_api
+        tasks_api._last_driver_reconcile = 0.0
+        self.tmp = tempfile.TemporaryDirectory()
+        self._files = patch.multiple(
+            ds,
+            STATE_FILE=os.path.join(self.tmp.name, "state.json"),
+            TASKS_FILE=os.path.join(self.tmp.name, "tasks.json"),
+            DATA_DIR=self.tmp.name,
+            LOG_DIR=os.path.join(self.tmp.name, "logs"),
+        )
+        self._files.start()
+        self.mgr = ds.DeploymentTaskManager()
+        self.state = MagicMock()
+        self.state.get.return_value = ds._default_state()
+        self._tm = patch.object(ds, "task_manager", self.mgr)
+        self._st = patch.object(ds, "deployment_state", self.state)
+        self._tm.start()
+        self._st.start()
+
+    def tearDown(self):
+        self._st.stop()
+        self._tm.stop()
+        self._files.stop()
+        self.tmp.cleanup()
+
+    def _pending_driver_task(self):
+        task = self.mgr.create(
+            "driver", "Apply driver nvidia-driver-615-server-open",
+            ["Stop vLLM service", "Uninstall old driver",
+             "Install target driver", "Wait for reboot"])
+        task.status = "awaiting_reboot"
+        task.result = {"package": "nvidia-driver-615-server-open",
+                       "target_major": 615}
+        return task
+
+    def _get_tasks(self, executor) -> dict:
+        from fastapi.testclient import TestClient
+
+        import backend.service.deployment_entry as entry
+        from backend.main import app
+        with patch.object(entry, "get_remote_executor", return_value=executor):
+            client = TestClient(app)
+            resp = client.get("/api/v1/deployment/tasks")
+        self.assertEqual(resp.status_code, 200)
+        return resp.json()
+
+    def test_tasks_poll_completes_rebooted_driver_task(self):
+        task = self._pending_driver_task()
+        executor = MagicMock()
+        executor.execute.return_value = {
+            "success": True, "stdout": "615.30.01\n", "stderr": "",
+            "returncode": 0}
+        body = self._get_tasks(executor)
+        self.assertEqual(task.status, "success")
+        self.assertTrue(task.finished_at)
+        self.assertEqual([s["status"] for s in task.steps],
+                         ["done", "done", "done", "done"])
+        self.assertIn("Reboot verified", "\n".join(self.mgr.tail(task.id)))
+        statuses = {t["id"]: t["status"] for t in body["tasks"]}
+        self.assertEqual(statuses[task.id], "success")
+
+    def test_cooldown_throttles_home_poll(self):
+        # The home page polls /tasks every 3 s: with a task pending the SSH
+        # probe must run at most once per cooldown, not on every tick.
+        self._pending_driver_task()
+        executor = MagicMock()
+        # non-matching driver: the task stays pending, so without the
+        # cooldown every poll below would probe again.
+        executor.execute.return_value = {
+            "success": True, "stdout": "595.91.07\n", "stderr": "",
+            "returncode": 0}
+        self._get_tasks(executor)
+        self._get_tasks(executor)
+        self._get_tasks(executor)
+        self.assertEqual(executor.execute.call_count, 1)
+
+    def test_no_probe_without_pending_task(self):
+        self.mgr.create("vllm", "Apply vLLM 0.9", ["s1"])
+        executor = MagicMock()
+        self._get_tasks(executor)
+        executor.execute.assert_not_called()
+
+
+class TestNoHeredocStepScripts(unittest.TestCase):
+    """run_long + the sudo() password-stdin wrapper break multi-line
+    (heredoc) commands two ways: the ``; ec=$?`` continuation lands on the
+    line after the heredoc terminator (bash syntax error), and the child's
+    stdin is the leftover password file (empty) — the target file is
+    written 0 bytes. Incident 2026-10-02: both CUDA installs failed at
+    'Write CUDA environment'. These step scripts must stay single logical
+    lines with no heredoc."""
+
+    def test_cuda_env_script_single_line_no_heredoc(self):
+        from backend.service import deployment_pipelines_env as env_pipe
+        script = env_pipe._build_cuda_env_script("dep_test_1")
+        self.assertNotIn("\n", script)
+        self.assertNotIn("<<", script)
+        self.assertIn("printf '%s\\n'", script)
+        # single-quoted: content is written literally, expanded only at login
+        self.assertIn("'export CUDA_HOME=/usr/local/cuda'", script)
+        self.assertIn("'export PATH=$CUDA_HOME/bin:$PATH'", script)
+        self.assertIn(
+            "'export LD_LIBRARY_PATH=$CUDA_HOME/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}'",
+            script)
+        self.assertIn("sudo cp /tmp/vdb_cuda_env_dep_test_1 /etc/profile.d/vllm-cuda.sh", script)
+        self.assertIn("rm -f /tmp/vdb_cuda_env_dep_test_1", script)
+
+    def test_supervisor_script_single_line_no_heredoc(self):
+        from backend.service import deployment_pipelines_vllm as vllm_pipe
+        script = vllm_pipe._build_supervisor_script("$HOME/.vllm", "dep_test_2")
+        self.assertNotIn("\n", script)
+        self.assertNotIn("<<", script)
+        self.assertIn("'[program:vllm]'", script)
+        self.assertIn("'command=$HOME/.vllm/bin/vllm serve <MODEL_PATH> --port 8000'", script)
+        self.assertIn("'stdout_logfile=/var/log/vllm/vllm.log'", script)
+        self.assertIn(
+            "sudo cp /tmp/vdb_vllm_conf_dep_test_2 /etc/supervisor/conf.d/vllm-vdb.conf",
+            script)
+        self.assertIn("supervisorctl reread", script)
+
+    def test_new_env_prepare_refuses_existing_venv(self):
+        # Incident 2026-10-02: the fresh-install path stopped vLLM, then
+        # died on the existing ~/.vllm (bare `uv venv`, no guard, no
+        # --clear). The prepare step must fail fast on an existing venv.
+        payload = {"env_mode": "new", "python_version": "", "version": "latest",
+                   "cuda_version": "", "runtime_mode": "builtin"}
+        prepare, _ = ds._build_vllm_install_commands(payload, "$HOME/.vllm", {"pypi": ""})
+        self.assertIn("virtualenv already exists", prepare)
+        self.assertLess(prepare.index("test -d $HOME/.vllm"), prepare.index("uv venv"))
+        self.assertLess(prepare.index("exit 1"), prepare.index("uv venv"))
+        # --clear would wipe a venv the running model may live in
+        self.assertNotIn("--clear", prepare)
+
+
 if __name__ == "__main__":
     unittest.main()
