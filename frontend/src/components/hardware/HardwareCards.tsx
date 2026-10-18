@@ -75,15 +75,15 @@ export const HardwareCards = memo(function HardwareCards({ sshConnected }: Hardw
               </div>
               <div className="space-y-2 text-xs">
                 <div className="flex justify-between">
-                  <span className="text-text-muted">{t('Memory')}</span>
-                  <span className="font-mono">{live ? <AnimatedNumber value={gpu.memory_used_mb ?? 0} format={(v) => `${formatSize(v * 1024 * 1024, true)} / ${formatSize((gpu.memory_total_mb ?? 0) * 1024 * 1024, true)}`} /> : 'N/A'}</span>
-                </div>
-                <ProgressBar value={live ? ((gpu.memory_used_mb ?? 0) / Math.max(gpu.memory_total_mb ?? 1, 1)) * 100 : 0} />
-                <div className="flex justify-between">
                   <span className="text-text-muted">{t('Core')}</span>
                   <span className="font-mono">{live ? <AnimatedNumber value={gpu.utilization_gpu ?? 0} format={(v) => `${v.toFixed(0)}%`} /> : 'N/A'}</span>
                 </div>
                 <ProgressBar value={live ? gpu.utilization_gpu ?? 0 : 0} color="bg-success" />
+                <div className="flex justify-between">
+                  <span className="text-text-muted">{t('Memory')}</span>
+                  <span className="font-mono">{live ? <AnimatedNumber value={gpu.memory_used_mb ?? 0} format={(v) => `${formatSize(v * 1024 * 1024, true)} / ${formatSize((gpu.memory_total_mb ?? 0) * 1024 * 1024, true)}`} /> : 'N/A'}</span>
+                </div>
+                <ProgressBar value={live ? ((gpu.memory_used_mb ?? 0) / Math.max(gpu.memory_total_mb ?? 1, 1)) * 100 : 0} />
                 <div className="flex justify-between">
                   <span className="text-text-muted">{t('Power')}</span>
                   <span className="font-mono">{live ? <AnimatedNumber value={gpu.power_draw_w ?? 0} format={(v) => `${v.toFixed(0)}W / ${gpu.power_limit_w ?? 0}W`} /> : 'N/A'}</span>
