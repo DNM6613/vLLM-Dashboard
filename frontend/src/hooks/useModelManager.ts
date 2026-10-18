@@ -33,6 +33,7 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
   const [lockingId, setLockingId] = useState<string | null>(null);
   const [deleteRequest, setDeleteRequest] = useState<{ modelId: string; name: string } | null>(null);
   const [stopRequest, setStopRequest] = useState<{ modelId: string; name: string } | null>(null);
+  const [startRequest, setStartRequest] = useState<{ modelId: string; name: string; stopId: string; stopName: string } | null>(null);
 
   useEffect(() => {
     if (!sshConnected) return;
@@ -168,7 +169,7 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
 
   const cancelDelete = useCallback(() => setDeleteRequest(null), []);
 
-  const handleStartModel = useCallback(async (modelId: string): Promise<boolean> => {
+  const doStartModel = useCallback(async (modelId: string): Promise<boolean> => {
     if (startingRef.current) return false;
     startingRef.current = true;
     setStarting(true);
@@ -192,6 +193,21 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
     }
   }, [startModel, fetchModels, startConsoleForModel, t]);
 
+  // Starting a second model while another one is running/loading would leave
+  // two vLLM processes fighting for the GPU (single current-model platform),
+  // so confirm the switch first — the running one is stopped before the start.
+  const handleStartModel = useCallback((modelId: string): Promise<boolean> => {
+    if (startingRef.current) return Promise.resolve(false);
+    const models = useModelStore.getState().models;
+    const target = models.find((m) => m.id === modelId);
+    const running = models.find((m) => m.status === ModelStatus.RUNNING || m.status === ModelStatus.LOADING);
+    if (target && running && running.id !== target.id) {
+      setStartRequest({ modelId, name: target.name, stopId: running.id, stopName: running.name });
+      return Promise.resolve(false);
+    }
+    return doStartModel(modelId);
+  }, [doStartModel]);
+
   const handleToggleLock = useCallback(async (modelId: string, locked: boolean): Promise<boolean> => {
     if (lockingRef.current) return false;
     lockingRef.current = true;
@@ -209,16 +225,19 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
     }
   }, [setModelLock, fetchModels, t]);
 
-  const doStopModel = useCallback(async (modelId: string) => {
+  const doStopModel = useCallback(async (modelId: string): Promise<boolean> => {
     stoppingRef.current = true;
     setStoppingId(modelId);
     useModelStore.setState(state => ({
       models: state.models.map(m => m.id === modelId ? { ...m, status: ModelStatus.STOPPED } : m)
     }));
+    let stopped = false;
     try {
       const result = await stopModel(modelId);
       if (result && result.stopped === false) {
         showToast(t('Stop timed out: the process may still be running. GPU memory may remain in use.'));
+      } else {
+        stopped = true;
       }
     } catch (e: unknown) {
       showToast(errMsgLocalized(e) || t('Operation failed'));
@@ -227,6 +246,7 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
       setStoppingId(null);
       fetchModels();
     }
+    return stopped;
   }, [stopModel, fetchModels, t]);
 
   const handleStopModel = useCallback((modelId: string) => {
@@ -247,6 +267,21 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
   }, [stopRequest, doStopModel]);
 
   const cancelStop = useCallback(() => setStopRequest(null), []);
+
+  // Switch flow: stop the running model first and only start the target once
+  // the stop confirmed — a second vLLM process must not start while the first
+  // may still hold the GPU (single current-model platform).
+  const confirmStart = useCallback(async () => {
+    const req = startRequest;
+    if (!req) return;
+    setStartRequest(null);
+    const stopped = await doStopModel(req.stopId);
+    if (stopped) {
+      await doStartModel(req.modelId);
+    }
+  }, [startRequest, doStopModel, doStartModel]);
+
+  const cancelStart = useCallback(() => setStartRequest(null), []);
 
   return {
     refreshing,
@@ -277,5 +312,8 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
     stopRequest,
     confirmStop,
     cancelStop,
+    startRequest,
+    confirmStart,
+    cancelStart,
   };
 }

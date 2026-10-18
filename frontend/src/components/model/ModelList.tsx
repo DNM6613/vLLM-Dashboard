@@ -204,6 +204,23 @@ export const ModelList = memo(function ModelList({
                 </div>
               </div>
               <div className="flex items-center gap-1 ml-4">
+                {model.status === ModelStatus.RUNNING && (
+                  <IconButton
+                    size="sm"
+                    ariaLabel={model.locked ? t('Unlock (auto-restart on crash)') : t('Lock (auto-restart on crash)')}
+                    title={model.locked
+                      ? t('Locked: auto-starts after a crash or server restart; manual stop is not re-started')
+                      : t('Lock this model: it will auto-start after a crash or server restart. Only one model can be locked at a time.')}
+                    onClick={() => onToggleLock(model.id, !model.locked)}
+                    disabled={lockingId !== null || opInFlight}
+                  >
+                    {lockingId === model.id
+                      ? <Loader2 className="w-4 h-4 animate-spin text-accent" />
+                      : model.locked
+                        ? <Lock className="w-4 h-4 text-accent" />
+                        : <LockOpen className="w-4 h-4 text-text-muted" />}
+                  </IconButton>
+                )}
                 {(!sshConnected ||
                   model.status === ModelStatus.STOPPED ||
                   model.status === ModelStatus.DOWNLOADED ||
@@ -229,21 +246,6 @@ export const ModelList = memo(function ModelList({
                       : <Square className="w-4 h-4 text-warning" />}
                   </IconButton>
                 )}
-                <IconButton
-                  size="sm"
-                  ariaLabel={model.locked ? t('Unlock (auto-restart on crash)') : t('Lock (auto-restart on crash)')}
-                  title={model.locked
-                    ? t('Locked: auto-starts after a crash or server restart; manual stop is not re-started')
-                    : t('Lock this model: it will auto-start after a crash or server restart. Only one model can be locked at a time.')}
-                  onClick={() => onToggleLock(model.id, !model.locked)}
-                  disabled={lockingId !== null || opInFlight}
-                >
-                  {lockingId === model.id
-                    ? <Loader2 className="w-4 h-4 animate-spin text-accent" />
-                    : model.locked
-                      ? <Lock className="w-4 h-4 text-accent" />
-                      : <LockOpen className="w-4 h-4 text-text-muted" />}
-                </IconButton>
                 <IconButton
                   size="sm"
                   ariaLabel={t('Launch Config')}

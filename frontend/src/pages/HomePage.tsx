@@ -64,7 +64,7 @@ export function HomePage() {
   const { benchmarkResults, benchmarkingIds, benchmarkErrors, handleBenchmark, showBenchmarkModal, setShowBenchmarkModal } = useBenchmark();
 
   const { connectConsole, startConsoleForModel, sendConsoleInput, sendConsoleResize } = useConsoleWebSocket();
-  const { refreshing, scanMessage, starting, showLaunchConfigModal, setShowLaunchConfigModal, launchConfigModelName, launchConfigModelPath, launchCommand, setLaunchCommand, launchEnvVars, setLaunchEnvVars, savingLaunchConfig, handleRefresh, handleStartModel, handleStopModel, handleToggleLock, lockingId, handleOpenLaunchConfig, handleSaveLaunchConfig, handleDeleteModel, deletingId, stoppingId, deleteRequest, confirmDelete, cancelDelete, stopRequest, confirmStop, cancelStop } = useModelManager({ startConsoleForModel, sshConnected, connectConsole });
+  const { refreshing, scanMessage, starting, showLaunchConfigModal, setShowLaunchConfigModal, launchConfigModelName, launchConfigModelPath, launchCommand, setLaunchCommand, launchEnvVars, setLaunchEnvVars, savingLaunchConfig, handleRefresh, handleStartModel, handleStopModel, handleToggleLock, lockingId, handleOpenLaunchConfig, handleSaveLaunchConfig, handleDeleteModel, deletingId, stoppingId, deleteRequest, confirmDelete, cancelDelete, stopRequest, confirmStop, cancelStop, startRequest, confirmStart, cancelStart } = useModelManager({ startConsoleForModel, sshConnected, connectConsole });
   const saveHfToken = useCallback(async (value: string) => {
     const updated = await updateServerConfig({ hf_token: value.trim() ? value : null });
     setServerConfig(updated);
@@ -332,6 +332,16 @@ export function HomePage() {
           confirmLabel={t('Stop')}
           onConfirm={confirmStop}
           onCancel={cancelStop}
+        />
+      )}
+
+      {startRequest && (
+        <ConfirmDialog
+          title={t('Start {name}?', { name: startRequest.name })}
+          description={t('The running model {name} will be stopped first.', { name: startRequest.stopName })}
+          confirmLabel={t('Switch')}
+          onConfirm={confirmStart}
+          onCancel={cancelStart}
         />
       )}
 

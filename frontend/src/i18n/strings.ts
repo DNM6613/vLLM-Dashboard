@@ -154,6 +154,9 @@ export const ZH: Record<string, string> = {
   'The model files on the server will also be deleted.': '服务器上的模型文件也将被删除。',
   'Stop {name}?': '停止 {name}？',
   'Ongoing inference requests will be interrupted.': '正在进行的推理请求将被中断。',
+  'Start {name}?': '启动 {name}？',
+  'The running model {name} will be stopped first.': '将先停止当前运行中的模型 {name}。',
+  'Switch': '切换',
   'Operation failed': '操作失败',
   "Start command not configured — open the model's Launch Config and set a start command first.":
     '启动命令未配置 — 请先打开该模型的启动配置并设置启动命令。',
