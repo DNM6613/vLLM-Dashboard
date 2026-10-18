@@ -823,17 +823,14 @@ class TestProbeInThread(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 504)
 
 
-class TestTasksEndpointDriverReconcile(unittest.TestCase):
-    """The home page's /tasks poll must run the post-reboot driver
-    verification itself: the task center lives on the home page, but the
-    verification was triggered only by GET /deployment/drivers — polled
-    solely while the deploy modal is open — so a finished reboot left the
-    task stuck at ``awaiting_reboot`` until that modal happened to open."""
+class TestDriverReconcileTimer(unittest.TestCase):
+    """The task center was removed from the home page, so the post-reboot
+    driver verification no longer rides the 3 s /tasks poll. A background
+    timer (``driver_reconcile_timer``, started in the app lifespan) now
+    ticks ``reconcile_driver_task`` on its own, and ``/tasks`` is a plain
+    data read with no reconcile side effect."""
 
     def setUp(self):
-        import backend.api.deployment_routes_tasks as tasks_api
-        self.tasks_api = tasks_api
-        tasks_api._last_driver_reconcile = 0.0
         self.tmp = tempfile.TemporaryDirectory()
         self._files = patch.multiple(
             ds,
@@ -878,41 +875,37 @@ class TestTasksEndpointDriverReconcile(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         return resp.json()
 
-    def test_tasks_poll_completes_rebooted_driver_task(self):
+    def test_timer_tick_completes_rebooted_driver_task(self):
+        import backend.service.deployment_entry as entry
+        import backend.service.driver_reconcile_timer as timer
         task = self._pending_driver_task()
         executor = MagicMock()
         executor.execute.return_value = {
             "success": True, "stdout": "615.30.01\n", "stderr": "",
             "returncode": 0}
-        body = self._get_tasks(executor)
+        with patch.object(entry, "get_remote_executor", return_value=executor):
+            asyncio.run(timer._tick())
         self.assertEqual(task.status, "success")
         self.assertTrue(task.finished_at)
-        self.assertEqual([s["status"] for s in task.steps],
-                         ["done", "done", "done", "done"])
         self.assertIn("Reboot verified", "\n".join(self.mgr.tail(task.id)))
-        statuses = {t["id"]: t["status"] for t in body["tasks"]}
-        self.assertEqual(statuses[task.id], "success")
 
-    def test_cooldown_throttles_home_poll(self):
-        # The home page polls /tasks every 3 s: with a task pending the SSH
-        # probe must run at most once per cooldown, not on every tick.
-        self._pending_driver_task()
+    def test_tasks_endpoint_is_plain_read(self):
+        # /tasks no longer probes the host or reconciles — the background
+        # timer owns that. Reading the list must not move the task.
+        task = self._pending_driver_task()
         executor = MagicMock()
-        # non-matching driver: the task stays pending, so without the
-        # cooldown every poll below would probe again.
-        executor.execute.return_value = {
-            "success": True, "stdout": "595.91.07\n", "stderr": "",
-            "returncode": 0}
-        self._get_tasks(executor)
-        self._get_tasks(executor)
-        self._get_tasks(executor)
-        self.assertEqual(executor.execute.call_count, 1)
-
-    def test_no_probe_without_pending_task(self):
-        self.mgr.create("vllm", "Apply vLLM 0.9", ["s1"])
-        executor = MagicMock()
-        self._get_tasks(executor)
+        body = self._get_tasks(executor)
         executor.execute.assert_not_called()
+        statuses = {t["id"]: t["status"] for t in body["tasks"]}
+        self.assertEqual(statuses[task.id], "awaiting_reboot")
+
+    def test_timer_skips_when_no_pending_driver_task(self):
+        import backend.service.deployment_entry as entry
+        import backend.service.driver_reconcile_timer as timer
+        self.mgr.create("vllm", "Apply vLLM 0.9", ["s1"])
+        with patch.object(entry, "reconcile_driver_task") as mock_reconcile:
+            asyncio.run(timer._tick())
+        mock_reconcile.assert_not_called()
 
 
 class TestNoHeredocStepScripts(unittest.TestCase):

@@ -81,9 +81,6 @@ function TaskPanel({ task }: { task: DeployTask }) {
           {task.log_tail.join('\n')}
         </pre>
       ) : null}
-      {(active || task.status === 'failed') && (
-        <div className="mt-2 text-[11px] text-text-muted">{t('Full log: Task Center (bottom-right).')}</div>
-      )}
     </div>
   );
 }

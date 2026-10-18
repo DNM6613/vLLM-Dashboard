@@ -162,7 +162,7 @@ export function useDeployment(open: boolean) {
 
   const handleApplyDriver = useCallback((pkg: string) => runAction(
     () => applyDriver(pkg),
-    'Driver task started — follow it in the Task Center.',
+    'Driver task started.',
   ), [runAction]);
 
   const handleReboot = useCallback(() => runAction(() => rebootServer()), [runAction]);
@@ -175,7 +175,7 @@ export function useDeployment(open: boolean) {
 
   const handleVllm = useCallback((payload: VllmApplyPayload) => runAction(
     () => applyVllm(payload),
-    'vLLM install task started — follow it in the Task Center.',
+    'vLLM install task started.',
   ), [runAction]);
 
   const handleRollback = useCallback((target: 'driver' | 'vllm') => runAction(

@@ -6,7 +6,6 @@ import { useTheme } from '../hooks/useTheme';
 import { invalidateHardwareFetch, invalidateSoftwareFetch, useHardwareStore } from '../stores/hardware';
 import { useModelStore, errMsgLocalized } from '../stores/model';
 import { useServerConfig } from '../hooks/useServerConfig';
-import { useTasks } from '../hooks/useTasks';
 import { useHardwareWebSocket } from '../hooks/useHardwareWebSocket';
 import { useModelStatusStore } from '../stores/modelStatus';
 import { useConsoleWebSocket } from '../hooks/useConsoleWebSocket';
@@ -23,7 +22,6 @@ import { DeployEnvModal } from '../components/modals/DeployEnvModal';
 import { DownloadModal } from '../components/modals/DownloadModal';
 import { LaunchConfigModal } from '../components/modals/LaunchConfigModal';
 import { BenchmarkModal } from '../components/modals/BenchmarkModal';
-import { TaskCenterDrawer } from '../components/TaskCenterDrawer';
 import { terminalReset } from '../utils/terminalSink';
 import { useSettledFlag } from '../hooks/useSettledFlag';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
@@ -74,7 +72,6 @@ export function HomePage() {
   const { showDownloadModal, setShowDownloadModal, downloadModelName, setDownloadModelName, downloadModelSavePath, setDownloadModelSavePath, hfMirror, setHfMirror, hfToken: downloadHfToken, setHfToken: setDownloadHfToken, downloading, downloadProgress, downloadSizeBytes, downloadTotalSizeBytes, downloadStalledSecs, activeDownloadName, cliStatus, checkingCli, installingCli, installMessage, handleInstallCli, handleDownloadModel, handleCancelDownload } = useModelDownload({ defaultSavePath: serverConfig.model_save_path ?? '', onSavePathPersisted: (path: string) => setServerConfig((c) => ({ ...c, model_save_path: path })), hfToken: serverConfig.hf_token ?? '', onSaveHfToken: saveHfToken });
 
   const [showDeployEnv, setShowDeployEnv] = useState(false);
-  const tasks = useTasks();
 
   const downloadProgressInfo = downloading
     ? {
@@ -271,8 +268,6 @@ export function HomePage() {
       )}
 
       {showDeployEnv && <DeployEnvModal onClose={() => setShowDeployEnv(false)} />}
-
-      <TaskCenterDrawer tasks={tasks} />
 
       {showDownloadModal && (
         <DownloadModal

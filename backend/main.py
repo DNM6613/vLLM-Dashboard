@@ -34,6 +34,10 @@ from .middleware import (
     unhandled_exception_handler,
     validation_exception_handler,
 )
+from .service.driver_reconcile_timer import (
+    start_driver_reconcile_timer,
+    stop_driver_reconcile_timer,
+)
 from .service.model_watchdog import start_watchdog, stop_watchdog
 from .ws.hardware_broadcaster import hardware_broadcaster, websocket_hardware
 
@@ -44,10 +48,12 @@ logger = logging.getLogger(__name__)
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI):
     await start_watchdog()
+    await start_driver_reconcile_timer()
     try:
         yield
     finally:
         await stop_watchdog()
+        await stop_driver_reconcile_timer()
         await hardware_broadcaster.shutdown()
         from .config.remote_client import close_http_client
         await close_http_client()
