@@ -133,6 +133,12 @@ from .model_catalog import (
 from .model_catalog import (
     scan_models as scan_models,
 )
+from .model_chat import (
+    chat_precheck as chat_precheck,
+)
+from .model_chat import (
+    stream_chat as stream_chat,
+)
 from .model_downloads import (
     _build_download_status_command as _build_download_status_command,
 )
@@ -238,6 +244,7 @@ __all__ = [
     "_watchdog_on_crash",
     "apply_model_lock",
     "benchmark_model",
+    "chat_precheck",
     "check_cli_tools",
     "config_manager",
     "console_session_manager",
@@ -262,5 +269,6 @@ __all__ = [
     "stop_download",
     "stop_model",
     "stop_watchdog",
+    "stream_chat",
     "sync_status",
 ]

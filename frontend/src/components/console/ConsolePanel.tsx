@@ -1,5 +1,6 @@
-import { memo, useEffect, useLayoutEffect, useRef } from 'react';
-import { Terminal as TerminalIcon } from 'lucide-react';
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { MessageCircle, Terminal as TerminalIcon } from 'lucide-react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -9,18 +10,45 @@ import { decideCtrlC } from '../../utils/ctrlC';
 import { useI18n } from '../../i18n/context';
 import { getCurrentTheme, useTheme } from '../../hooks/useTheme';
 import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from '../../styles/terminalTheme';
+import { ChatTab } from './ChatTab';
+import type { ModelInfo } from '../../types';
+
+type ConsoleTab = 'console' | 'chat';
 
 interface ConsolePanelProps {
+  models: ModelInfo[];
   onSendInput: (data: string) => void;
   onSendResize: (cols: number, rows: number) => void;
 }
 
-export const ConsolePanel = memo(function ConsolePanel({ onSendInput, onSendResize }: ConsolePanelProps) {
+function TabButton({ active, onClick, label, icon }: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  icon: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs transition-colors ${
+        active ? 'bg-bg-hover text-text' : 'text-text-muted hover:bg-bg-hover/50 hover:text-text'
+      }`}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+export const ConsolePanel = memo(function ConsolePanel({ models, onSendInput, onSendResize }: ConsolePanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<(() => void) | null>(null);
   const { t } = useI18n();
   const { theme } = useTheme();
   const lastCtrlCRef = useRef(0);
+  const [tab, setTab] = useState<ConsoleTab>('console');
 
   useEffect(() => {
     const container = containerRef.current;
@@ -60,18 +88,32 @@ export const ConsolePanel = memo(function ConsolePanel({ onSendInput, onSendResi
     term.onData((d) => onSendInput(d));
     const sendSize = () => onSendResize(term.cols, term.rows);
     sendSize();
-    const ro = new ResizeObserver(() => {
+    fitRef.current = () => {
+      fit.fit();
+      sendSize();
+    };
+    // While the Chat tab is active the container is display:none and the
+    // observer reports 0x0 — skip fit() in that case or xterm gets cols 0.
+    const ro = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (!rect || rect.width === 0 || rect.height === 0) return;
       fit.fit();
       sendSize();
     });
     ro.observe(container);
     return () => {
       ro.disconnect();
+      fitRef.current = null;
       registerTerminalSink(null);
       termRef.current = null;
       term.dispose();
     };
   }, [onSendInput, onSendResize]);
+
+  // Coming back from the Chat tab, re-fit to restore cols/rows.
+  useEffect(() => {
+    if (tab === 'console') fitRef.current?.();
+  }, [tab]);
 
   useLayoutEffect(() => {
     const term = termRef.current;
@@ -82,14 +124,17 @@ export const ConsolePanel = memo(function ConsolePanel({ onSendInput, onSendResi
 
   return (
     <div className="bg-bg-card rounded-xl border border-border overflow-hidden lg:sticky lg:top-4 flex flex-col shadow-md lg:h-[calc(100vh-104px)]">
-      <div className="flex items-center p-3 border-b border-border">
-        <div className="flex items-center gap-2">
-          <TerminalIcon className="w-4 h-4" />
-          <span className="text-sm font-medium">{t('Console')}</span>
-        </div>
+      <div className="flex items-center gap-1 p-1.5 pr-3 border-b border-border">
+        <TabButton active={tab === 'console'} onClick={() => setTab('console')} label={t('Console')} icon={<TerminalIcon className="w-4 h-4" />} />
+        <TabButton active={tab === 'chat'} onClick={() => setTab('chat')} label={t('Chat')} icon={<MessageCircle className="w-4 h-4" />} />
       </div>
       <div className="flex-1 min-h-0 h-[50vh] lg:h-auto p-4 bg-[rgb(var(--c-console))]">
-        <div ref={containerRef} className="h-full w-full flex items-center" />
+        <div className="h-full" style={tab === 'console' ? undefined : { display: 'none' }}>
+          <div ref={containerRef} className="h-full w-full flex items-center" />
+        </div>
+        <div className="h-full" style={tab === 'chat' ? undefined : { display: 'none' }}>
+          <ChatTab models={models} />
+        </div>
       </div>
     </div>
   );

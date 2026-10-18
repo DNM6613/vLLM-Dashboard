@@ -182,6 +182,18 @@ export const ZH: Record<string, string> = {
     '[WebSocket] 重连次数已达上限，请检查 AI 服务器与网络。',
   '✗ Connection error': '✗ 连接错误',
 
+  'Chat': '对话',
+  'You': '你',
+  'Model': '模型',
+  'Send': '发送',
+  'Show thinking': '显示思考',
+  'Thinking': '思考',
+  'Chat input': '输入消息（Enter 发送，Shift+Enter 换行）',
+  'Queued ({n})': '待发送（{n}）',
+  'Remove from queue': '移除待发送',
+  'Edit queued message': '编辑待发送',
+  'Chat stats: {tokens} tokens · {secs}s · {tps} tok/s': '统计：{tokens} tokens · {secs}s · {tps} tok/s',
+
   // Environment deployment module
   'Environment Deployment': '环境部署',
   'locked': '已锁定',

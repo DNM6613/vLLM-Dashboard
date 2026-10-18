@@ -3,6 +3,7 @@ import posixpath
 import re
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from ..config.model_launch_config import launch_config_manager
 from ..config.server_config import has_parent_path_segment
@@ -115,6 +116,48 @@ def set_model_lock(model_id: str = Query(...), locked: bool = Query(True)):
 @router.post("/benchmark")
 async def benchmark_model(model_id: str = Query(...)):
     return await model_service.benchmark_model(model_id)
+
+CHAT_ROLES = {"system", "user", "assistant"}
+CHAT_MAX_MESSAGES = 20
+CHAT_MAX_MESSAGE_CHARS = 8192
+CHAT_MAX_TOKENS_CAP = 4096
+
+
+@router.post("/chat")
+async def chat_model(body: dict):
+    """SSE passthrough proxy to vLLM's /v1/chat/completions (see model_chat)."""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid request body")
+    model_id = body.get("model_id")
+    if not isinstance(model_id, str) or not model_id or len(model_id) > 512:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    messages = body.get("messages")
+    if not isinstance(messages, list) or not 1 <= len(messages) <= CHAT_MAX_MESSAGES:
+        raise HTTPException(status_code=400, detail=f"messages must be a list of 1..{CHAT_MAX_MESSAGES} items")
+    clean: list[dict[str, str]] = []
+    for m in messages:
+        if (
+            not isinstance(m, dict)
+            or m.get("role") not in CHAT_ROLES
+            or not isinstance(m.get("content"), str)
+            or not m["content"].strip()
+            or len(m["content"]) > CHAT_MAX_MESSAGE_CHARS
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Each message requires {role: system|user|assistant, content: non-empty string}",
+            )
+        clean.append({"role": m["role"], "content": m["content"]})
+    max_tokens = body.get("max_tokens", 4096)
+    if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or not 1 <= max_tokens <= CHAT_MAX_TOKENS_CAP:
+        raise HTTPException(status_code=400, detail=f"max_tokens must be an integer in 1..{CHAT_MAX_TOKENS_CAP}")
+
+    client, target, vllm_model_id = await model_service.chat_precheck(model_id)
+    return StreamingResponse(
+        model_service.stream_chat(client, target, vllm_model_id, clean, max_tokens),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 @router.post("/download")
 def download_model(model_repo: str = Query(...), model_save_path: str = Query(""), hf_mirror: bool = Query(True)):

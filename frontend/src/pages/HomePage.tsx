@@ -251,7 +251,7 @@ export function HomePage() {
         </div>
 
         <div className="lg:w-1/2 flex-shrink-0">
-          <ConsolePanel onSendInput={sendConsoleInput} onSendResize={sendConsoleResize} />
+          <ConsolePanel models={models} onSendInput={sendConsoleInput} onSendResize={sendConsoleResize} />
         </div>
       </div>
 

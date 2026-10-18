@@ -25,6 +25,10 @@ class Settings(BaseSettings):
 
     API_TIMEOUT: float = 10.0
     BENCHMARK_TIMEOUT: float = 60.0
+    # Wall-clock cap for one proxied vLLM chat generation (SSE stream). A
+    # single generation on a big model can take minutes, so this must be
+    # far larger than API_TIMEOUT (the shared client's default).
+    CHAT_TIMEOUT: float = 300.0
     STATUS_SYNC_TIMEOUT: float = 5.0
     SSH_CMD_TIMEOUT: int = 10
     # Wall-clock cap for remote hardware reads (nvidia-smi / sysinfo /
