@@ -40,6 +40,7 @@ export function ChatTab({ models }: ChatTabProps) {
   const [showThinking, setShowThinking] = useState(readShowThinking);
   const { entries, streaming, send, stop, queue, removeQueued, editQueued } = useChat();
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const reasoningRef = useRef<HTMLPreElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const wasStreaming = useRef(false);
   const [editing, setEditing] = useState<number | null>(null);
@@ -96,6 +97,16 @@ export function ChatTab({ models }: ChatTabProps) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [entries]);
 
+  // Pin the streaming thinking block to its newest line; if the user has
+  // scrolled up to read earlier reasoning, don't yank them back.
+  useEffect(() => {
+    const el = reasoningRef.current;
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [entries]);
+
   // While a generation is in flight this queues the message (the hook's
   // streaming gate decides send-now vs enqueue); Enter never drops input.
   const handleSend = () => {
@@ -126,15 +137,20 @@ export function ChatTab({ models }: ChatTabProps) {
                   {showThinking && e.reasoning && (
                     <details open className="mb-1 rounded-lg border border-border bg-bg-hover/40 px-2 py-1">
                       <summary className="cursor-pointer text-[10px] text-text-muted select-none">{t('Thinking')}</summary>
-                      <pre className="mt-1 max-h-40 overflow-y-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all text-text-muted">{e.reasoning}</pre>
+                      <pre
+                        ref={e.streaming ? reasoningRef : undefined}
+                        className="mt-1 max-h-40 overflow-y-auto font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-text-muted"
+                      >
+                        {e.reasoning}
+                      </pre>
                     </details>
                   )}
                   {e.content ? (
-                    <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap break-all">{e.content}</pre>
+                    <pre className="font-mono text-sm leading-relaxed whitespace-pre-wrap break-all">{e.content}</pre>
                   ) : e.streaming ? (
                     <Loader2 className="w-3.5 h-3.5 text-accent animate-spin" />
                   ) : null}
-                  {e.error && <div className="mt-1 font-mono text-xs text-danger break-all">{e.error}</div>}
+                  {e.error && <div className="mt-1 font-mono text-sm text-danger break-all">{e.error}</div>}
                   {usage && ms != null && (
                     <div className="mt-1 text-[10px] text-text-muted">
                       {t('Chat stats: {tokens} tokens · {secs}s · {tps} tok/s', {
@@ -171,10 +187,10 @@ export function ChatTab({ models }: ChatTabProps) {
                     }
                   }}
                   onBlur={() => commitEdit(i)}
-                  className="min-w-0 flex-1 bg-transparent font-mono text-xs outline-none"
+                  className="min-w-0 flex-1 bg-transparent font-mono text-sm outline-none"
                 />
               ) : (
-                <span className="min-w-0 flex-1 truncate font-mono text-xs" title={q}>{q}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-sm" title={q}>{q}</span>
               )}
               {editing !== i && (
                 <button
@@ -216,7 +232,7 @@ export function ChatTab({ models }: ChatTabProps) {
           }}
           placeholder={t('Chat input')}
           disabled={!modelId}
-          className="flex-1 resize-none rounded-lg border border-border bg-bg px-2 py-1.5 font-mono text-xs disabled:opacity-50"
+          className="flex-1 resize-none rounded-lg border border-border bg-bg px-2 py-1.5 font-mono text-sm disabled:opacity-50"
         />
         <div className="flex flex-col items-end gap-1.5">
           {thinkingSupported && (
