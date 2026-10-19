@@ -120,7 +120,7 @@ async def benchmark_model(model_id: str = Query(...)):
 CHAT_ROLES = {"system", "user", "assistant"}
 CHAT_MAX_MESSAGES = 20
 CHAT_MAX_MESSAGE_CHARS = 8192
-CHAT_MAX_TOKENS_CAP = 16384
+CHAT_MAX_TOKENS_CAP = 131072
 
 
 @router.post("/chat")

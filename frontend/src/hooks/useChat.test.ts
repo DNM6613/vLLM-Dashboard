@@ -5,7 +5,7 @@ import type { ChatStreamEvent } from '../api/chat';
 import { useChat } from './useChat';
 
 vi.mock('../api/chat', () => ({
-  CHAT_MAX_TOKENS: 16384,
+  CHAT_MAX_TOKENS: 131072,
   openChatStream: vi.fn(),
 }));
 
