@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Thinking models (launched with --reasoning-parser) share the generation
 # budget with their thinking tokens, so the default must fit both.
-CHAT_MAX_TOKENS_DEFAULT = 4096
+CHAT_MAX_TOKENS_DEFAULT = 16384
 
 
 def _error_frame(message: str) -> str:

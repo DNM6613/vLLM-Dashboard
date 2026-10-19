@@ -120,7 +120,7 @@ async def benchmark_model(model_id: str = Query(...)):
 CHAT_ROLES = {"system", "user", "assistant"}
 CHAT_MAX_MESSAGES = 20
 CHAT_MAX_MESSAGE_CHARS = 8192
-CHAT_MAX_TOKENS_CAP = 4096
+CHAT_MAX_TOKENS_CAP = 16384
 
 
 @router.post("/chat")
@@ -148,7 +148,7 @@ async def chat_model(body: dict):
                 detail="Each message requires {role: system|user|assistant, content: non-empty string}",
             )
         clean.append({"role": m["role"], "content": m["content"]})
-    max_tokens = body.get("max_tokens", 4096)
+    max_tokens = body.get("max_tokens", CHAT_MAX_TOKENS_CAP)
     if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or not 1 <= max_tokens <= CHAT_MAX_TOKENS_CAP:
         raise HTTPException(status_code=400, detail=f"max_tokens must be an integer in 1..{CHAT_MAX_TOKENS_CAP}")
 

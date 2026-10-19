@@ -21,7 +21,7 @@ export interface ChatStreamEvent {
 
 // v1 default: generous enough for thinking models (thinking tokens share the
 // generation budget); a parameter panel may come later.
-export const CHAT_MAX_TOKENS = 4096;
+export const CHAT_MAX_TOKENS = 16384;
 
 /** Parse one SSE frame (``data: ...``); null when it carries no payload. */
 export function parseSseFrame(frame: string): ChatStreamEvent | null {
