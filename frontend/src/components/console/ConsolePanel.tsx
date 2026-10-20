@@ -1,12 +1,11 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { MessageCircle, Terminal as TerminalIcon } from 'lucide-react';
+import { Activity, MessageCircle, Terminal as TerminalIcon } from 'lucide-react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import { registerTerminalSink } from '../../utils/terminalSink';
-import { decideCtrlC } from '../../utils/ctrlC';
 import { useI18n } from '../../i18n/context';
 import { getCurrentTheme, useTheme } from '../../hooks/useTheme';
 import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from '../../styles/terminalTheme';
@@ -14,11 +13,10 @@ import { ChatTab } from './ChatTab';
 import { ConnectionsPanel } from './ConnectionsPanel';
 import type { ModelInfo } from '../../types';
 
-type ConsoleTab = 'console' | 'chat';
+type ConsoleTab = 'console' | 'chat' | 'connections';
 
 interface ConsolePanelProps {
   models: ModelInfo[];
-  onSendInput: (data: string) => void;
   onSendResize: (cols: number, rows: number) => void;
 }
 
@@ -42,13 +40,12 @@ function TabButton({ active, onClick, label, icon }: {
   );
 }
 
-export const ConsolePanel = memo(function ConsolePanel({ models, onSendInput, onSendResize }: ConsolePanelProps) {
+export const ConsolePanel = memo(function ConsolePanel({ models, onSendResize }: ConsolePanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<(() => void) | null>(null);
   const { t } = useI18n();
   const { theme } = useTheme();
-  const lastCtrlCRef = useRef(0);
   const [tab, setTab] = useState<ConsoleTab>('console');
 
   useEffect(() => {
@@ -59,34 +56,20 @@ export const ConsolePanel = memo(function ConsolePanel({ models, onSendInput, on
       fontSize: 12,
       fontFamily: "ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, monospace",
       scrollback: 5000,
+      // Display-only console (user ruling 2026-10-20): keyboard input is
+      // disabled at the xterm level; mouse selection and copy still work.
+      disableStdin: true,
       theme: getCurrentTheme() === 'light' ? XTERM_THEME_LIGHT : XTERM_THEME_DARK,
     });
     termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
-    term.attachCustomKeyEventHandler((ev) => {
-      if (ev.type !== 'keydown') return true;
-      const isCtrlC =
-        (ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey && ev.code === 'KeyC';
-      if (!isCtrlC) return true;
-      if (ev.repeat) return false;
-      const now = Date.now();
-      if (decideCtrlC(now, lastCtrlCRef.current) === 'sigint') {
-        lastCtrlCRef.current = 0;
-        ev.preventDefault();
-        onSendInput('\x03');
-      } else {
-        lastCtrlCRef.current = now;
-      }
-      return false;
-    });
     term.open(container);
     const core = term as unknown as { _core?: { viewport?: { scrollBarWidth: number } } };
     if (core._core?.viewport) core._core.viewport.scrollBarWidth = 0;
     fit.fit();
     registerTerminalSink({ write: (d) => term.write(d), reset: () => term.reset() });
-    term.onData((d) => onSendInput(d));
     const sendSize = () => onSendResize(term.cols, term.rows);
     sendSize();
     fitRef.current = () => {
@@ -109,7 +92,7 @@ export const ConsolePanel = memo(function ConsolePanel({ models, onSendInput, on
       termRef.current = null;
       term.dispose();
     };
-  }, [onSendInput, onSendResize]);
+  }, [onSendResize]);
 
   // Coming back from the Chat tab, re-fit to restore cols/rows.
   useEffect(() => {
@@ -128,18 +111,16 @@ export const ConsolePanel = memo(function ConsolePanel({ models, onSendInput, on
       <div className="flex items-center gap-1 p-1.5 pr-3 border-b border-border">
         <TabButton active={tab === 'console'} onClick={() => setTab('console')} label={t('Console')} icon={<TerminalIcon className="w-4 h-4" />} />
         <TabButton active={tab === 'chat'} onClick={() => setTab('chat')} label={t('Chat')} icon={<MessageCircle className="w-4 h-4" />} />
+        <TabButton active={tab === 'connections'} onClick={() => setTab('connections')} label={t('Connections')} icon={<Activity className="w-4 h-4" />} />
       </div>
-      {/* 3/4 content (console + chat) / 1/4 access log (接入情况) */}
-      <div className="flex-1 min-h-0 h-[64vh] lg:h-auto flex flex-col">
-        <div className="flex-[3] min-h-0 p-4 bg-[rgb(var(--c-console))]">
-          <div className="h-full" style={tab === 'console' ? undefined : { display: 'none' }}>
-            <div ref={containerRef} className="h-full w-full flex items-center" />
-          </div>
-          <div className="h-full" style={tab === 'chat' ? undefined : { display: 'none' }}>
-            <ChatTab models={models} />
-          </div>
+      <div className="flex-1 min-h-0 h-[50vh] lg:h-auto p-4 bg-[rgb(var(--c-console))]">
+        <div className="h-full" style={tab === 'console' ? undefined : { display: 'none' }}>
+          <div ref={containerRef} className="h-full w-full flex items-center" />
         </div>
-        <div className="flex-1 min-h-0 border-t border-border">
+        <div className="h-full" style={tab === 'chat' ? undefined : { display: 'none' }}>
+          <ChatTab models={models} />
+        </div>
+        <div className="h-full" style={tab === 'connections' ? undefined : { display: 'none' }}>
           <ConnectionsPanel />
         </div>
       </div>

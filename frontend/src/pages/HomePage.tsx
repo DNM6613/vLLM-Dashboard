@@ -63,7 +63,7 @@ export function HomePage() {
 
   const { benchmarkResults, benchmarkingIds, benchmarkErrors, handleBenchmark, showBenchmarkModal, setShowBenchmarkModal } = useBenchmark();
 
-  const { connectConsole, startConsoleForModel, sendConsoleInput, sendConsoleResize } = useConsoleWebSocket();
+  const { connectConsole, startConsoleForModel, sendConsoleResize } = useConsoleWebSocket();
   const { refreshing, scanMessage, starting, showLaunchConfigModal, setShowLaunchConfigModal, launchConfigModelName, launchConfigModelPath, launchCommand, setLaunchCommand, launchEnvVars, setLaunchEnvVars, savingLaunchConfig, handleRefresh, handleStartModel, handleStopModel, handleToggleLock, lockingId, handleOpenLaunchConfig, handleSaveLaunchConfig, handleDeleteModel, deletingId, stoppingId, deleteRequest, confirmDelete, cancelDelete, stopRequest, confirmStop, cancelStop, startRequest, confirmStart, cancelStart } = useModelManager({ startConsoleForModel, sshConnected, connectConsole });
   const saveHfToken = useCallback(async (value: string) => {
     const updated = await updateServerConfig({ hf_token: value.trim() ? value : null });
@@ -251,7 +251,7 @@ export function HomePage() {
         </div>
 
         <div className="lg:w-1/2 flex-shrink-0">
-          <ConsolePanel models={models} onSendInput={sendConsoleInput} onSendResize={sendConsoleResize} />
+          <ConsolePanel models={models} onSendResize={sendConsoleResize} />
         </div>
       </div>
 

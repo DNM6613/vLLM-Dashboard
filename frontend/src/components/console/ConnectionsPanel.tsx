@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useState } from 'react';
-import { Activity, FileText } from 'lucide-react';
+import { FileText } from 'lucide-react';
 import { getConnections, getRequests } from '../../api/monitor';
 import type { ConnectionInfo, RequestEntry } from '../../api/monitor';
 import { useI18n } from '../../i18n/context';
@@ -57,13 +57,8 @@ export const ConnectionsPanel = memo(function ConnectionsPanel() {
   }, []);
 
   return (
-    <>
-      <div className="flex items-center gap-2 px-3 py-1 border-b border-border">
-        <Activity className="w-4 h-4 text-accent" />
-        <span className="text-sm font-medium">{t('Connections')}</span>
-        <span className="text-xs text-text-muted tabular-nums">({connections.length})</span>
-      </div>
-      <div className="h-full overflow-y-auto">
+    <div className="flex h-full flex-col">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {connections.length === 0 ? (
           <div className="h-full flex items-center justify-center text-sm text-text-muted">
             {t('No requests yet')}
@@ -130,7 +125,7 @@ export const ConnectionsPanel = memo(function ConnectionsPanel() {
           )}
         </Modal>
       )}
-    </>
+    </div>
   );
 });
 

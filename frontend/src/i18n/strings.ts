@@ -20,8 +20,8 @@ export const ZH: Record<string, string> = {
   'CPU': '处理器',
   'GPU': '显卡',
   'Core': '核心',
-  'PCIe Rate': 'PCIe 速率',
-  'PCIe Throughput': 'PCIe 吞吐',
+  'PCIe Rx': 'PCIe 下行',
+  'PCIe Tx': 'PCIe 上行',
 
   'Model Status': '模型状态',
   'Loading…': '加载中…',
@@ -199,7 +199,7 @@ export const ZH: Record<string, string> = {
   'Edit queued message': '编辑待发送',
   'Chat stats: {tokens} tokens · {secs}s · {tps} tok/s': '统计：{tokens} tokens · {secs}s · {tps} tok/s',
 
-  'Connections': '接入情况',
+  'Connections': '接入监控',
   'Requests': '请求数',
   'Last seen': '最后活跃',
   'Details': '详情',

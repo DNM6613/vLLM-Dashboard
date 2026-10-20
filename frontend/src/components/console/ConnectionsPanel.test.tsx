@@ -55,7 +55,8 @@ describe('ConnectionsPanel', () => {
     renderPanel();
     await screen.findByText('10.0.0.5');
     expect(screen.getByText('7')).toBeTruthy();
-    expect(screen.getByText('Connections')).toBeTruthy();
+    // No in-panel header title — the Console tab bar already labels the panel.
+    expect(screen.queryByText('Connections')).toBeNull();
   });
 
   it('opens the details modal with the IP\'s request content', async () => {

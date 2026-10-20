@@ -11,6 +11,16 @@ interface HardwareCardsProps {
   sshConnected: boolean;
 }
 
+// Theoretical unidirectional bandwidth per lane (MB/s) by PCIe generation
+// (128b/130b encoding) — the 100% reference for the Rx/Tx progress bars.
+const PCIE_MBS_PER_LANE: Record<number, number> = { 1: 250, 2: 500, 3: 985, 4: 1969, 5: 3938 };
+
+function pcieMaxMbs(gpu: GPUInfo): number {
+  const perLane = PCIE_MBS_PER_LANE[gpu.pcie_gen ?? 0] ?? 1969;
+  const lanes = gpu.pcie_width && gpu.pcie_width > 0 ? gpu.pcie_width : 8;
+  return perLane * lanes;
+}
+
 export const HardwareCards = memo(function HardwareCards({ sshConnected }: HardwareCardsProps) {
   const gpus = useHardwareStore(s => s.gpus);
   const cpu = useHardwareStore(s => s.cpu);
@@ -69,9 +79,14 @@ export const HardwareCards = memo(function HardwareCards({ sshConnected }: Hardw
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {displayGpus.map((gpu) => (
             <div key={gpu.index} className="bg-bg-card rounded-xl p-4 border border-border shadow-md">
-              <div className="mb-2">
-                <span className="text-sm font-medium">{t('GPU')}{gpu.index}</span>
-                <div className="text-xs text-text-muted mt-1">{gpu.name}</div>
+              <div className="mb-2 flex items-start justify-between">
+                <div>
+                  <span className="text-sm font-medium">{t('GPU')}{gpu.index}</span>
+                  <div className="text-xs text-text-muted mt-1">{gpu.name}</div>
+                </div>
+                {live && gpu.pcie_gen ? (
+                  <span className="font-mono text-xs whitespace-nowrap">{`Gen${gpu.pcie_gen} x${gpu.pcie_width ?? '—'}`}</span>
+                ) : null}
               </div>
               <div className="space-y-2 text-xs">
                 <div className="flex justify-between">
@@ -98,13 +113,15 @@ export const HardwareCards = memo(function HardwareCards({ sshConnected }: Hardw
                   color={live ? ((gpu.temperature_c ?? 0) < 60 ? 'bg-accent' : (gpu.temperature_c ?? 0) > 80 ? 'bg-danger' : 'bg-warning') : 'bg-border'}
                 />
                 <div className="flex justify-between">
-                  <span className="text-text-muted">{t('PCIe Rate')}</span>
-                  <span className="font-mono">{live && gpu.pcie_gen ? `Gen${gpu.pcie_gen} x${gpu.pcie_width ?? '—'}` : 'N/A'}</span>
+                  <span className="text-text-muted">{t('PCIe Rx')}</span>
+                  <span className="font-mono">{live && gpu.pcie_rx_mbs != null ? <AnimatedNumber value={gpu.pcie_rx_mbs} format={(v) => `${v.toFixed(0)} MB/s`} /> : 'N/A'}</span>
                 </div>
+                <ProgressBar value={live && gpu.pcie_rx_mbs != null ? (gpu.pcie_rx_mbs / pcieMaxMbs(gpu)) * 100 : 0} />
                 <div className="flex justify-between">
-                  <span className="text-text-muted">{t('PCIe Throughput')}</span>
-                  <span className="font-mono">{live && gpu.pcie_rx_mbs != null && gpu.pcie_tx_mbs != null ? `↓${gpu.pcie_rx_mbs} / ↑${gpu.pcie_tx_mbs} MB/s` : 'N/A'}</span>
+                  <span className="text-text-muted">{t('PCIe Tx')}</span>
+                  <span className="font-mono">{live && gpu.pcie_tx_mbs != null ? <AnimatedNumber value={gpu.pcie_tx_mbs} format={(v) => `${v.toFixed(0)} MB/s`} /> : 'N/A'}</span>
                 </div>
+                <ProgressBar value={live && gpu.pcie_tx_mbs != null ? (gpu.pcie_tx_mbs / pcieMaxMbs(gpu)) * 100 : 0} />
               </div>
             </div>
           ))}
