@@ -79,14 +79,18 @@ export const HardwareCards = memo(function HardwareCards({ sshConnected }: Hardw
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {displayGpus.map((gpu) => (
             <div key={gpu.index} className="bg-bg-card rounded-xl p-4 border border-border shadow-md">
-              <div className="mb-2 flex items-start justify-between">
-                <div>
+              <div className="mb-2">
+                {/* Badge shares only the GPU0 row (right-aligned); the name
+                    keeps the full card width below it — otherwise the
+                    nowrap badge squeezes the flex row and the name wraps
+                    even when it fits the card width. */}
+                <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">{t('GPU')}{gpu.index}</span>
-                  <div className="text-xs text-text-muted mt-1">{gpu.name}</div>
+                  {live && gpu.pcie_gen ? (
+                    <span className="font-mono text-xs whitespace-nowrap">{`Gen${gpu.pcie_gen} x${gpu.pcie_width ?? '—'}`}</span>
+                  ) : null}
                 </div>
-                {live && gpu.pcie_gen ? (
-                  <span className="font-mono text-xs whitespace-nowrap">{`Gen${gpu.pcie_gen} x${gpu.pcie_width ?? '—'}`}</span>
-                ) : null}
+                <div className="text-xs text-text-muted mt-1">{gpu.name}</div>
               </div>
               <div className="space-y-2 text-xs">
                 <div className="flex justify-between">
