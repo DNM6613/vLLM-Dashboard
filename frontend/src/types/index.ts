@@ -8,6 +8,10 @@ export interface GPUInfo {
   power_limit_w: number;
   utilization_gpu: number;
   utilization_memory: number;
+  pcie_gen?: number | null;
+  pcie_width?: number | null;
+  pcie_rx_mbs?: number | null;
+  pcie_tx_mbs?: number | null;
 }
 
 export interface CPUInfo {

@@ -20,6 +20,8 @@ export const ZH: Record<string, string> = {
   'CPU': '处理器',
   'GPU': '显卡',
   'Core': '核心',
+  'PCIe Rate': 'PCIe 速率',
+  'PCIe Throughput': 'PCIe 吞吐',
 
   'Model Status': '模型状态',
   'Loading…': '加载中…',
@@ -196,6 +198,18 @@ export const ZH: Record<string, string> = {
   'Remove from queue': '移除待发送',
   'Edit queued message': '编辑待发送',
   'Chat stats: {tokens} tokens · {secs}s · {tps} tok/s': '统计：{tokens} tokens · {secs}s · {tps} tok/s',
+
+  'Connections': '接入情况',
+  'Requests': '请求数',
+  'Last seen': '最后活跃',
+  'Details': '详情',
+  'Request details ({ip})': '请求详情（{ip}）',
+  'No requests yet': '暂无请求记录',
+  'Request body': '请求内容',
+  'Just now': '刚刚',
+  '{n}s ago': '{n} 秒前',
+  '{n}m ago': '{n} 分钟前',
+  '{n}h ago': '{n} 小时前',
 
   // Environment deployment module
   'Environment Deployment': '环境部署',

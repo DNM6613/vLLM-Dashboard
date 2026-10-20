@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Histogram
 
 from .config.settings import settings
+from .service.request_log import BODY_PREVIEW_CAP, request_log
 from .ws import ticket as ws_ticket
 
 load_dotenv()
@@ -108,6 +109,38 @@ async def request_id_metrics_middleware(request: Request, call_next):
     http_latency_seconds.labels(method=request.method, path=path).observe(elapsed)
     response.headers["X-Request-ID"] = request_id
     return response
+
+# --- Access log (接入情况面板) -------------------------------------------
+
+# The panel's own plumbing must not flood the log it serves.
+_MONITOR_PATH_PREFIX = "/api/v1/monitor/"
+_BODY_METHODS = ("POST", "PUT", "PATCH")
+
+
+def _sanitize_body(raw: bytes) -> str | None:
+    if not raw:
+        return None
+    text = raw[:BODY_PREVIEW_CAP].decode("utf-8", "replace")
+    return "".join(ch for ch in text if ch == "\n" or ch == "\t" or ch >= " ")
+
+
+async def request_log_middleware(request: Request, call_next):
+    path = request.url.path
+    if (request.method == "OPTIONS"
+            or not path.startswith("/api/v1")
+            or path.startswith(_MONITOR_PATH_PREFIX)):
+        return await call_next(request)
+    body_preview = None
+    if request.method in _BODY_METHODS:
+        try:
+            body_preview = _sanitize_body(await request.body())
+        except Exception:
+            body_preview = None
+    response = await call_next(request)
+    ip = request.client.host if request.client else "?"
+    request_log.record(ip, request.method, path, response.status_code, body_preview)
+    return response
+
 
 def _auth_enabled() -> bool:
     return bool(settings.API_KEY)

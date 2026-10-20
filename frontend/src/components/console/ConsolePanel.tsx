@@ -11,6 +11,7 @@ import { useI18n } from '../../i18n/context';
 import { getCurrentTheme, useTheme } from '../../hooks/useTheme';
 import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from '../../styles/terminalTheme';
 import { ChatTab } from './ChatTab';
+import { ConnectionsPanel } from './ConnectionsPanel';
 import type { ModelInfo } from '../../types';
 
 type ConsoleTab = 'console' | 'chat';
@@ -128,12 +129,18 @@ export const ConsolePanel = memo(function ConsolePanel({ models, onSendInput, on
         <TabButton active={tab === 'console'} onClick={() => setTab('console')} label={t('Console')} icon={<TerminalIcon className="w-4 h-4" />} />
         <TabButton active={tab === 'chat'} onClick={() => setTab('chat')} label={t('Chat')} icon={<MessageCircle className="w-4 h-4" />} />
       </div>
-      <div className="flex-1 min-h-0 h-[50vh] lg:h-auto p-4 bg-[rgb(var(--c-console))]">
-        <div className="h-full" style={tab === 'console' ? undefined : { display: 'none' }}>
-          <div ref={containerRef} className="h-full w-full flex items-center" />
+      {/* 3/4 content (console + chat) / 1/4 access log (接入情况) */}
+      <div className="flex-1 min-h-0 h-[64vh] lg:h-auto flex flex-col">
+        <div className="flex-[3] min-h-0 p-4 bg-[rgb(var(--c-console))]">
+          <div className="h-full" style={tab === 'console' ? undefined : { display: 'none' }}>
+            <div ref={containerRef} className="h-full w-full flex items-center" />
+          </div>
+          <div className="h-full" style={tab === 'chat' ? undefined : { display: 'none' }}>
+            <ChatTab models={models} />
+          </div>
         </div>
-        <div className="h-full" style={tab === 'chat' ? undefined : { display: 'none' }}>
-          <ChatTab models={models} />
+        <div className="flex-1 min-h-0 border-t border-border">
+          <ConnectionsPanel />
         </div>
       </div>
     </div>

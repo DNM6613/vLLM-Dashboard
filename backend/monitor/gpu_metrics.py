@@ -14,5 +14,9 @@ def map_nvidia_smi_gpus(raw_gpus: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "power_limit_w": int(gpu.get("power_limit", 0)),
             "utilization_gpu": gpu.get("utilization_gpu", 0),
             "utilization_memory": gpu.get("utilization_memory", 0),
+            "pcie_gen": gpu.get("pcie_gen"),
+            "pcie_width": gpu.get("pcie_width"),
+            "pcie_rx_mbs": gpu.get("pcie_rx_mbs"),
+            "pcie_tx_mbs": gpu.get("pcie_tx_mbs"),
         })
     return gpus

@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import shlex
 import threading
@@ -23,12 +24,22 @@ def _safe_float(s: str, default: float = 0.0) -> float:
     s = s.strip()
     return float(s) if s and s != "N/A" else default
 
+def _safe_opt_int(s: str) -> int | None:
+    s = s.strip()
+    return int(s) if s and s != "N/A" else None
+
 _NVSMI_CMD = (
     "nvidia-smi --query-gpu=index,name,memory.total,memory.used,"
     "memory.free,temperature.gpu,power.draw,power.limit,"
-    "utilization.gpu,utilization.memory --format=csv,noheader,nounits"
+    "utilization.gpu,utilization.memory,pcie.link.gen.current,"
+    "pcie.link.width.current --format=csv,noheader,nounits"
 )
 _SYSINFO_MARKER = "===VDB_SYSINFO==="
+_PCIE_MARKER = "===VDB_PCIE==="
+# Per-GPU PCIe Rx/Tx throughput (MB/s): dmon's transport sensor, single
+# cycle. `|| true` keeps the combined command green when the sensor is
+# unavailable (older driver) — the section simply parses to empty.
+_DMON_PCIE_CMD = "timeout 5 nvidia-smi dmon -s t -c 1 || true"
 
 _AWK_CPU_DIFF = (
     "BEGIN{n1=split(a,x,\" \");n2=split(b,y,\" \");"
@@ -63,21 +74,57 @@ def _parse_nvidia_smi_lines(stdout: str) -> list[dict]:
                         "power_draw": _safe_float(parts[6]),
                         "power_limit": _safe_float(parts[7]),
                         "utilization_gpu": _safe_int(parts[8]),
-                        "utilization_memory": _safe_int(parts[9])
+                        "utilization_memory": _safe_int(parts[9]),
+                        "pcie_gen": _safe_opt_int(parts[10]) if len(parts) > 10 else None,
+                        "pcie_width": _safe_opt_int(parts[11]) if len(parts) > 11 else None
                     })
                 except (ValueError, IndexError) as e:
                     logger.warning(f"Failed to parse nvidia-smi line: {line} ({e})")
     return gpus
 
+def _parse_dmon_pcie(lines: list[str]) -> dict[int, tuple[int, int]]:
+    """Parse `nvidia-smi dmon -s t -c 1` into {gpu_index: (rx_mbs, tx_mbs)}.
+
+    dmon prints `#`-prefixed header lines followed by whitespace-separated
+    `idx rx tx` rows (MB/s) — the same source Strata uses, no DCGM needed.
+    """
+    pcie: dict[int, tuple[int, int]] = {}
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) >= 3 and parts[0].isdigit():
+            with contextlib.suppress(ValueError, IndexError):
+                pcie[int(parts[0])] = (int(float(parts[1])), int(float(parts[2])))
+    return pcie
+
+def _attach_pcie_throughput(gpus: list[dict], pcie: dict[int, tuple[int, int]]) -> None:
+    for gpu in gpus:
+        rx, tx = pcie.get(gpu.get("index"), (None, None))
+        gpu["pcie_rx_mbs"] = rx
+        gpu["pcie_tx_mbs"] = tx
+
 class MonitorOps:
 
     def get_nvidia_smi(self) -> dict[str, Any]:
-        result = self.execute(_NVSMI_CMD)
+        cmd = f"{_NVSMI_CMD}; echo '{_PCIE_MARKER}'; {_DMON_PCIE_CMD}"
+        result = self.execute(cmd)
 
         if not result["success"]:
             return {"gpus": [], "error": result["stderr"]}
 
-        return {"gpus": _parse_nvidia_smi_lines(result["stdout"]), "error": None}
+        lines = result["stdout"].splitlines()
+        idx = next(
+            (i for i, ln in enumerate(lines) if ln.strip() == _PCIE_MARKER),
+            None)
+        if idx is None:
+            gpus = _parse_nvidia_smi_lines(result["stdout"])
+            _attach_pcie_throughput(gpus, {})
+        else:
+            gpus = _parse_nvidia_smi_lines("\n".join(lines[:idx]))
+            _attach_pcie_throughput(gpus, _parse_dmon_pcie(lines[idx + 1:]))
+        return {"gpus": gpus, "error": None}
 
     def get_system_info_combined(self) -> dict[str, Any]:
         result = self.execute(self._build_sysinfo_cmd())
@@ -143,6 +190,8 @@ class MonitorOps:
     def get_hardware_snapshot(self) -> dict[str, Any]:
         cmd = (
             f"{_NVSMI_CMD}; "
+            f"echo '{_PCIE_MARKER}'; "
+            f"{_DMON_PCIE_CMD}; "
             f"echo '{_SYSINFO_MARKER}'; "
             + self._build_sysinfo_cmd()
         )
@@ -157,12 +206,23 @@ class MonitorOps:
             (i for i, ln in enumerate(lines) if ln.strip() == _SYSINFO_MARKER),
             None)
         if idx is None:
+            gpus = _parse_nvidia_smi_lines(result["stdout"])
+            _attach_pcie_throughput(gpus, _parse_dmon_pcie(lines))
             return {
-                "gpus": _parse_nvidia_smi_lines(result["stdout"]),
+                "gpus": gpus,
                 "cpu": None, "memory": None, "disk": None,
                 "error": result["stderr"] or None,
             }
-        gpus = _parse_nvidia_smi_lines("\n".join(lines[:idx]))
+        top = lines[:idx]
+        pcie_idx = next(
+            (i for i, ln in enumerate(top) if ln.strip() == _PCIE_MARKER),
+            None)
+        if pcie_idx is None:
+            gpus = _parse_nvidia_smi_lines("\n".join(top))
+            _attach_pcie_throughput(gpus, {})
+        else:
+            gpus = _parse_nvidia_smi_lines("\n".join(top[:pcie_idx]))
+            _attach_pcie_throughput(gpus, _parse_dmon_pcie(top[pcie_idx + 1:]))
         sys_lines = [ln for ln in lines[idx + 1:] if ln.strip()]
         sysinfo = (
             self._parse_sysinfo(sys_lines[0])

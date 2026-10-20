@@ -19,6 +19,7 @@ from .api import (
     hardware_router,
     model_status_router,
     models_router,
+    monitor_router,
     server_config_router,
     ws_auth_router,
 )
@@ -31,6 +32,7 @@ from .middleware import (
     auth_middleware,
     http_exception_handler,
     request_id_metrics_middleware,
+    request_log_middleware,
     unhandled_exception_handler,
     validation_exception_handler,
 )
@@ -62,6 +64,8 @@ app = FastAPI(title="vLLM-Dashboard", version=__version__, lifespan=lifespan)
 
 app.middleware("http")(auth_middleware)
 app.middleware("http")(request_id_metrics_middleware)
+# Outermost: records every /api/v1 request (incl. 401s rejected by auth).
+app.middleware("http")(request_log_middleware)
 app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)
@@ -90,6 +94,7 @@ app.add_middleware(
 app.include_router(model_status_router)
 app.include_router(models_router)
 app.include_router(hardware_router)
+app.include_router(monitor_router)
 app.include_router(server_config_router)
 app.include_router(deployment_router)
 app.include_router(ws_auth_router)

@@ -97,6 +97,14 @@ export const HardwareCards = memo(function HardwareCards({ sshConnected }: Hardw
                   value={live ? ((gpu.temperature_c ?? 0) - 27) / (87 - 27) * 100 : 0}
                   color={live ? ((gpu.temperature_c ?? 0) < 60 ? 'bg-accent' : (gpu.temperature_c ?? 0) > 80 ? 'bg-danger' : 'bg-warning') : 'bg-border'}
                 />
+                <div className="flex justify-between">
+                  <span className="text-text-muted">{t('PCIe Rate')}</span>
+                  <span className="font-mono">{live && gpu.pcie_gen ? `Gen${gpu.pcie_gen} x${gpu.pcie_width ?? '—'}` : 'N/A'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-muted">{t('PCIe Throughput')}</span>
+                  <span className="font-mono">{live && gpu.pcie_rx_mbs != null && gpu.pcie_tx_mbs != null ? `↓${gpu.pcie_rx_mbs} / ↑${gpu.pcie_tx_mbs} MB/s` : 'N/A'}</span>
+                </div>
               </div>
             </div>
           ))}
