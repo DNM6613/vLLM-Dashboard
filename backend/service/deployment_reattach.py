@@ -14,7 +14,7 @@ import time
 from contextlib import suppress
 
 from . import deployment_service as _ds
-from .deployment_common import _now_iso
+from .deployment_common import _now_iso, tail_offset
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +41,19 @@ class ReattachMixin:
         def worker() -> None:
             try:
                 executor = _ds.get_remote_executor()
+                # Audit 2026-10-20 P3-1: `kill -0` alone misjudges a reused
+                # pid as live. Confirm the process is really our job by
+                # checking its /proc/<pid>/cmdline carries the job's log
+                # path (the wrapper writes `> .../vdb_deploy_<tid>.log.exit`,
+                # a superset of the log base name `B` below), so a recycled
+                # pid whose cmdline lacks it is not re-attached.
                 probe = executor.execute(
                     "for f in "
                     + " ".join(shlex.quote(job["pid"]) for _, job in candidates)
-                    + "; do if kill -0 \"$(cat \"$f\" 2>/dev/null)\" 2>/dev/null; "
-                      "then echo \"LIVE:$f\"; fi; done; echo DONE",
+                    + "; do P=$(cat \"$f\" 2>/dev/null); [ -n \"$P\" ] || continue; "
+                      "kill -0 \"$P\" 2>/dev/null || continue; "
+                      "B=${f%.log.pid}; tr '\\0' ' ' < \"/proc/$P/cmdline\" 2>/dev/null | "
+                      "grep -qF \"$B\" && echo \"LIVE:$f\"; done; echo DONE",
                     timeout=30)
             except Exception as e:
                 logger.warning("deploy reattach probe failed (staying interrupted): %s", e)
@@ -114,7 +122,7 @@ class ReattachMixin:
                 for line in content.splitlines():
                     if line.strip():
                         self.log(task.id, line)
-                offset += len(content.encode("utf-8"))
+                offset += tail_offset(content)
             if status.startswith("VDB_EXIT:"):
                 try:
                     code = int(status.split(":", 1)[1])
@@ -135,12 +143,22 @@ class ReattachMixin:
             time.sleep(2.5)
 
     def _finalize_reattached(self, task, code: int | None) -> None:
-        detail = f"exited with code {code}" if code is not None else "exited (unknown code)"
+        # Audit 2026-10-20 P2-5 (user ruling): the status stays "failed"
+        # (the pipeline's remaining steps did not run — calling it a
+        # success would mislead), but the message must not blur a cleanly
+        # finished remote step into a failure.
+        if code == 0:
+            detail = ("completed successfully (code 0) but the pipeline was "
+                      "not resumed — the remaining steps did not run")
+        elif code is not None:
+            detail = f"exited with code {code} and the pipeline was not resumed"
+        else:
+            detail = "exited (unknown code) and the pipeline was not resumed"
         with self._lock:
             task.status = "failed"
             task.error = (
-                f"Dashboard restarted mid-task; the remote step {detail} but the "
-                f"pipeline was not resumed — re-run the task"
+                f"Dashboard restarted mid-task; the remote step {detail} — "
+                f"re-run the task to finish"
             )
             task.suggestion = ""
             task.finished_at = _now_iso()

@@ -156,24 +156,10 @@ export const applyVllm = async (payload: VllmApplyPayload): Promise<{ status: st
   return response.data;
 };
 
-export const getTasks = async (limit = 30): Promise<DeployTask[]> => {
-  const response = await api.get(`/deployment/tasks?limit=${limit}`);
-  return response.data.tasks;
-};
-
-export const getTask = async (id: string): Promise<DeployTask> => {
-  const response = await api.get(`/deployment/tasks/${id}`);
-  return response.data;
-};
-
-export const getTaskLog = async (id: string, offset = 0): Promise<{ content: string; offset: number }> => {
-  const response = await api.get(`/deployment/tasks/${id}/log?offset=${offset}`);
-  return response.data;
-};
-
-export const cancelTask = async (id: string): Promise<void> => {
-  await api.post(`/deployment/tasks/${id}/cancel`);
-};
+// Audit 2026-10-20 P3-8 (user ruling): the task-center wrappers
+// (getTasks/getTask/getTaskLog/cancelTask) were deleted with their dead
+// backend endpoints — the task center UI is gone; in-flight task state is
+// surfaced via getDeployState().active_task instead.
 
 export const getDeployState = async (): Promise<DeployState> => {
   const response = await api.get('/deployment/state', { timeout: 60000 });

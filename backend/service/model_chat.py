@@ -13,6 +13,7 @@ it has begun.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -97,8 +98,17 @@ async def stream_chat(
     }
     url = f"{target.base_url}/v1/chat/completions"
     try:
+        # Audit 2026-10-20 P2-10: a bare float would set ALL of httpx's
+        # timeouts identically; make the semantics explicit — CHAT_TIMEOUT
+        # is the read bound (max gap between two SSE frames), connect/pool
+        # use the short API bound.
         async with client.stream("POST", url, json=payload, headers=target.headers,
-                                 timeout=_ms.settings.CHAT_TIMEOUT) as resp:
+                                 timeout=httpx.Timeout(
+                                     connect=_ms.settings.API_TIMEOUT,
+                                     read=_ms.settings.CHAT_TIMEOUT,
+                                     write=30.0,
+                                     pool=_ms.settings.API_TIMEOUT,
+                                 )) as resp:
             if resp.status_code >= 400:
                 body = await resp.aread()
                 detail = _vllm_error_detail(body)
@@ -108,6 +118,12 @@ async def stream_chat(
             async for line in resp.aiter_lines():
                 if line.startswith("data:"):
                     yield line + "\n\n"
+    except asyncio.CancelledError:
+        # Shutdown / client-gone race (audit 2026-10-20 P3-15): the
+        # consuming task was cancelled mid-stream (e.g. close_http_client
+        # at shutdown) — nobody is left to read an error frame, so end
+        # quietly instead of raising inside the response body.
+        return
     except httpx.HTTPError as e:
         logger.warning("chat: stream to vLLM failed: %s", e)
         yield _error_frame(f"vLLM 接口连接失败: {e}")

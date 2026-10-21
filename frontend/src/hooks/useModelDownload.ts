@@ -44,6 +44,10 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted, hfToken
   const [downloadStalledSecs, setDownloadStalledSecs] = useState<number | null>(null);
   const downloadRepoRef = useRef('');
   const cancelRequestedRef = useRef(false);
+  // Synchronous guard (audit 2026-10-20 P3-5): `downloading` is React state,
+  // so two clicks in the same frame both read it as false and fire two
+  // download requests; the ref closes that window.
+  const downloadInFlightRef = useRef(false);
   const [cliStatus, setCliStatus] = useState<CliStatus | null>(null);
   const [checkingCli, setCheckingCli] = useState(false);
   const [installingCli, setInstallingCli] = useState(false);
@@ -130,7 +134,7 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted, hfToken
   };
 
   const handleDownloadModel = async () => {
-    if (downloading) return;
+    if (downloadInFlightRef.current || downloading) return;
     if (!downloadModelName.trim()) return;
     const repoName = downloadModelName.trim();
     const savePathForDownload = downloadModelSavePath.trim();
@@ -144,6 +148,15 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted, hfToken
         return;
       }
     }
+    downloadInFlightRef.current = true;
+    try {
+      await _startDownload(repoName, savePathForDownload, hfMirror);
+    } finally {
+      downloadInFlightRef.current = false;
+    }
+  };
+
+  const _startDownload = async (repoName: string, savePathForDownload: string, hfMirror: boolean) => {
     downloadRepoRef.current = repoName;
     cancelRequestedRef.current = false;
     setDownloading(true);

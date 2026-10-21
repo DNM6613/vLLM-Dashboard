@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+import shlex
 from typing import Any
 
 from ..executor.remote.deployment_ops import UV_PATH_PREFIX
@@ -59,7 +60,10 @@ def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
     """Return (prepare_cmd, install_cmd)."""
     py_bin = f"{venv_path}/bin/python"
     mirror = (mirrors.get("pypi") or "").strip()
-    index_args = f"--index-url {mirror}" if mirror else ""
+    # Quoted (audit 2026-10-20 P2-3): the mirror is user input interpolated
+    # into a remote bash -c via run_long — a bare value could carry shell
+    # metacharacters (URL_RE is the outer gate, quoting is the inner one).
+    index_args = f"--index-url {shlex.quote(mirror)}" if mirror else ""
     py_version = (payload.get("python_version") or "").strip()
 
     if payload.get("env_mode") == "new":
@@ -146,17 +150,21 @@ def _build_supervisor_script(venv_path: str, task_id: str) -> str:
         "stdout_logfile=/var/log/vllm/vllm.log",
     )
     tmp = f"/tmp/vdb_vllm_conf_{task_id}"
+    # Audit 2026-10-20 P3-2: same cleanup fix as _build_cuda_env_script —
+    # the rm no longer depends on the cp/chmod chain succeeding, and the
+    # trailing test re-surfaces the chain's result.
     return (
         "sudo mkdir -p /var/log/vllm; "
         "printf '%s\\n' "
         + " ".join(f"'{line}'" for line in conf)
         + f" > {tmp} && "
         f"sudo cp {tmp} /etc/supervisor/conf.d/vllm-vdb.conf && "
-        f"sudo chmod 644 /etc/supervisor/conf.d/vllm-vdb.conf && "
-        f"rm -f {tmp}; "
+        f"sudo chmod 644 /etc/supervisor/conf.d/vllm-vdb.conf; "
+        f"vdb_ec=$?; rm -f {tmp}; "
         "if command -v supervisorctl >/dev/null 2>&1; then "
         "sudo supervisorctl reread && sudo supervisorctl update; "
-        "else echo 'supervisorctl not detected: template written only, configure manually'; fi"
+        "else echo 'supervisorctl not detected: template written only, configure manually'; fi; "
+        f"[ $vdb_ec -eq 0 ]"
     )
 
 
@@ -212,7 +220,7 @@ def _run_rollback_vllm(ctx: TaskContext, target_version: str, venv_path: str,
                        mirrors: dict[str, Any]) -> None:
     py_bin = f"{venv_path}/bin/python"
     mirror = (mirrors.get("pypi") or "").strip()
-    index_args = f"--index-url {mirror}" if mirror else ""
+    index_args = f"--index-url {shlex.quote(mirror)}" if mirror else ""
     with ctx.step(0):
         stop = ctx.executor.stop_vllm(force=False)
         if stop.get("success"):

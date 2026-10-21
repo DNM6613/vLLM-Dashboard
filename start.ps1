@@ -26,7 +26,10 @@ function Test-IsDashboardProc([int]$procId) {
     $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $procId" -ErrorAction SilentlyContinue
     if (-not $proc) { return $false }
     $cmd = [string]$proc.CommandLine
-    return ($cmd -like '*backend.main:app*') -or ($cmd -like '*' + $PSScriptRoot + '*vite*')
+    # Third fallback mirrors start.sh's is_ours (audit 2026-10-20 P3-13):
+    # a vite dev server whose command line carries the project directory
+    # name (covers launches started from a different cwd).
+    return ($cmd -like '*backend.main:app*') -or ($cmd -like '*' + $PSScriptRoot + '*vite*') -or ($cmd -like '*vLLM-Dashboard*vite*')
 }
 
 Write-Host ""

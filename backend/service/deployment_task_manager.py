@@ -155,6 +155,15 @@ class DeploymentTaskManager(ReattachMixin):
                           if t.kind == "driver" and t.status == "awaiting_reboot"]
         return max(candidates, key=lambda t: t.created_at) if candidates else None
 
+    def inflight_task(self, kind: str) -> Task | None:
+        """Newest queued/running task of this kind (duplicate-trigger guard,
+        audit 2026-10-20 P2-6): double-clicking "apply" used to spawn two
+        parallel pipelines fighting over apt/uv locks."""
+        with self._lock:
+            candidates = [t for t in self._tasks.values()
+                          if t.kind == kind and t.status in ("queued", "running")]
+        return max(candidates, key=lambda t: t.created_at) if candidates else None
+
     def cancel(self, task_id: str) -> bool:
         with self._lock:
             task = self._tasks.get(task_id)

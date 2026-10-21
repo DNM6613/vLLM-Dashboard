@@ -11,7 +11,12 @@ from contextlib import contextmanager, suppress
 from typing import Any
 
 from . import deployment_service as _ds
-from .deployment_common import DeploymentError, TaskCancelled, _now_iso
+from .deployment_common import (
+    DeploymentError,
+    TaskCancelled,
+    _now_iso,
+    tail_offset,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +153,14 @@ class TaskContext:
         an exit file; polling reads the log incrementally every 2.5s.
         """
         self.check_cancelled()
+        # The SSH password reaches the remote shell line-based
+        # (`read -r VDB_PW`): a newline inside it would be truncated and
+        # silently break the sudo step (audit 2026-10-20 P3-16).
+        password = self.executor.password or ""
+        if "\n" in password or "\r" in password:
+            raise DeploymentError(
+                "SSH password must not contain newlines (it is delivered "
+                "line-based to the remote shell)")
         self.sudo("true", timeout=20)  # probe mode + refresh timestamp
 
         tid = self.task.id
@@ -211,6 +224,9 @@ class TaskContext:
                     self.manager._persist_locked()
                 raise
             if time.monotonic() > deadline:
+                # Kill the remote job too (audit 2026-10-20 P2-4): the nohup
+                # process would keep holding dpkg locks and fail re-runs.
+                self.manager._kill_long(self.task.id, pid_file)
                 self._cleanup_long(pw_file, log_file, pid_file, exit_file)
                 raise DeploymentError(f"Step timed out after {timeout}s")
             time.sleep(2.5)
@@ -229,7 +245,7 @@ class TaskContext:
                 for line in content.splitlines():
                     if line.strip():
                         self.log(line)
-                offset += len(content.encode("utf-8"))
+                offset += tail_offset(content)
 
             if status.startswith("VDB_EXIT:"):
                 try:

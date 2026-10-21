@@ -161,26 +161,32 @@ async def _attempt_restart(model_id: str) -> None:
         return
     if model_id in _suspended or model_id in _inflight:
         return
-    # P2-1 guard (audit 2026-10-17): after a dashboard restart the in-memory
-    # status is the coerced STOPPED, so start_model's 409 check cannot see a
-    # live remote. Probe first — under the single-lock design any vLLM
-    # process on the remote is ours; if it is still alive, keep the event
-    # (the tick's sync reconciles the status and clears it) and do not
-    # re-deliver the start command (which may carry cleanup/kill logic).
-    try:
-        config = _ms.config_manager.get_config()
-        target = _ms.resolve_api_target(config)
-        present = await _ms._check_vllm_present_strict(config.host, target.port)
-    except Exception as e:
-        logger.warning(f"Model lock watchdog: presence probe failed for {model_id}: {e}")
-        present = None
-    if present is True:
-        logger.info(
-            f"Model lock watchdog: {model_id} still has a vLLM process on the "
-            f"remote — skipping auto-start until sync reconciles the status")
-        return
+    # Claim BEFORE any await (audit 2026-10-20 P1-2): the 10 s delayed
+    # restart task and the 30 s tick can enter the same model concurrently;
+    # a check-then-add that straddles the presence probe's awaits lets the
+    # second attempt through, and its 409 used to wipe the breaker count
+    # (incident 2026-10-17 10:15, concurrent-409 variant).
     _inflight.add(model_id)
     try:
+        # P2-1 guard (audit 2026-10-17): after a dashboard restart the
+        # in-memory status is the coerced STOPPED, so start_model's 409
+        # check cannot see a live remote. Probe first — under the
+        # single-lock design any vLLM process on the remote is ours; if it
+        # is still alive, keep the event (the tick's sync reconciles the
+        # status and clears it) and do not re-deliver the start command
+        # (which may carry cleanup/kill logic).
+        try:
+            config = _ms.config_manager.get_config()
+            target = _ms.resolve_api_target(config)
+            present = await _ms._check_vllm_present_strict(config.host, target.port)
+        except Exception as e:
+            logger.warning(f"Model lock watchdog: presence probe failed for {model_id}: {e}")
+            present = None
+        if present is True:
+            logger.info(
+                f"Model lock watchdog: {model_id} still has a vLLM process on the "
+                f"remote — skipping auto-start until sync reconciles the status")
+            return
         result = await _ms.start_model(model_id)
         logger.info(f"Model lock watchdog: auto-restarted locked model {model_id}")
         try:
@@ -193,7 +199,18 @@ async def _attempt_restart(model_id: str) -> None:
                 f"{model_id}: {e}")
     except HTTPException as e:
         if e.status_code == 409:
-            _clear(model_id)
+            # Distinguish WHO is blocking the start (audit 2026-10-20 P1-2):
+            # an in-flight attempt (a manual start, or our own pre-fix
+            # race) is NOT recovery — clearing here would wipe the breaker
+            # count every flap cycle. Only an externally recovered model
+            # (RUNNING) clears the history.
+            other = state_machine.get_model(model_id)
+            if other is not None and other.status is ModelStatus.LOADING:
+                logger.info(
+                    f"Model lock watchdog: {model_id} start conflicted with an "
+                    f"in-flight attempt — keeping crash history")
+            else:
+                _clear(model_id)
         elif e.status_code == 400 and "Start command" in str(e.detail):
             state_machine.update_model_status(
                 model_id, ModelStatus.FAILED, error_message=NO_START_COMMAND_MESSAGE)

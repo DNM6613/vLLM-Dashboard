@@ -799,6 +799,21 @@ class TestBuildVllmInstallCommands(unittest.TestCase):
             self.assertIn("uv pip install --python $HOME/.vllm/bin/python vllm", install)
             self.assertNotIn("torch", install)
 
+    def test_pypi_mirror_is_shell_quoted(self):
+        # Audit 2026-10-20 P2-3: the mirror is user input interpolated into
+        # a remote bash -c — a value carrying shell metacharacters must be
+        # quoted (URL_RE is the outer gate, shlex.quote the inner one).
+        base = {"env_mode": "existing", "venv_name": ".vllm",
+                "version": "latest", "runtime_mode": "builtin"}
+        clean = "https://mirrors.aliyun.com/pypi/simple/"
+        _, install = ds._build_vllm_install_commands(
+            base, "$HOME/.vllm", {"pypi": clean})
+        self.assertIn(f"--index-url {clean}", install)
+        evil = "https://pypi.example/simple/;reboot"
+        _, install = ds._build_vllm_install_commands(
+            base, "$HOME/.vllm", {"pypi": evil})
+        self.assertIn(f"--index-url '{evil}'", install)
+
 
 class TestProbeInThread(unittest.TestCase):
     """Wall-clock guard: a blocked SSH probe must surface as HTTP 504.
@@ -827,8 +842,8 @@ class TestDriverReconcileTimer(unittest.TestCase):
     """The task center was removed from the home page, so the post-reboot
     driver verification no longer rides the 3 s /tasks poll. A background
     timer (``driver_reconcile_timer``, started in the app lifespan) now
-    ticks ``reconcile_driver_task`` on its own, and ``/tasks`` is a plain
-    data read with no reconcile side effect."""
+    ticks ``reconcile_driver_task`` on its own. The /tasks endpoints were
+    deleted entirely (audit 2026-10-20 P3-8, user ruling)."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -864,17 +879,6 @@ class TestDriverReconcileTimer(unittest.TestCase):
                        "target_major": 615}
         return task
 
-    def _get_tasks(self, executor) -> dict:
-        from fastapi.testclient import TestClient
-
-        import backend.service.deployment_entry as entry
-        from backend.main import app
-        with patch.object(entry, "get_remote_executor", return_value=executor):
-            client = TestClient(app)
-            resp = client.get("/api/v1/deployment/tasks")
-        self.assertEqual(resp.status_code, 200)
-        return resp.json()
-
     def test_timer_tick_completes_rebooted_driver_task(self):
         import backend.service.deployment_entry as entry
         import backend.service.driver_reconcile_timer as timer
@@ -888,16 +892,6 @@ class TestDriverReconcileTimer(unittest.TestCase):
         self.assertEqual(task.status, "success")
         self.assertTrue(task.finished_at)
         self.assertIn("Reboot verified", "\n".join(self.mgr.tail(task.id)))
-
-    def test_tasks_endpoint_is_plain_read(self):
-        # /tasks no longer probes the host or reconciles — the background
-        # timer owns that. Reading the list must not move the task.
-        task = self._pending_driver_task()
-        executor = MagicMock()
-        body = self._get_tasks(executor)
-        executor.execute.assert_not_called()
-        statuses = {t["id"]: t["status"] for t in body["tasks"]}
-        self.assertEqual(statuses[task.id], "awaiting_reboot")
 
     def test_timer_skips_when_no_pending_driver_task(self):
         import backend.service.deployment_entry as entry
@@ -957,6 +951,160 @@ class TestNoHeredocStepScripts(unittest.TestCase):
         self.assertLess(prepare.index("exit 1"), prepare.index("uv venv"))
         # --clear would wipe a venv the running model may live in
         self.assertNotIn("--clear", prepare)
+
+
+class TestReattachFinalize(unittest.TestCase):
+    """audit 2026-10-20 P2-5 (user ruling): a reattached remote step that
+    exited cleanly (code 0) still leaves the task failed — the pipeline's
+    remaining steps never ran — but the message must say the step itself
+    succeeded instead of blurring it into a failure."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._files = patch.multiple(
+            ds,
+            STATE_FILE=os.path.join(self.tmp.name, "state.json"),
+            TASKS_FILE=os.path.join(self.tmp.name, "tasks.json"),
+            DATA_DIR=self.tmp.name,
+            LOG_DIR=os.path.join(self.tmp.name, "logs"),
+        )
+        self._files.start()
+        self.mgr = ds.DeploymentTaskManager()
+        self.state = MagicMock()
+        self.state.get.return_value = ds._default_state()
+        self._tm = patch.object(ds, "task_manager", self.mgr)
+        self._st = patch.object(ds, "deployment_state", self.state)
+        self._tm.start()
+        self._st.start()
+
+    def tearDown(self):
+        self._st.stop()
+        self._tm.stop()
+        self._files.stop()
+        self.tmp.cleanup()
+
+    def _task(self):
+        task = self.mgr.create("vllm", "Install vLLM 0.9", ["s1", "s2"])
+        task.status = "running"
+        task.result = {"job_files": {"log": "/tmp/x.log", "pid": "/tmp/x.pid",
+                                     "exit": "/tmp/x.exit"}}
+        return task
+
+    def test_code_zero_keeps_failed_but_says_step_succeeded(self):
+        task = self._task()
+        self.mgr._finalize_reattached(task, 0)
+        self.assertEqual(task.status, "failed")
+        self.assertIn("completed successfully (code 0)", task.error)
+        self.assertIn("remaining steps did not run", task.error)
+        self.assertTrue(task.finished_at)
+        self.assertNotIn("job_files", task.result)
+        self.state.push_history.assert_called_once()
+
+    def test_nonzero_code_shows_the_exit_code(self):
+        task = self._task()
+        self.mgr._finalize_reattached(task, 3)
+        self.assertEqual(task.status, "failed")
+        self.assertIn("exited with code 3", task.error)
+        self.assertNotIn("completed successfully", task.error)
+
+    def test_unknown_code_is_labeled(self):
+        task = self._task()
+        self.mgr._finalize_reattached(task, None)
+        self.assertEqual(task.status, "failed")
+        self.assertIn("unknown code", task.error)
+
+
+class TestInflightGuard(unittest.TestCase):
+    """audit 2026-10-20 P2-6: a second pipeline of the same kind while one
+    is in flight must be rejected immediately, before any SSH round-trip
+    (a double-clicked "apply" used to spawn two parallel pipelines fighting
+    over apt/uv locks)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._files = patch.multiple(
+            ds,
+            STATE_FILE=os.path.join(self.tmp.name, "state.json"),
+            TASKS_FILE=os.path.join(self.tmp.name, "tasks.json"),
+            DATA_DIR=self.tmp.name,
+            LOG_DIR=os.path.join(self.tmp.name, "logs"),
+        )
+        self._files.start()
+        self.mgr = ds.DeploymentTaskManager()
+        self.state = MagicMock()
+        self.state.get.return_value = ds._default_state()
+        self._tm = patch.object(ds, "task_manager", self.mgr)
+        self._st = patch.object(ds, "deployment_state", self.state)
+        self._tm.start()
+        self._st.start()
+        import backend.service.deployment_entry as entry
+        self.entry = entry
+        cfg = MagicMock()
+        cfg.host = "10.131.1.7"
+        self._cfg = patch.object(entry.config_manager, "get_config", return_value=cfg)
+        self._cfg.start()
+        # defensive: if the guard is misplaced, the entry would fall through
+        # to a REAL SSH executor — keep the mock in place so the test can
+        # never touch the network.
+        self._exec = patch.object(entry, "get_remote_executor", return_value=MagicMock())
+        self._exec.start()
+
+    def tearDown(self):
+        self._exec.stop()
+        self._cfg.stop()
+        self._st.stop()
+        self._tm.stop()
+        self._files.stop()
+        self.tmp.cleanup()
+
+    def _seed_running(self, kind: str) -> None:
+        task = self.mgr.create(kind, f"{kind} seed", ["s1"])
+        task.status = "running"
+
+    def test_driver_guard_rejects_second_start(self):
+        self._seed_running("driver")
+        from backend.service.deployment_common import DeploymentError
+        with self.assertRaises(DeploymentError) as cm:
+            self.entry.start_driver_task("nvidia-driver-580")
+        self.assertIn("already in progress", str(cm.exception))
+        self.assertEqual(len(self.mgr.list()), 1)  # no second task created
+
+    def test_vllm_guard_rejects_second_start(self):
+        self._seed_running("vllm")
+        from backend.service.deployment_common import DeploymentError
+        with self.assertRaises(DeploymentError) as cm:
+            self.entry.start_vllm_task(
+                {"version": "latest", "runtime_mode": "builtin", "env_mode": "new"})
+        self.assertIn("already in progress", str(cm.exception))
+
+    def test_cuda_guard_rejects_second_start(self):
+        self._seed_running("cuda")
+        from backend.service.deployment_common import DeploymentError
+        with self.assertRaises(DeploymentError) as cm:
+            self.entry.start_cuda_task("12.9", True)
+        self.assertIn("already in progress", str(cm.exception))
+
+    def test_rollback_vllm_guard_rejects_second_start(self):
+        self._seed_running("rollback_vllm")
+        from backend.service.deployment_common import DeploymentError
+        with self.assertRaises(DeploymentError) as cm:
+            self.entry.start_rollback_vllm()
+        self.assertIn("already in progress", str(cm.exception))
+
+    def test_guard_passes_with_no_inflight_task(self):
+        # no task of the kind → the guard is silent
+        self.entry._reject_inflight("vllm")
+
+    def test_terminal_task_does_not_block_new_start(self):
+        # finished (success/failed/cancelled) tasks must not block a new
+        # pipeline of the same kind — the guard covers queued/running only.
+        task = self.mgr.create("vllm", "done seed", ["s1"])
+        task.status = "success"
+        self.entry._reject_inflight("vllm")
+        task.status = "failed"
+        self.entry._reject_inflight("vllm")
+        task.status = "awaiting_reboot"
+        self.entry._reject_inflight("driver")
 
 
 if __name__ == "__main__":

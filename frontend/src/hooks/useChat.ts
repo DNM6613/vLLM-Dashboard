@@ -53,7 +53,13 @@ export function useChat() {
   }, [updateEntries]);
 
   const stop = useCallback(() => {
+    // Stop = stop everything (audit 2026-10-20 P2-16, user ruling): abort
+    // the in-flight generation AND clear the queue — the FIFO drain loop
+    // reads queueRef, so an emptied queue ends the chain instead of
+    // continuing to send queued messages one by one.
     abortRef.current?.abort();
+    queueRef.current = [];
+    setQueue([]);
   }, []);
 
   const clear = useCallback(() => {

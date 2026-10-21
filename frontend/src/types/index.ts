@@ -223,6 +223,11 @@ export interface HardwareStore {
   memory: MemoryInfo | null;
   disk: DiskInfo | null;
   software: SoftwareInfo | null;
+  // Audit 2026-10-20 P3-7: WS link state — when the hardware WS is down
+  // (SSH still up) the GPU cards keep showing stale data; the header dot
+  // tells the user the numbers are no longer live.
+  hwWsConnected: boolean;
+  setHwWsConnected: (v: boolean) => void;
   addMetrics: (payload: MetricsPayload) => void;
   fetchHardwareMetrics: () => Promise<void>;
   fetchSoftware: () => Promise<void>;

@@ -68,24 +68,30 @@ def build_ssh_client(
     # Target is a user-configured trusted internal host; strict host-key
     # verification is opt-in via settings.SSH_STRICT_HOST_KEY.
     sock = socket.create_connection((host, port), timeout=connect_timeout)
-    sock.settimeout(None)
+    # Keep the socket timeout through the SSH handshake: a half-dead sshd
+    # (TCP up but no protocol banner) would otherwise block the handshake —
+    # and every caller of build_ssh_client, incl. the watchdog's start path —
+    # indefinitely (audit 2026-10-20 P1-3). Command I/O after connect is
+    # bounded per-command by the executor's read deadline.
     configure_tcp_keepalive(sock)
-
-    if settings.SSH_STRICT_HOST_KEY:
-        known_hosts = _known_hosts_path()
-        os.makedirs(os.path.dirname(known_hosts), exist_ok=True)
-        if not os.path.exists(known_hosts):
-            with open(known_hosts, "a"):
-                pass
-            with contextlib.suppress(OSError):
-                os.chmod(known_hosts, 0o600)
-        with _KNOWN_HOSTS_LOCK:
-            client.load_host_keys(known_hosts)
-            client.set_missing_host_key_policy(_RecordingHostKeyPolicy())
+    try:
+        if settings.SSH_STRICT_HOST_KEY:
+            known_hosts = _known_hosts_path()
+            os.makedirs(os.path.dirname(known_hosts), exist_ok=True)
+            if not os.path.exists(known_hosts):
+                with open(known_hosts, "a"):
+                    pass
+                with contextlib.suppress(OSError):
+                    os.chmod(known_hosts, 0o600)
+            with _KNOWN_HOSTS_LOCK:
+                client.load_host_keys(known_hosts)
+                client.set_missing_host_key_policy(_RecordingHostKeyPolicy())
+                _ssh_handshake(client, host, port, username, password, key_path, sock)
+        else:
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # noqa: S507
             _ssh_handshake(client, host, port, username, password, key_path, sock)
-    else:
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # noqa: S507
-        _ssh_handshake(client, host, port, username, password, key_path, sock)
+    finally:
+        sock.settimeout(None)
 
     try:
         transport = client.get_transport()

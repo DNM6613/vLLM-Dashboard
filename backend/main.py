@@ -28,6 +28,7 @@ from .config.settings import settings
 from .console.session_manager import console_session_manager, websocket_console
 from .middleware import (
     _error_response,
+    _RedactApiKeyFilter,
     _RequestIdLogFilter,
     auth_middleware,
     http_exception_handler,
@@ -70,9 +71,12 @@ app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)
 
+# Production is the single 5174 container (statics served by the backend;
+# there is no vite dev server in the container). The 5173 dev origins were
+# leftover dev-proxy entries (audit 2026-10-20 P3-13); dev machines running
+# the vite proxy flow talk same-origin and need no CORS entry — set
+# VLLM_DASHBOARD_CORS_ALL if a custom dev origin ever becomes necessary.
 _cors_origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
     "http://localhost:5174",
     "http://127.0.0.1:5174",
 ]
@@ -145,6 +149,10 @@ def main():
         format="%(asctime)s [%(levelname)s] %(name)s [%(request_id)s]: %(message)s")
     for _handler in logging.getLogger().handlers:
         _handler.addFilter(_RequestIdLogFilter())
+        # Audit 2026-10-20 P2-12: uvicorn's log_config reconfigures only the
+        # uvicorn.* loggers — backend.* records still flow through this root
+        # handler, so it must redact api_key=/ticket= like the uvicorn side.
+        _handler.addFilter(_RedactApiKeyFilter())
     logger.info("Starting vLLM-Dashboard API Server")
 
     uvicorn.run(

@@ -41,7 +41,17 @@ CUDA_VER_RE = re.compile(r"^\d{1,2}\.\d{1,2}$")
 VLLM_VER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 VENV_NAME_RE = re.compile(r"^[\w./\-~]{1,128}$")
 PY_VER_RE = re.compile(r"^\d+\.\d{1,2}$")
-URL_RE = re.compile(r"^https?://[\w.\-]+(?::\d+)?(/\S*)?$")
+# Mirror URL whitelist (audit 2026-10-20 P2-3): the old ``(/\S*)?`` path tail
+# admitted shell metacharacters — ``https://pypi.org/simple/;reboot`` passed
+# the "whitelist" and was then interpolated unquoted into a remote
+# ``bash -c``. Path segments are now restricted to unreserved characters;
+# an optional query (enterprise artifactory URLs) may use the usual query
+# charset. Interpolation is additionally shlex.quote'd at the pipeline sites.
+URL_RE = re.compile(
+    r"^https?://[\w.\-]+(?::\d+)?"
+    r"(?:/[\w.\-~]+)*/?"
+    r"(\?[^\\s]*)?$"
+)
 
 TASK_STATUSES = ("queued", "running", "success", "failed",
                  "cancelled", "awaiting_reboot", "interrupted")
@@ -58,6 +68,18 @@ class TaskCancelled(Exception):
 
 def _now_iso() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def tail_offset(content: str) -> int:
+    """Byte advance for a ``tail -c +N`` cursor over decoded output.
+
+    The poll decodes with a replace fallback (audit 2026-10-20 P2-7): a read
+    boundary that split a multibyte character yields U+FFFD, which re-encodes
+    to 3 bytes for 1 raw byte. Subtracting the excess keeps the byte cursor
+    exact (a plain ``len(content.encode("utf-8"))`` would skip bytes and
+    re-trip the boundary on every poll).
+    """
+    return len(content.encode("utf-8")) - 2 * content.count("\ufffd")
 
 
 def _major_driver_version(version: str) -> int | None:

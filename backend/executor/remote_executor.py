@@ -3,6 +3,8 @@ import logging
 import re
 import shlex
 import subprocess
+import threading
+import time
 from typing import Any
 
 from ..config.server_config import has_parent_path_segment
@@ -18,6 +20,37 @@ from .remote.ssh import ChannelOpenFailure, ssh_pool
 logger = logging.getLogger(__name__)
 
 _SHELL_META_PATTERN = re.compile(r'[|;&<>`]|\$\(|\$\{')
+
+
+def _read_and_wait_bounded(stdout, stderr, deadline: float) -> tuple[bytes, bytes, int]:
+    """Read a command's stdout/stderr to EOF and its exit status under a
+    wall-clock ``deadline``.
+
+    The executor's per-command timeout only bounds opening the SSH channel —
+    ``stdout.read()`` is unbounded, so a half-dead remote (sshd up but silent)
+    can pin this worker thread forever (audit 2026-10-20 P1-3/P1-4: the
+    watchdog self-heal chain and the deployment task threads die silently).
+    On expiry the caller raises TimeoutError and closes the channel; the
+    abandoned reader thread wakes on the close and exits.
+    """
+    box: dict[str, Any] = {}
+
+    def _reader() -> None:
+        try:
+            box["out"] = stdout.read()
+            box["err"] = stderr.read()
+            box["rc"] = stdout.channel.recv_exit_status()
+        except BaseException as e:  # surfaced to the caller below
+            box["error"] = e
+
+    t = threading.Thread(target=_reader, daemon=True)
+    t.start()
+    t.join(max(0.0, deadline - time.monotonic()))
+    if t.is_alive():
+        raise TimeoutError("SSH output read exceeded wall-clock bound")
+    if "error" in box:
+        raise box["error"]
+    return box.get("out", b""), box.get("err", b""), box.get("rc", -1)
 
 def get_remote_executor() -> "RemoteExecutor":
     from ..config.remote_client import config_manager
@@ -144,12 +177,25 @@ class RemoteExecutor(MonitorOps, ProcessOps, PowerOps, CliOps, ModelOps, Deploym
                 _stdin.write(stdin_data.encode("utf-8"))
                 _stdin.close()
             try:
-                stdout_text = stdout.read().decode('utf-8')
-                stderr_text = stderr.read().decode('utf-8')
-                returncode = stdout.channel.recv_exit_status()
+                # Wall-clock bound on the read phase (audit 2026-10-20
+                # P1-3/P1-4): a half-dead sshd must not pin this worker
+                # thread — on expiry TimeoutError propagates to _exec_remote.
+                stdout_raw, stderr_raw, returncode = _read_and_wait_bounded(
+                    stdout, stderr, time.monotonic() + actual_timeout)
             finally:
                 with contextlib.suppress(Exception):
                     stdout.channel.close()
+            try:
+                stdout_text = stdout_raw.decode('utf-8')
+                stderr_text = stderr_raw.decode('utf-8')
+            except UnicodeDecodeError:
+                # A read boundary split a multibyte character (or the remote
+                # emitted invalid UTF-8): replace instead of failing, so the
+                # run_long tail cursor advances and the task keeps streaming
+                # instead of stalling on one half-character forever
+                # (audit 2026-10-20 P2-7).
+                stdout_text = stdout_raw.decode('utf-8', errors="replace")
+                stderr_text = stderr_raw.decode('utf-8', errors="replace")
             return stdout_text, stderr_text, returncode
         except ChannelOpenFailure:
             raise

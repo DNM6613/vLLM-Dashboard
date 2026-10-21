@@ -98,6 +98,21 @@ class TestMonitorEndpointsAndMiddleware(unittest.TestCase):
         rows = rl.request_log.requests_for(self.client_ip(), limit=10)
         self.assertTrue(any("hello" in (e["body"] or "") for e in rows))
 
+    def test_config_server_credential_body_not_captured(self):
+        # Audit 2026-10-20 P2-1: the server-config body carries 4 plaintext
+        # credential fields and must NOT enter the log that
+        # /api/v1/monitor/requests returns verbatim. The entry is still
+        # recorded — with body=None.
+        self.client.post(
+            "/api/v1/config/server",
+            json={"host": "1.2.3.4", "ssh_password": "hunter2-secret"})
+        rows = rl.request_log.requests_for(self.client_ip(), limit=10)
+        entries = [e for e in rows if e["path"] == "/api/v1/config/server"]
+        self.assertTrue(entries)
+        self.assertTrue(all(e["body"] is None for e in entries))
+        self.assertFalse(
+            any("hunter2-secret" in (e["body"] or "") for e in rows))
+
     def test_monitor_and_non_api_paths_not_recorded(self):
         self.client.get("/health")
         self.client.get("/api/v1/monitor/connections")
@@ -115,3 +130,40 @@ class TestMonitorEndpointsAndMiddleware(unittest.TestCase):
     @staticmethod
     def client_ip() -> str:
         return "testclient"
+
+
+class TestNormalizeMetricPath(unittest.TestCase):
+    """Audit 2026-10-20 P2-2: unmatched /api/ or /assets/ paths must be
+    bucketed into a fixed label set — a raw (or first-4-segment) label is
+    unbounded and a crafted-request loop can OOM the dashboard."""
+
+    @staticmethod
+    def _req(path: str):
+        from starlette.requests import Request
+        # Minimal scope: starlette's URL property needs the headers key.
+        return Request({
+            "type": "http", "method": "GET", "path": path,
+            "headers": [], "query_string": b"",
+        })
+
+    def test_unmatched_api_path_bucketed(self):
+        from backend.middleware import _normalize_metric_path
+        self.assertEqual(
+            _normalize_metric_path(self._req("/api/v1/does/not/exist")),
+            "/api/...")
+
+    def test_unmatched_assets_path_bucketed(self):
+        from backend.middleware import _normalize_metric_path
+        self.assertEqual(
+            _normalize_metric_path(self._req("/assets/garbage-abc123.js")),
+            "/assets/...")
+
+    def test_matched_route_uses_route_path(self):
+        from backend.middleware import _normalize_metric_path
+
+        class _Route:
+            path = "/api/v1/{model_id:path}"
+
+        req = self._req("/api/v1/some/model")
+        req.scope["route"] = _Route()
+        self.assertEqual(_normalize_metric_path(req), "/api/v1/{model_id:path}")

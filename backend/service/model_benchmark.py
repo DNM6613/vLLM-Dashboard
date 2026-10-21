@@ -215,6 +215,12 @@ async def benchmark_model(model_id: str) -> dict:
             else:
                 raise HTTPException(status_code=502,
                                     detail=f"测速请求失败: {e}") from e
+        except asyncio.CancelledError:
+            # Shutdown race (audit 2026-10-20 P3-15): the request task was
+            # cancelled while the vLLM call was in flight. The finally
+            # below still releases the single-flight key; re-raise so the
+            # cancellation is preserved instead of masked as a 502.
+            raise
         except httpx.HTTPError as e:
             raise HTTPException(status_code=502,
                                 detail=f"测速请求失败: {e}") from e

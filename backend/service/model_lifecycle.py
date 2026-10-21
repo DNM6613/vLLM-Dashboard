@@ -104,8 +104,19 @@ async def _verify_start_probe(model_id: str, api_host: str, api_port: int) -> No
         return
     present = await _ms._check_vllm_present_strict(api_host, api_port)
     if present is False:
+        # A slow cold start (the console PTY delivers the start command late,
+        # or the process takes a moment to spawn) can miss the first probe;
+        # re-check once before declaring a crash, so a slow start does not
+        # burn a spurious crash event toward the watchdog breaker
+        # (audit 2026-10-20 P2-9).
+        await asyncio.sleep(_ms._START_PROBE_DELAY)
+        model = _ms.state_machine.get_model(model_id)
+        if not model or model.status != ModelStatus.LOADING:
+            return
+        present = await _ms._check_vllm_present_strict(api_host, api_port)
+    if present is False:
         logger.warning(
-            f"No vLLM process detected {_ms._START_PROBE_DELAY:.0f}s after start "
+            f"No vLLM process detected ~{2 * _ms._START_PROBE_DELAY:.0f}s after start "
             f"for {model_id} — rolling back to STOPPED")
         _ms.state_machine.update_model_status(model_id, ModelStatus.STOPPED)
         _ms.state_machine.clear_current_model(model_id)

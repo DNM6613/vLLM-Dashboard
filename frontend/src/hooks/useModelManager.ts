@@ -16,6 +16,17 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
   const { fetchModels, syncModelStatus, stopModel, startModel, setModelLock, clearError, scanModels, getLaunchConfig, saveLaunchConfig, deleteModel } = useModelStore();
   const [refreshing, setRefreshing] = useState(false);
   const [scanMessage, setScanMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  // Audit 2026-10-20 P3-9: the scan-message setTimeout was never cleared,
+  // so it could fire after unmount (setState on an unmounted component).
+  const isMountedRef = useRef(true);
+  const scanMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (scanMsgTimerRef.current) { clearTimeout(scanMsgTimerRef.current); scanMsgTimerRef.current = null; }
+    };
+  }, []);
   const [showLaunchConfigModal, setShowLaunchConfigModal] = useState(false);
   const [launchConfigModelId, setLaunchConfigModelId] = useState('');
   const [launchConfigModelName, setLaunchConfigModelName] = useState('');
@@ -115,10 +126,12 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
         else { hasError = true; parts.push(syncResult.error || t('Sync failed')); }
       }
       setScanMessage({ type: hasError ? 'error' : 'success', text: parts.join(' ') || t('Refreshed') });
-      setTimeout(() => setScanMessage(null), hasError ? 5000 : 3000);
+      if (scanMsgTimerRef.current) clearTimeout(scanMsgTimerRef.current);
+      scanMsgTimerRef.current = setTimeout(() => { if (isMountedRef.current) setScanMessage(null); }, hasError ? 5000 : 3000);
     } catch (e: unknown) {
       setScanMessage({ type: 'error', text: errMsgLocalized(e) || t('Refresh failed') });
-      setTimeout(() => setScanMessage(null), 5000);
+      if (scanMsgTimerRef.current) clearTimeout(scanMsgTimerRef.current);
+      scanMsgTimerRef.current = setTimeout(() => { if (isMountedRef.current) setScanMessage(null); }, 5000);
     } finally { setRefreshing(false); }
   }, [scanModels, syncModelStatus, fetchModels, t]);
 

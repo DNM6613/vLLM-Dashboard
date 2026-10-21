@@ -89,13 +89,17 @@ def _build_cuda_env_script(task_id: str) -> str:
         "export LD_LIBRARY_PATH=$CUDA_HOME/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}",
     )
     tmp = f"/tmp/vdb_cuda_env_{task_id}"
+    # Audit 2026-10-20 P3-2: the old `&& rm -f` skipped the cleanup when a
+    # cp/chmod failed. write/cp/chmod stay an && chain (any failure fails
+    # the step); the rm is separated with `;` so the temp file is always
+    # removed, and the trailing test re-surfaces the chain's result.
     return (
         "printf '%s\\n' "
         + " ".join(f"'{line}'" for line in lines)
         + f" > {tmp} && "
         f"sudo cp {tmp} /etc/profile.d/vllm-cuda.sh && "
-        f"sudo chmod 644 /etc/profile.d/vllm-cuda.sh && "
-        f"rm -f {tmp}"
+        f"sudo chmod 644 /etc/profile.d/vllm-cuda.sh; "
+        f"vdb_ec=$?; rm -f {tmp}; [ $vdb_ec -eq 0 ]"
     )
 
 
@@ -122,8 +126,9 @@ def _run_cuda(ctx: TaskContext, version: str, pkg: str) -> None:
         "case \"$VER\" in 13.3|13.4) ;; *) KEYD=ubuntu2404;; esac; fi; "
         "sudo curl -fsSL -o /tmp/cuda-keyring.deb "
         "https://developer.download.nvidia.com/compute/cuda/repos/$KEYD/$ARCH/cuda-keyring_1.1-1_all.deb; "
-        "sudo dpkg -i /tmp/cuda-keyring.deb && sudo rm -f /tmp/cuda-keyring.deb; "
-        "sudo apt-get update -y"
+        "sudo dpkg -i /tmp/cuda-keyring.deb; vdb_ec=$?; "
+        "sudo rm -f /tmp/cuda-keyring.deb; "
+        "[ $vdb_ec -eq 0 ] && sudo apt-get update -y"
     )
     with ctx.step(0):
         ctx.run_long(repo_script, timeout=900)

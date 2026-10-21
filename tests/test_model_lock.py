@@ -288,6 +288,45 @@ class TestModelLock(unittest.TestCase):
         self.assertNotIn(mid, model_watchdog._crash_events)
         self.assertEqual(self._started, [])
 
+    def test_attempt_restart_409_inflight_loading_keeps_event(self):
+        # Audit 2026-10-20 P1-2: a 409 caused by an in-flight attempt (a
+        # manual start racing us, or the pre-fix watchdog race) is NOT
+        # recovery — the crash history must survive so the breaker count
+        # accumulates (incident 2026-10-17 10:15, concurrent-409 variant).
+        mid = self._ids[0]
+        self._sm.set_model_locked(mid, True)
+
+        async def start_409_loading(model_id):
+            # A concurrent actor put the model into LOADING before the 409.
+            self._sm.update_model_status(model_id, ModelStatus.LOADING)
+            raise HTTPException(status_code=409, detail="Model is already loading")
+
+        model_service.start_model = start_409_loading
+        model_watchdog.on_model_crash(mid)
+        asyncio.run(model_watchdog.watchdog_tick())
+        self.assertIn(mid, model_watchdog._crash_events)
+        self.assertEqual(self._started, [])
+
+    def test_inflight_claim_visible_before_presence_probe(self):
+        # Audit 2026-10-20 P1-2: the _inflight claim must be taken BEFORE
+        # the presence probe's awaits — a concurrent attempt (10 s delayed
+        # restart vs 30 s tick) must see it, not slip through the check.
+        # Record the claim's visibility at probe time.
+        mid = self._ids[0]
+        self._sm.set_model_locked(mid, True)
+        seen: list[bool] = []
+
+        async def probe(host, port):
+            seen.append(mid in model_watchdog._inflight)
+            return None
+
+        model_service._check_vllm_present_strict = probe
+        model_watchdog.on_model_crash(mid)
+        asyncio.run(model_watchdog.watchdog_tick())
+        self.assertEqual(seen, [True])
+        # And released afterwards: the claim is scoped to the attempt.
+        self.assertNotIn(mid, model_watchdog._inflight)
+
     def test_attempt_restart_400_no_command_marks_failed_and_clears(self):
         mid = self._ids[0]
         self._sm.set_model_locked(mid, True)
@@ -414,6 +453,36 @@ class TestModelLock(unittest.TestCase):
             model_service._watchdog_on_crash = orig_on_crash
             model_service._START_PROBE_DELAY = orig_delay
         self.assertEqual(self._sm.get_model(mid).status, ModelStatus.STOPPED)
+        self.assertEqual(crashes, [])
+        self.assertEqual(self._started, [])
+
+    def test_probe_slow_start_recheck_keeps_loading(self):
+        # audit 2026-10-20 P2-9: the first probe can miss a slow cold start
+        # (the console PTY delivers the command late, or the process takes a
+        # moment to spawn); the re-check must keep the model loading instead
+        # of burning a spurious crash event toward the watchdog breaker.
+        mid = self._ids[0]
+        self._sm.set_model_locked(mid, True)
+        crashes: list[str] = []
+        orig_on_crash = model_service._watchdog_on_crash
+        orig_delay = model_service._START_PROBE_DELAY
+        orig_probe = model_service._check_vllm_present_strict
+        probes: list[bool] = [False, True]
+        async def slow(host, port):
+            return probes.pop(0)
+        model_service._watchdog_on_crash = crashes.append
+        model_service._START_PROBE_DELAY = 0.01
+        model_service._check_vllm_present_strict = slow
+        try:
+            async def drive():
+                self._sm.update_model_status(mid, ModelStatus.LOADING)
+                await model_service._verify_start_probe(mid, "127.0.0.1", 8000)
+            asyncio.run(drive())
+        finally:
+            model_service._watchdog_on_crash = orig_on_crash
+            model_service._START_PROBE_DELAY = orig_delay
+            model_service._check_vllm_present_strict = orig_probe
+        self.assertEqual(self._sm.get_model(mid).status, ModelStatus.LOADING)
         self.assertEqual(crashes, [])
         self.assertEqual(self._started, [])
 

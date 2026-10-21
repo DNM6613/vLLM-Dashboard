@@ -216,6 +216,41 @@ describe('useChat', () => {
     expect(signal?.aborted).toBe(true);
   });
 
+  it('stop() aborts the in-flight stream and clears the queued messages', async () => {
+    // audit 2026-10-20 P2-16 (user ruling): Stop = stop everything — the
+    // queued message must NOT be auto-sent after the abort.
+    let signal: AbortSignal | undefined;
+    mockedStream.mockImplementation((_id, _msgs, _max, sig) => {
+      signal = sig;
+      return (async function* () {
+        yield { delta: 'a', reasoning: '', usage: null, error: null, done: false };
+        await new Promise((_res, rej) => {
+          sig.addEventListener('abort', () => rej(new DOMException('Aborted', 'AbortError')), { once: true });
+        });
+      })();
+    });
+    const { result } = renderHook(() => useChat());
+    let p: Promise<void>;
+    await act(async () => {
+      p = result.current.send('m1', 'first');
+      await Promise.resolve();
+    });
+    expect(result.current.streaming).toBe(true);
+    await act(async () => {
+      void result.current.send('m1', 'second');
+    });
+    expect(result.current.queue).toEqual(['second']);
+    await act(async () => {
+      result.current.stop();
+      await p!;
+    });
+    expect(result.current.streaming).toBe(false);
+    expect(result.current.queue).toEqual([]);
+    expect(signal?.aborted).toBe(true);
+    // "second" was dropped, not sent: the stream opened exactly once.
+    expect(mockedStream).toHaveBeenCalledTimes(1);
+  });
+
   it('clear() empties the entries', async () => {
     mockedStream.mockImplementation(() => gen([
       { delta: 'x', reasoning: '', usage: null, error: null, done: true },

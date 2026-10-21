@@ -49,6 +49,9 @@ logging.basicConfig(
 )
 for _handler in logging.getLogger().handlers:
     _handler.addFilter(_RequestIdLogFilter())
+    # Audit 2026-10-20 P2-12: the root handler previously only carried the
+    # request-id filter, so every backend.* logger logged to it UNREDACTED.
+    _handler.addFilter(_RedactApiKeyFilter())
 
 logging.getLogger("paramiko").setLevel(logging.CRITICAL)
 
@@ -83,10 +86,13 @@ def _normalize_metric_path(request: Request) -> str:
     if route_path:
         return route_path
     path = request.url.path
-    if path.startswith("/api/"):
-        parts = path.split("/")
-        if len(parts) > 4:
-            return "/".join(parts[:4]) + "/..."
+    # Unmatched /api/ or /assets/ path (404/405): the raw path (or its first
+    # segments) would become an unbounded metric label — one request per
+    # unique value creates a new series that prometheus_client never
+    # deletes, so a curl loop can OOM the dashboard (audit 2026-10-20
+    # P2-2). Bucket by the top-level segment instead.
+    if path.startswith("/api/") or path.startswith("/assets/"):
+        return "/" + path.split("/", 2)[1] + "/..."
     return path
 
 _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
@@ -115,6 +121,12 @@ async def request_id_metrics_middleware(request: Request, call_next):
 # The panel's own plumbing must not flood the log it serves.
 _MONITOR_PATH_PREFIX = "/api/v1/monitor/"
 _BODY_METHODS = ("POST", "PUT", "PATCH")
+# The only /api/v1 endpoint that receives plaintext credentials in one body
+# (api_key / ssh_password / bmc_password / hf_token — see the
+# server_config payload): its body must NOT enter the request log, which
+# GET /api/v1/monitor/requests returns verbatim to the connections panel
+# (audit 2026-10-20 P2-1). The entry is still recorded, with body=None.
+_CREDENTIAL_BODY_PATHS = ("/api/v1/config/server",)
 
 
 def _sanitize_body(raw: bytes) -> str | None:
@@ -131,7 +143,7 @@ async def request_log_middleware(request: Request, call_next):
             or path.startswith(_MONITOR_PATH_PREFIX)):
         return await call_next(request)
     body_preview = None
-    if request.method in _BODY_METHODS:
+    if request.method in _BODY_METHODS and path not in _CREDENTIAL_BODY_PATHS:
         try:
             body_preview = _sanitize_body(await request.body())
         except Exception:

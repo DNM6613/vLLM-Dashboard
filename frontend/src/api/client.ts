@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from 'axios';
-import { getStoredApiKey } from '../utils/apiKey';
+import { getStoredApiKey, setStoredApiKey } from '../utils/apiKey';
 import { useAuthStore } from '../stores/auth';
 
 const API_BASE_URL = '/api/v1';
@@ -23,6 +23,10 @@ api.interceptors.response.use(
   (error) => {
     const status = error?.response?.status;
     if (status === 401) {
+      // The stored key no longer works (rotated/removed server-side) —
+      // clear it so the gate re-asks instead of pre-filling the dead key
+      // (audit 2026-10-20 P3-6).
+      setStoredApiKey('');
       useAuthStore.getState().requestAuth();
     }
     return Promise.reject(error);

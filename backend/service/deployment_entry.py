@@ -43,8 +43,26 @@ def _require_remote() -> None:
         )
 
 
+_INFLIGHT_LABELS = {"driver": "Driver", "cuda": "CUDA", "vllm": "vLLM",
+                    "rollback_vllm": "vLLM roll back"}
+
+
+def _reject_inflight(kind: str) -> None:
+    """Refuse a second pipeline of the same kind while one is in flight
+    (audit 2026-10-20 P2-6): a double-clicked "apply" used to spawn two
+    parallel pipelines fighting over apt/uv locks. Checked before any SSH
+    round-trip so the rejection is immediate."""
+    existing = _ds.task_manager.inflight_task(kind)
+    if existing is not None:
+        label = _INFLIGHT_LABELS.get(kind, kind)
+        raise DeploymentError(
+            f"{label} task is already in progress — wait for it to finish before starting another"
+        )
+
+
 def start_driver_task(package: str) -> Task:
     _require_remote()
+    _reject_inflight("driver")
     if not DRIVER_PKG_RE.fullmatch(package or ""):
         raise DeploymentError(f"Invalid driver package name: {package}")
     executor = get_remote_executor()
@@ -87,6 +105,7 @@ def start_cuda_task(version: str, install_system: bool) -> Task | None:
         _ds.deployment_state.update_section("selected", cuda="",
                                             cuda_install_system=False)
         return None
+    _reject_inflight("cuda")
     if not CUDA_VER_RE.fullmatch(version or ""):
         raise DeploymentError(f"Invalid CUDA version: {version}")
     executor = get_remote_executor()
@@ -112,6 +131,7 @@ def start_cuda_task(version: str, install_system: bool) -> Task | None:
 
 def start_vllm_task(payload: dict[str, Any]) -> Task:
     _require_remote()
+    _reject_inflight("vllm")
     version = (payload.get("version") or "latest").strip()
     if version != "latest" and not VLLM_VER_RE.fullmatch(version):
         raise DeploymentError(f"Invalid vLLM version: {version}")
@@ -174,6 +194,7 @@ def start_rollback_driver() -> Task:
 
 def start_rollback_vllm() -> Task:
     _require_remote()
+    _reject_inflight("rollback_vllm")
     state = _ds.deployment_state.get()
     target = (state["snapshots"]["vllm"].get("previous_version") or "").strip()
     if not target:

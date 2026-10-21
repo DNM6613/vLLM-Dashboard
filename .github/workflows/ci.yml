@@ -21,7 +21,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-lock.txt
-          pip install ruff pip-audit
+          pip install ruff pip-audit pytest
 
       - name: Check lock satisfies requirements.txt
         run: |
@@ -69,11 +69,15 @@ jobs:
           PY
 
       - name: Lint (ruff)
-        run: ruff check backend/ tests/ setup.py tools/
+        run: ruff check backend/ tests/ tools/
 
 
       - name: Run unit tests
-        run: python -m unittest discover -s tests -v
+        # pytest (not unittest discover): tests/test_security_regression.py
+        # imports pytest at top level (xfail markers) — discover used to
+        # ModuleError out and the whole backend job skipped its tests
+        # (audit 2026-10-20 P1-5).
+        run: python -m pytest tests -q
 
       - name: Security audit (pip-audit)
         run: pip-audit -r requirements-lock.txt --strict

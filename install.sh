@@ -4,11 +4,13 @@
 #   curl -fsSL https://cdn.jsdelivr.net/gh/DNM6613/vLLM-Dashboard@master/install.sh | bash
 #
 # 可选参数: 安装目录（默认 ~/vLLM-Dashboard）
-# 可选环境变量: VLLM_DASHBOARD_REPO（默认 https://github.com/DNM6613/vLLM-Dashboard，可指向内网镜像）、
+# 可选环境变量: VLLM_DASHBOARD_REPO（默认内网 Gitea 镜像 https://10.131.1.14/uforce/vLLM-Dashboard，
+#               可改 https://github.com/DNM6613/vLLM-Dashboard；IP 主机需另设
+#               VLLM_DASHBOARD_CACERT=/path/ca.crt 或 VLLM_DASHBOARD_INSECURE=1）、
 #               VLLM_DASHBOARD_BRANCH（默认 master）
 set -euo pipefail
 
-REPO="${VLLM_DASHBOARD_REPO:-https://github.com/DNM6613/vLLM-Dashboard}"
+REPO="${VLLM_DASHBOARD_REPO:-https://10.131.1.14/uforce/vLLM-Dashboard}"
 BRANCH="${VLLM_DASHBOARD_BRANCH:-master}"
 INSTALL_DIR="${1:-$HOME/vLLM-Dashboard}"
 

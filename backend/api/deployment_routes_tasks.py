@@ -1,64 +1,29 @@
-"""Deployment API — task center, state, mirrors, rollback routes.
+"""Deployment API — state, mirrors, rollback routes.
 
 Split out of ``api/deployment.py`` (file-size gate). The parent router with
 the ``/api/v1/deployment`` prefix lives in ``api/deployment.py`` and includes
 this sub-router; all route paths are unchanged.
+
+Audit 2026-10-20 P3-8 (user ruling): the task-center endpoints (GET /tasks,
+GET /tasks/{id}, GET /tasks/{id}/log, POST /tasks/{id}/cancel) had no UI
+caller since the task center was removed from the home page — deleted.
+In-flight task state is still surfaced via GET /state (active_task /
+pending_driver_task), which the Driver tab renders.
 """
 
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 
 from ..service import deployment_service as ds
 from ..service.deployment_service import DeploymentError
 from . import deployment as _dep
 from .deployment_common import _error_to_http, _probe_in_thread, _require_remote
 
-logger = logging.getLogger(__name__)
-
 router = APIRouter(tags=["deployment"])
-
-
-# ===========================================================================
-# Task center
-# ===========================================================================
-
-@router.get("/tasks")
-async def list_tasks(limit: int = Query(default=30, ge=1, le=100)):
-    return {"tasks": [t.to_dict() for t in ds.task_manager.list(limit)]}
-
-
-@router.get("/tasks/{task_id}")
-async def get_task(task_id: str):
-    task = ds.task_manager.get(task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
-    data = task.to_dict()
-    data["log_tail"] = ds.task_manager.tail(task_id, 200)
-    return data
-
-
-@router.get("/tasks/{task_id}/log")
-async def get_task_log(task_id: str, offset: int = Query(default=0, ge=0)):
-    task = ds.task_manager.get(task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
-    content, new_offset = ds.task_manager.read_log(task_id, offset)
-    return {"content": content, "offset": new_offset}
-
-
-@router.post("/tasks/{task_id}/cancel")
-async def cancel_task(task_id: str):
-    task = ds.task_manager.get(task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
-    if not ds.task_manager.cancel(task_id):
-        raise HTTPException(status_code=409, detail="Task is not cancellable in its current state")
-    return {"status": "cancelling", "task_id": task_id}
 
 
 # ===========================================================================

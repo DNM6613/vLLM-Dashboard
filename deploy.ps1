@@ -3,7 +3,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  vLLM-Dashboard 部署脚本" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
-Write-Host "`n[1/4] 检查 Python 安装..." -ForegroundColor Yellow
+Write-Host "`n[1/5] 检查 Python 安装..." -ForegroundColor Yellow
 $pyCmd = Get-Command python -ErrorAction SilentlyContinue
 if (-not $pyCmd) {
     Write-Host "  ✗ Python 未安装或未添加到 PATH" -ForegroundColor Red
@@ -18,7 +18,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "  ✓ Python 已安装: $pythonVersion" -ForegroundColor Green
 
-Write-Host "`n[2/4] 创建虚拟环境..." -ForegroundColor Yellow
+Write-Host "`n[2/5] 创建虚拟环境..." -ForegroundColor Yellow
 if (Test-Path "venv") {
     Write-Host "  发现已有虚拟环境，是否删除重建? (y/n)" -ForegroundColor Yellow
     $choice = Read-Host
@@ -32,7 +32,7 @@ if (Test-Path "venv") {
     Write-Host "  ✓ 虚拟环境已创建" -ForegroundColor Green
 }
 
-Write-Host "`n[3/4] 安装依赖..." -ForegroundColor Yellow
+Write-Host "`n[3/5] 安装依赖..." -ForegroundColor Yellow
 & ".\venv\Scripts\Activate.ps1"
 python -m pip install --upgrade pip
 pip install -r requirements.txt
@@ -44,13 +44,37 @@ if ($LASTEXITCODE -eq 0) {
     exit 1
 }
 
-Write-Host "`n[4/4] 创建配置文件..." -ForegroundColor Yellow
+Write-Host "`n[4/5] 创建配置文件..." -ForegroundColor Yellow
 if (-not (Test-Path ".env")) {
     Copy-Item ".env.example" ".env"
     Write-Host "  ✓ 配置文件已创建 (.env)" -ForegroundColor Green
     Write-Host "  请编辑 .env 文件配置您的参数" -ForegroundColor Yellow
 } else {
     Write-Host "  ✓ 配置文件已存在" -ForegroundColor Green
+}
+
+Write-Host "`n[5/5] 构建前端（原生部署需要前端产物，否则 5174 仅 API + /docs）..." -ForegroundColor Yellow
+if ((Test-Path "frontend") -and (Get-Command node -ErrorAction SilentlyContinue) -and (Get-Command npm -ErrorAction SilentlyContinue)) {
+    Push-Location frontend
+    try {
+        npm ci
+        npm run build
+    } finally {
+        Pop-Location
+    }
+    if (Test-Path "static\index.html") {
+        Remove-Item -Recurse -Force "static"
+    } elseif (Test-Path "static") {
+        $bak = "static.bak.$([DateTimeOffset]::Now.ToUnixTimeSeconds())"
+        Move-Item "static" $bak
+        Write-Host "  ⚠ static\ 存在但缺少 index.html，已备份为 $bak" -ForegroundColor Yellow
+    }
+    Copy-Item -Recurse "frontend\dist" "static"
+    Write-Host "  ✓ 前端构建完成（frontend/dist -> static\，STATIC_DIR 默认指向）" -ForegroundColor Green
+} else {
+    Write-Host "  ⚠ node/npm 不可用或 frontend 目录缺失，已跳过前端构建" -ForegroundColor Yellow
+    Write-Host "  原生部署需先构建前端，否则 http://localhost:5174 仅提供 API 与 /docs" -ForegroundColor Yellow
+    Write-Host "  安装 Node.js 18+ 后重跑本脚本，或手动执行: cd frontend; npm ci; npm run build; Copy-Item -Recurse dist ..\static" -ForegroundColor Yellow
 }
 
 Write-Host "`n========================================" -ForegroundColor Cyan

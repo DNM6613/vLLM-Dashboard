@@ -26,7 +26,7 @@ def health_wget() -> str:
     header = f"--header='X-API-Key: {API_KEY}' " if API_KEY else ""
     return f"wget -qO- {header}{API}/health"
 
-SHIP_FILES = ["Dockerfile", ".dockerignore", "requirements-lock.txt", "setup.py"]
+SHIP_FILES = ["Dockerfile", ".dockerignore", "requirements-lock.txt"]
 SHIP_DIRS = ["backend", "frontend"]
 SKIP_DIRS = {
     "node_modules", "dist", "__pycache__", ".git", ".vscode", ".idea",

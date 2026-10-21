@@ -42,6 +42,7 @@ export function HomePage() {
 
   const fetchHardwareMetrics = useHardwareStore(s => s.fetchHardwareMetrics);
   const fetchSoftware = useHardwareStore(s => s.fetchSoftware);
+  const hwWsConnected = useHardwareStore(s => s.hwWsConnected);
   useHardwareWebSocket();
 
   const fetchModelStatus = useModelStatusStore(s => s.fetchModelStatus);
@@ -73,15 +74,21 @@ export function HomePage() {
 
   const [showDeployEnv, setShowDeployEnv] = useState(false);
 
-  const downloadProgressInfo = downloading
-    ? {
-        name: activeDownloadName,
-        progress: downloadProgress,
-        sizeBytes: downloadSizeBytes,
-        totalSizeBytes: downloadTotalSizeBytes,
-        stalledSecs: downloadStalledSecs,
-      }
-    : null;
+  // Memoized so the object reference stays stable across re-renders — a
+  // fresh literal every render would break ModelList's memo while a
+  // download is in flight (audit 2026-10-20 P2-13).
+  const downloadProgressInfo = useMemo(
+    () => downloading
+      ? {
+          name: activeDownloadName,
+          progress: downloadProgress,
+          sizeBytes: downloadSizeBytes,
+          totalSizeBytes: downloadTotalSizeBytes,
+          stalledSecs: downloadStalledSecs,
+        }
+      : null,
+    [downloading, activeDownloadName, downloadProgress, downloadSizeBytes, downloadTotalSizeBytes, downloadStalledSecs],
+  );
 
   const openDownloadModal = useCallback(() => setShowDownloadModal(true), [setShowDownloadModal]);
   const openBenchmarkModal = useCallback(() => setShowBenchmarkModal(true), [setShowBenchmarkModal]);
@@ -177,6 +184,13 @@ export function HomePage() {
               <span role="status" className="flex items-center gap-1.5">
                 <span className={`w-2 h-2 rounded-full ${apiConnected ? 'bg-success animate-pulse' : 'bg-danger'}`} />
                 <span className="text-xs text-text-muted">API: {apiConnected ? t('Connected') : t('Disconnected')}</span>
+              </span>
+              {/* Audit 2026-10-20 P3-7: the GPU cards keep showing their
+                  last values while the hardware WS is down (SSH still up) —
+                  the dot marks the numbers as no longer live. */}
+              <span role="status" className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${hwWsConnected ? 'bg-success animate-pulse' : 'bg-danger'}`} />
+                <span className="text-xs text-text-muted">HW: {hwWsConnected ? t('Connected') : t('Disconnected')}</span>
               </span>
             </div>
             <div className="flex items-center gap-2">

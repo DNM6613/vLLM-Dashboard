@@ -2,8 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { getWsUrl } from '../api/client';
 import { useConsoleStore } from '../stores/console';
 import { useModelStore } from '../stores/model';
-import { terminalReset, terminalWrite } from '../utils/terminalSink';
-import { ModelStatus } from '../types';
+import { terminalReset, terminalSize, terminalWrite } from '../utils/terminalSink';
 import { useI18n } from '../i18n/context';
 
 const STARTUP_MARKERS = ['application startup complete', 'uvicorn running on'];
@@ -28,8 +27,10 @@ export function useConsoleWebSocket() {
     const delay = Math.min(1000 * Math.pow(2, consoleRetryCountRef.current), 30000);
     consoleRetryCountRef.current++;
     consoleReconnectRef.current = setTimeout(() => {
-      const currentModels = useModelStore.getState().models;
-      if (!currentModels.some(m => m.status === ModelStatus.RUNNING || m.status === ModelStatus.LOADING)) return;
+      // Always auto-reconnect (audit 2026-10-20 P2-15, user ruling): the
+      // console is a read-only server terminal — having no RUNNING/LOADING
+      // model is not a reason to stay disconnected. The remote PTY is kept
+      // by the reattach design, so reconnecting re-attaches the same shell.
       connectConsoleWs('console');
     }, delay);
   };
@@ -59,6 +60,14 @@ export function useConsoleWebSocket() {
       useConsoleStore.getState().setConnected(true);
       consoleRetryCountRef.current = 0;
       terminalReset();
+      // Re-send the terminal size on (re)connect (audit 2026-10-20 P2-14):
+      // a new/reattached session starts at the PTY 200x50 default and the
+      // sendSize() fired at term-open was a no-op while the socket was not
+      // yet OPEN — the PTY would stay 200 cols until the next window resize.
+      const size = terminalSize();
+      if (size) {
+        ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
+      }
       if (mode === 'start' && command) {
         ws.send(JSON.stringify({ command }));
       }

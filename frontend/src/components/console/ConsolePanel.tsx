@@ -69,7 +69,11 @@ export const ConsolePanel = memo(function ConsolePanel({ models, onSendResize }:
     const core = term as unknown as { _core?: { viewport?: { scrollBarWidth: number } } };
     if (core._core?.viewport) core._core.viewport.scrollBarWidth = 0;
     fit.fit();
-    registerTerminalSink({ write: (d) => term.write(d), reset: () => term.reset() });
+    registerTerminalSink({
+      write: (d) => term.write(d),
+      reset: () => term.reset(),
+      getSize: () => ({ cols: term.cols, rows: term.rows }),
+    });
     const sendSize = () => onSendResize(term.cols, term.rows);
     sendSize();
     fitRef.current = () => {

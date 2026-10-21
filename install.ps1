@@ -4,13 +4,15 @@
 #   powershell -ExecutionPolicy Bypass -File $env:TEMP\vd-install.ps1
 #
 # 可选参数: 安装目录（默认 %USERPROFILE%\vLLM-Dashboard）
-# 可选环境变量: VLLM_DASHBOARD_REPO（默认 https://github.com/DNM6613/vLLM-Dashboard，可指向内网镜像）、
+# 可选环境变量: VLLM_DASHBOARD_REPO（默认内网 Gitea 镜像 https://10.131.1.14/uforce/vLLM-Dashboard，
+#               可改 https://github.com/DNM6613/vLLM-Dashboard；IP 主机需另设
+#               VLLM_DASHBOARD_CACERT=/path/ca.crt 或 VLLM_DASHBOARD_INSECURE=1）、
 #               VLLM_DASHBOARD_BRANCH（默认 master）
 param([string]$InstallDir = "")
 
 $ErrorActionPreference = "Stop"
 
-$Repo = if ($env:VLLM_DASHBOARD_REPO) { $env:VLLM_DASHBOARD_REPO } else { "https://github.com/DNM6613/vLLM-Dashboard" }
+$Repo = if ($env:VLLM_DASHBOARD_REPO) { $env:VLLM_DASHBOARD_REPO } else { "https://10.131.1.14/uforce/vLLM-Dashboard" }
 $Branch = if ($env:VLLM_DASHBOARD_BRANCH) { $env:VLLM_DASHBOARD_BRANCH } else { "master" }
 if (-not $InstallDir) { $InstallDir = Join-Path $env:USERPROFILE "vLLM-Dashboard" }
 
@@ -97,6 +99,30 @@ if (-not (Test-Path ".env")) {
     Write-Host "  请编辑 .env 文件配置您的参数" -ForegroundColor Yellow
 } else {
     Write-Host "  ✓ 配置文件已存在" -ForegroundColor Green
+}
+
+Write-Host "`n[5/5] 构建前端（原生部署需要前端产物，否则 5174 仅 API + /docs）..." -ForegroundColor Yellow
+if ((Test-Path "frontend") -and (Get-Command node -ErrorAction SilentlyContinue) -and (Get-Command npm -ErrorAction SilentlyContinue)) {
+    Push-Location frontend
+    try {
+        npm ci
+        npm run build
+    } finally {
+        Pop-Location
+    }
+    if (Test-Path "static\index.html") {
+        Remove-Item -Recurse -Force "static"
+    } elseif (Test-Path "static") {
+        $bak = "static.bak.$([DateTimeOffset]::Now.ToUnixTimeSeconds())"
+        Move-Item "static" $bak
+        Write-Host "  ⚠ static\ 存在但缺少 index.html，已备份为 $bak" -ForegroundColor Yellow
+    }
+    Copy-Item -Recurse "frontend\dist" "static"
+    Write-Host "  ✓ 前端构建完成（frontend/dist -> static\，STATIC_DIR 默认指向）" -ForegroundColor Green
+} else {
+    Write-Host "  ⚠ node/npm 不可用或 frontend 目录缺失，已跳过前端构建" -ForegroundColor Yellow
+    Write-Host "  原生部署需先构建前端，否则 http://localhost:5174 仅提供 API 与 /docs" -ForegroundColor Yellow
+    Write-Host "  安装 Node.js 18+ 后重跑本脚本，或手动执行: cd frontend; npm ci; npm run build; Copy-Item -Recurse dist ..\static" -ForegroundColor Yellow
 }
 
 Write-Host "`n========================================" -ForegroundColor Cyan

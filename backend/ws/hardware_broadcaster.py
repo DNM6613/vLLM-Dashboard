@@ -95,15 +95,20 @@ class HardwareBroadcaster:
         if not self._clients:
             return
         message = json.dumps({"type": "gpu_metrics", "data": data})
-        dead: list[WebSocket] = []
-        for ws in list(self._clients):
-            try:
-                await asyncio.wait_for(ws.send_text(message),
-                                       timeout=self._BROADCAST_SEND_TIMEOUT)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            self._clients.discard(ws)
+
+        async def _send(ws: WebSocket) -> None:
+            await asyncio.wait_for(ws.send_text(message),
+                                   timeout=self._BROADCAST_SEND_TIMEOUT)
+
+        # Concurrent sends (audit 2026-10-20 P2-8): N slow/half-open
+        # subscribers must not serially stretch the 0.5 s cycle to 3N s —
+        # every subscriber's data would lag by that much.
+        clients = list(self._clients)
+        results = await asyncio.gather(
+            *(_send(ws) for ws in clients), return_exceptions=True)
+        for ws, r in zip(clients, results):
+            if isinstance(r, Exception):
+                self._clients.discard(ws)
 
     async def shutdown(self) -> None:
         if self._poll_task is not None and not self._poll_task.done():

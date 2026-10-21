@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { benchmarkModel } from '../api/models';
 import { errMsgLocalized } from '../stores/model';
 import type { BenchmarkResult, ModelInfo } from '../types';
@@ -21,10 +21,15 @@ export function useBenchmark() {
   const [benchmarkResults, setBenchmarkResults] = useState<Record<string, BenchmarkResult[]>>(() => loadResults());
   const [benchmarkingIds, setBenchmarkingIds] = useState<Set<string>>(new Set());
   const [benchmarkErrors, setBenchmarkErrors] = useState<Record<string, string>>({});
+  // Synchronous guard (audit 2026-10-20 P3-5): benchmarkingIds is React
+  // state, so two clicks in the same frame both read the stale Set and
+  // fire two benchmark requests. The ref closes that window.
+  const benchmarkInFlightRef = useRef<Set<string>>(new Set());
   useEffect(() => { persistBenchmarkResults(benchmarkResults); }, [benchmarkResults]);
 
   const handleBenchmark = async (modelId: string) => {
-    if (benchmarkingIds.has(modelId)) return;
+    if (benchmarkInFlightRef.current.has(modelId) || benchmarkingIds.has(modelId)) return;
+    benchmarkInFlightRef.current.add(modelId);
     setBenchmarkingIds(prev => new Set(prev).add(modelId));
     setBenchmarkErrors(prev => {
       if (!(modelId in prev)) return prev;
@@ -39,6 +44,7 @@ export function useBenchmark() {
       const msg = errMsgLocalized(error) || String(error);
       setBenchmarkErrors(prev => ({ ...prev, [modelId]: msg }));
     } finally {
+      benchmarkInFlightRef.current.delete(modelId);
       setBenchmarkingIds(prev => {
         const next = new Set(prev);
         next.delete(modelId);
