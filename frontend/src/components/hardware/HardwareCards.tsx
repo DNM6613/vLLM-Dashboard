@@ -106,16 +106,6 @@ export const HardwareCards = memo(function HardwareCards({ sshConnected }: Hardw
                 </div>
                 <ProgressBar value={live ? ((gpu.memory_used_mb ?? 0) / Math.max(gpu.memory_total_mb ?? 1, 1)) * 100 : 0} color="bg-success" />
                 <div className="flex justify-between">
-                  <span className="text-text-muted">{t('PCIe Rx')}</span>
-                  <span className="font-mono">{live && gpu.pcie_rx_mbs != null ? <AnimatedNumber value={gpu.pcie_rx_mbs} format={(v) => `${v.toFixed(0)} MB/s`} /> : 'N/A'}</span>
-                </div>
-                <ProgressBar value={live && gpu.pcie_rx_mbs != null ? (gpu.pcie_rx_mbs / pcieMaxMbs(gpu)) * 100 : 0} />
-                <div className="flex justify-between">
-                  <span className="text-text-muted">{t('PCIe Tx')}</span>
-                  <span className="font-mono">{live && gpu.pcie_tx_mbs != null ? <AnimatedNumber value={gpu.pcie_tx_mbs} format={(v) => `${v.toFixed(0)} MB/s`} /> : 'N/A'}</span>
-                </div>
-                <ProgressBar value={live && gpu.pcie_tx_mbs != null ? (gpu.pcie_tx_mbs / pcieMaxMbs(gpu)) * 100 : 0} />
-                <div className="flex justify-between">
                   <span className="text-text-muted">{t('Power')}</span>
                   <span className="font-mono">{live ? <AnimatedNumber value={gpu.power_draw_w ?? 0} format={(v) => `${v.toFixed(0)}W / ${gpu.power_limit_w ?? 0}W`} /> : 'N/A'}</span>
                 </div>
@@ -128,6 +118,16 @@ export const HardwareCards = memo(function HardwareCards({ sshConnected }: Hardw
                   value={live ? ((gpu.temperature_c ?? 0) - 27) / (87 - 27) * 100 : 0}
                   color="bg-warning"
                 />
+                <div className="flex justify-between">
+                  <span className="text-text-muted">{t('PCIe Rx')}</span>
+                  <span className="font-mono">{live && gpu.pcie_rx_mbs != null ? <AnimatedNumber value={gpu.pcie_rx_mbs} format={(v) => `${v.toFixed(0)} MB/s`} /> : 'N/A'}</span>
+                </div>
+                <ProgressBar value={live && gpu.pcie_rx_mbs != null ? (gpu.pcie_rx_mbs / pcieMaxMbs(gpu)) * 100 : 0} />
+                <div className="flex justify-between">
+                  <span className="text-text-muted">{t('PCIe Tx')}</span>
+                  <span className="font-mono">{live && gpu.pcie_tx_mbs != null ? <AnimatedNumber value={gpu.pcie_tx_mbs} format={(v) => `${v.toFixed(0)} MB/s`} /> : 'N/A'}</span>
+                </div>
+                <ProgressBar value={live && gpu.pcie_tx_mbs != null ? (gpu.pcie_tx_mbs / pcieMaxMbs(gpu)) * 100 : 0} />
               </div>
             </div>
           ))}
