@@ -28,9 +28,6 @@ export function useHardwareWebSocket() {
       ws = socket;
       socket.onopen = () => {
         retryCount = 0;
-        // Audit 2026-10-20 P3-7: expose the WS link state so the header
-        // can mark the GPU cards as stale while the stream is down.
-        useHardwareStore.getState().setHwWsConnected(true);
       };
       socket.onmessage = (event) => {
         try {
@@ -41,7 +38,6 @@ export function useHardwareWebSocket() {
         } catch {  }
       };
       socket.onclose = () => {
-        useHardwareStore.getState().setHwWsConnected(false);
         scheduleReconnect();
       };
     };

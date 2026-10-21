@@ -20,7 +20,6 @@ const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:
 // Modals can stack (e.g. a confirm dialog on top of the deploy modal); only
 // the top-most one reacts to Escape.
 const modalStack: number[] = [];
-let modalSeq = 0;
 
 export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, footer, headerAction, hideScrollbar }: ModalProps) {
   const { t } = useI18n();
@@ -28,22 +27,6 @@ export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, f
   const modalIdRef = useRef(0);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
-  const titleRef = useRef(title);
-  titleRef.current = title;
-
-  // TEMPORARY FLICKER PROBE — diagnostic only, no behavior change. Logs every
-  // mount/unmount so the next flicker can be attributed: real unmount/remount
-  // (MOUNT/UNMOUNT pairs) vs purely visual (no log lines). Remove after use.
-  useEffect(() => {
-    modalIdRef.current = ++modalSeq;
-    modalStack.push(modalIdRef.current);
-    console.warn(`[modal-probe] MOUNT "${titleRef.current}" (seq=${modalIdRef.current}, stack=${modalStack.length})`);
-    return () => {
-      console.warn(`[modal-probe] UNMOUNT "${titleRef.current}" (seq=${modalIdRef.current})`);
-      const i = modalStack.lastIndexOf(modalIdRef.current);
-      if (i >= 0) modalStack.splice(i, 1);
-    };
-  }, []);
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;

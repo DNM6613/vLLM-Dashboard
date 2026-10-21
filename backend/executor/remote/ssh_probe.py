@@ -20,6 +20,14 @@ _ssh_probe_fp: tuple | None = None
 _ssh_probe_thread: threading.Thread | None = None
 _ssh_probe_stop = threading.Event()
 
+# Diagnostics for the 2026-10-21 power-off incident (the probe thread
+# emitted no transition log across the real off window and the container
+# was redeployed before the scene could be inspected): _ssh_probe_ts lets
+# API readers detect a stale cache and the loop heartbeat proves thread
+# liveness. Logging only — probe behavior and return values are unchanged.
+_ssh_probe_ts: float = 0.0
+_stale_warn_ts: float = 0.0
+
 def _ssh_probe_fingerprint(config) -> tuple:
     return (
         config.host,
@@ -97,18 +105,20 @@ def _probe_once(config) -> dict[str, Any]:
                     client, config.host, config.ssh_port, config.ssh_username)
 
 def _run_ssh_probe() -> dict[str, Any]:
-    global _ssh_probe_cache, _ssh_probe_fp
+    global _ssh_probe_cache, _ssh_probe_fp, _ssh_probe_ts
     from ...config.remote_client import config_manager
     config = config_manager.get_config()
     result = _probe_once(config)
     with _ssh_probe_lock:
         _ssh_probe_cache = result
         _ssh_probe_fp = _ssh_probe_fingerprint(config)
+        _ssh_probe_ts = time.monotonic()
     return result
 
 def _ssh_probe_loop() -> None:
     last_connected: bool | None = None
     last_diag_ts = 0.0
+    last_heartbeat = 0.0
     while not _ssh_probe_stop.is_set():
         time.sleep(SSH_PROBE_INTERVAL)
         if _ssh_probe_stop.is_set():
@@ -132,13 +142,18 @@ def _ssh_probe_loop() -> None:
                     "SSH shared probe failed: %s", result.get("error"))
             last_connected = connected
             last_diag_ts = now
+        if now - last_heartbeat >= 900.0:
+            logger.info(
+                "SSH shared probe heartbeat: connected=%s latency_ms=%s",
+                connected, result.get("latency_ms"))
+            last_heartbeat = now
         if connected:
             time.sleep(SSH_PROBE_INTERVAL)
             if _ssh_probe_stop.is_set():
                 return
 
 def check_ssh_connectivity(refresh: bool = False) -> dict[str, Any]:
-    global _ssh_probe_thread
+    global _ssh_probe_thread, _stale_warn_ts
     from ...config.remote_client import config_manager
     config = config_manager.get_config()
 
@@ -155,6 +170,17 @@ def check_ssh_connectivity(refresh: bool = False) -> dict[str, Any]:
     with _ssh_probe_lock:
         if (_ssh_probe_cache is not None
                 and _ssh_probe_fp == _ssh_probe_fingerprint(config)):
+            now = time.monotonic()
+            age = now - _ssh_probe_ts
+            if age > 15.0 and now - _stale_warn_ts >= 30.0:
+                # The shared thread refreshes every second; a cache this
+                # old means it is no longer making rounds (2026-10-21
+                # power-off incident: a stale 'connected' result kept the
+                # UI green while the machine was off).
+                _stale_warn_ts = now
+                logger.warning(
+                    "SSH shared probe cache %.0fs stale (thread may be blocked)",
+                    age)
             return dict(_ssh_probe_cache)
         if _ssh_probe_thread is None or not _ssh_probe_thread.is_alive():
             _ssh_probe_stop.clear()

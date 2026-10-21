@@ -23,6 +23,7 @@ import { DownloadModal } from '../components/modals/DownloadModal';
 import { LaunchConfigModal } from '../components/modals/LaunchConfigModal';
 import { BenchmarkModal } from '../components/modals/BenchmarkModal';
 import { terminalReset } from '../utils/terminalSink';
+import { deriveServerOn } from '../utils/powerState';
 import { useSettledFlag } from '../hooks/useSettledFlag';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { IconButton } from '../components/ui/IconButton';
@@ -42,7 +43,6 @@ export function HomePage() {
 
   const fetchHardwareMetrics = useHardwareStore(s => s.fetchHardwareMetrics);
   const fetchSoftware = useHardwareStore(s => s.fetchSoftware);
-  const hwWsConnected = useHardwareStore(s => s.hwWsConnected);
   useHardwareWebSocket();
 
   const fetchModelStatus = useModelStatusStore(s => s.fetchModelStatus);
@@ -103,7 +103,11 @@ export function HomePage() {
     : null;
   const openaiApiKey = modelRuntimeStatus?.api_key ?? null;
 
-  const serverOn = sshConnected || apiConnected;
+  // Power state is BMC-authoritative when the BMC is actually reporting
+  // (powerFresh); a stale 'off' held while the BMC is unreachable must not
+  // hide a machine that is actually up and serving, so deriveServerOn
+  // falls back to raw reachability otherwise.
+  const serverOn = deriveServerOn(bmcStatus, sshConnected, apiConnected);
 
   const serverOff = !serverOn;
   const powerOffShown = useSettledFlag(serverOff, 2000);
@@ -184,13 +188,6 @@ export function HomePage() {
               <span role="status" className="flex items-center gap-1.5">
                 <span className={`w-2 h-2 rounded-full ${apiConnected ? 'bg-success animate-pulse' : 'bg-danger'}`} />
                 <span className="text-xs text-text-muted">API: {apiConnected ? t('Connected') : t('Disconnected')}</span>
-              </span>
-              {/* Audit 2026-10-20 P3-7: the GPU cards keep showing their
-                  last values while the hardware WS is down (SSH still up) —
-                  the dot marks the numbers as no longer live. */}
-              <span role="status" className="flex items-center gap-1.5">
-                <span className={`w-2 h-2 rounded-full ${hwWsConnected ? 'bg-success animate-pulse' : 'bg-danger'}`} />
-                <span className="text-xs text-text-muted">HW: {hwWsConnected ? t('Connected') : t('Disconnected')}</span>
               </span>
             </div>
             <div className="flex items-center gap-2">

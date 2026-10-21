@@ -21,6 +21,8 @@ function pcieMaxMbs(gpu: GPUInfo): number {
   return perLane * lanes;
 }
 
+// Bar colors (user ruling 2026-10-21): core / memory green, PCIe Rx/Tx blue
+// (default bg-accent), power / temp amber (bg-warning).
 export const HardwareCards = memo(function HardwareCards({ sshConnected }: HardwareCardsProps) {
   const gpus = useHardwareStore(s => s.gpus);
   const cpu = useHardwareStore(s => s.cpu);
@@ -102,20 +104,7 @@ export const HardwareCards = memo(function HardwareCards({ sshConnected }: Hardw
                   <span className="text-text-muted">{t('Memory')}</span>
                   <span className="font-mono">{live ? <AnimatedNumber value={gpu.memory_used_mb ?? 0} format={(v) => `${formatSize(v * 1024 * 1024, true)} / ${formatSize((gpu.memory_total_mb ?? 0) * 1024 * 1024, true)}`} /> : 'N/A'}</span>
                 </div>
-                <ProgressBar value={live ? ((gpu.memory_used_mb ?? 0) / Math.max(gpu.memory_total_mb ?? 1, 1)) * 100 : 0} />
-                <div className="flex justify-between">
-                  <span className="text-text-muted">{t('Power')}</span>
-                  <span className="font-mono">{live ? <AnimatedNumber value={gpu.power_draw_w ?? 0} format={(v) => `${v.toFixed(0)}W / ${gpu.power_limit_w ?? 0}W`} /> : 'N/A'}</span>
-                </div>
-                <ProgressBar value={live ? ((gpu.power_draw_w ?? 0) / Math.max(gpu.power_limit_w ?? 1, 1)) * 100 : 0} />
-                <div className="flex justify-between">
-                  <span className="text-text-muted">{t('Temp')}</span>
-                  <span className="font-mono">{live ? <AnimatedNumber value={gpu.temperature_c ?? 0} format={(v) => `${v.toFixed(0)}°C`} /> : 'N/A'}</span>
-                </div>
-                <ProgressBar
-                  value={live ? ((gpu.temperature_c ?? 0) - 27) / (87 - 27) * 100 : 0}
-                  color={live ? ((gpu.temperature_c ?? 0) < 60 ? 'bg-accent' : (gpu.temperature_c ?? 0) > 80 ? 'bg-danger' : 'bg-warning') : 'bg-border'}
-                />
+                <ProgressBar value={live ? ((gpu.memory_used_mb ?? 0) / Math.max(gpu.memory_total_mb ?? 1, 1)) * 100 : 0} color="bg-success" />
                 <div className="flex justify-between">
                   <span className="text-text-muted">{t('PCIe Rx')}</span>
                   <span className="font-mono">{live && gpu.pcie_rx_mbs != null ? <AnimatedNumber value={gpu.pcie_rx_mbs} format={(v) => `${v.toFixed(0)} MB/s`} /> : 'N/A'}</span>
@@ -126,6 +115,19 @@ export const HardwareCards = memo(function HardwareCards({ sshConnected }: Hardw
                   <span className="font-mono">{live && gpu.pcie_tx_mbs != null ? <AnimatedNumber value={gpu.pcie_tx_mbs} format={(v) => `${v.toFixed(0)} MB/s`} /> : 'N/A'}</span>
                 </div>
                 <ProgressBar value={live && gpu.pcie_tx_mbs != null ? (gpu.pcie_tx_mbs / pcieMaxMbs(gpu)) * 100 : 0} />
+                <div className="flex justify-between">
+                  <span className="text-text-muted">{t('Power')}</span>
+                  <span className="font-mono">{live ? <AnimatedNumber value={gpu.power_draw_w ?? 0} format={(v) => `${v.toFixed(0)}W / ${gpu.power_limit_w ?? 0}W`} /> : 'N/A'}</span>
+                </div>
+                <ProgressBar value={live ? ((gpu.power_draw_w ?? 0) / Math.max(gpu.power_limit_w ?? 1, 1)) * 100 : 0} color="bg-warning" />
+                <div className="flex justify-between">
+                  <span className="text-text-muted">{t('Temp')}</span>
+                  <span className="font-mono">{live ? <AnimatedNumber value={gpu.temperature_c ?? 0} format={(v) => `${v.toFixed(0)}°C`} /> : 'N/A'}</span>
+                </div>
+                <ProgressBar
+                  value={live ? ((gpu.temperature_c ?? 0) - 27) / (87 - 27) * 100 : 0}
+                  color="bg-warning"
+                />
               </div>
             </div>
           ))}

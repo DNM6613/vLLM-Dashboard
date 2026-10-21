@@ -20,8 +20,6 @@ export const useHardwareStore = create<HardwareStore>((set) => ({
   memory: null,
   disk: null,
   software: null,
-  hwWsConnected: false,
-  setHwWsConnected: (v) => set({ hwWsConnected: v }),
 
   addMetrics: (payload) => {
     const gpus = payload.gpus || [];
