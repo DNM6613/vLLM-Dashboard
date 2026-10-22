@@ -1,7 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getServerConfig, shutdownServer } from '../api/serverConfig';
-import { showToast } from '../components/ui/toast';
 import { useServerConfig } from './useServerConfig';
 
 // Model-store API surface the hook touches on shutdown; hoisted so the
@@ -51,16 +50,12 @@ vi.mock('../stores/model', () => ({
   errMsg: vi.fn((e: unknown) => (e instanceof Error ? e.message : String(e))),
 }));
 
-vi.mock('../components/ui/toast', () => ({
-  showToast: vi.fn(),
-}));
-
 describe('useServerConfig shutdown', () => {
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it('shows no toast when the shutdown command fails (user ruling 2026-10-21: stay silent)', async () => {
+  it('resets the shutdown state when the shutdown command fails', async () => {
     vi.mocked(shutdownServer).mockRejectedValueOnce(new Error('Failed to connect to SSH'));
     const { result, unmount } = renderHook(() => useServerConfig());
 
@@ -75,12 +70,11 @@ describe('useServerConfig shutdown', () => {
 
     expect(shutdownServer).toHaveBeenCalledTimes(1);
     expect(failed).toBe(true);
-    expect(showToast).not.toHaveBeenCalled();
     expect(result.current.shuttingDown).toBe(false);
     unmount();
   });
 
-  it('shows no toast on a successful shutdown and syncs model status', async () => {
+  it('syncs model status on a successful shutdown', async () => {
     vi.mocked(shutdownServer).mockResolvedValueOnce({ status: 'success', stopped: true });
     const { result, unmount } = renderHook(() => useServerConfig());
 
@@ -88,7 +82,6 @@ describe('useServerConfig shutdown', () => {
       await result.current.confirmShutdownServer();
     });
 
-    expect(showToast).not.toHaveBeenCalled();
     expect(modelStoreApi.syncModelStatus).toHaveBeenCalled();
     expect(result.current.shuttingDown).toBe(false);
     unmount();

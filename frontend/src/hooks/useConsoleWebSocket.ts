@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { getWsUrl } from '../api/client';
-import { showToast } from '../components/ui/toast';
 import { useConsoleStore } from '../stores/console';
 import { useModelStore } from '../stores/model';
 import { terminalReset, terminalSize, terminalWrite } from '../utils/terminalSink';
@@ -47,15 +46,13 @@ export function useConsoleWebSocket() {
     // FE-8 (audit 2026-10-22): the start command travels over THIS socket —
     // if the first attempt fails to connect, the command never reached the
     // PTY and the backend rolls the model back to STOPPED within seconds.
-    // Say so once (terminal + toast); retried sockets only log to the
-    // terminal, so the user is told without toast spam.
+    // Say so once (terminal); retried sockets only log to the terminal.
     let firstStartAttempt = mode === 'start';
     const reportStartDeliveryFailure = (): boolean => {
       if (mode !== 'start' || !firstStartAttempt) return false;
       firstStartAttempt = false;
       const msg = tRef.current('Console connection failed — the start command may not have been delivered');
       terminalWrite(`\r\n\x1b[31m✗ ${msg}\x1b[0m\r\n`);
-      showToast(msg, 'error');
       return true;
     };
     let url: string;

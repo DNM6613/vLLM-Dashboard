@@ -2,7 +2,6 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../i18n';
 import { downloadModel } from '../api/models';
-import { showToast } from '../components/ui/toast';
 import { useModelDownload } from './useModelDownload';
 
 vi.mock('../api/models', () => ({
@@ -17,10 +16,6 @@ vi.mock('../api/models', () => ({
 vi.mock('../stores/model', () => ({
   useModelStore: vi.fn(() => ({ fetchModels: vi.fn(), scanModels: vi.fn() })),
   errMsgLocalized: vi.fn((e: unknown) => (e instanceof Error ? e.message : String(e))),
-}));
-
-vi.mock('../components/ui/toast', () => ({
-  showToast: vi.fn(),
 }));
 
 function renderDownload(hfToken: string, onSaveHfToken: (v: string) => Promise<void>) {
@@ -72,6 +67,5 @@ describe('useModelDownload HF token save', () => {
     const { result } = renderDownload('', onSaveHfToken);
     await openAndStart(result, 'hf_abc123');
     expect(vi.mocked(downloadModel)).not.toHaveBeenCalled();
-    expect(vi.mocked(showToast)).toHaveBeenCalled();
   });
 });

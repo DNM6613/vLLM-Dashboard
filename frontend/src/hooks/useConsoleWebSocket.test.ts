@@ -1,14 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { getWsUrl } from '../api/client';
-import { showToast } from '../components/ui/toast';
+import { terminalWrite } from '../utils/terminalSink';
 import { useConsoleWebSocket } from './useConsoleWebSocket';
 
 vi.mock('../api/client', () => ({
   getWsUrl: vi.fn(async () => 'ws://test/console'),
-}));
-vi.mock('../components/ui/toast', () => ({
-  showToast: vi.fn(),
 }));
 vi.mock('../stores/console', () => ({
   useConsoleStore: { getState: () => ({ setConnected: vi.fn() }) },
@@ -77,7 +74,7 @@ describe('useConsoleWebSocket', () => {
     MockWebSocket.instances = [];
     vi.mocked(getWsUrl).mockReset();
     vi.mocked(getWsUrl).mockResolvedValue('ws://test/console');
-    vi.mocked(showToast).mockReset();
+    vi.mocked(terminalWrite).mockReset();
     vi.stubGlobal('WebSocket', MockWebSocket);
     vi.useFakeTimers();
   });
@@ -180,7 +177,7 @@ describe('useConsoleWebSocket', () => {
     unmount();
   });
 
-  it('toasts once when the first start socket fails (FE-8)', async () => {
+  it('writes a delivery-failure line to the terminal once when the first start socket fails (FE-8)', async () => {
     const { result, unmount } = renderHook(() => useConsoleWebSocket());
     await act(async () => {
       result.current.startConsoleForModel('vllm serve m1');
@@ -190,28 +187,28 @@ describe('useConsoleWebSocket', () => {
     await act(async () => {
       ws.fail();
     });
-    expect(showToast).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(showToast).mock.calls[0][0]).toContain('start command');
-    // the reconnect is console mode — a second failure only logs to the
-    // terminal, no second toast
+    expect(terminalWrite).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(terminalWrite).mock.calls[0][0]).toContain('start command');
+    // the reconnect is console mode — a second failure writes no second
+    // delivery-failure line
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
     await act(async () => {
       last().fail();
     });
-    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(terminalWrite).toHaveBeenCalledTimes(1);
     unmount();
   });
 
-  it('toasts when the start ticket request fails before any socket (FE-8)', async () => {
+  it('writes a delivery-failure line when the start ticket request fails before any socket (FE-8)', async () => {
     vi.mocked(getWsUrl).mockRejectedValueOnce(new Error('401'));
     const { result, unmount } = renderHook(() => useConsoleWebSocket());
     await act(async () => {
       result.current.startConsoleForModel('vllm serve m1');
     });
     expect(MockWebSocket.instances).toHaveLength(0);
-    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(terminalWrite).toHaveBeenCalledTimes(1);
     // the reconnect is still scheduled (console mode)
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);

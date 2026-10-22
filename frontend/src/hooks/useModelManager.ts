@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { errMsg, errMsgLocalized, invalidateModelFetch, useModelStore } from '../stores/model';
+import { errMsgLocalized, invalidateModelFetch, useModelStore } from '../stores/model';
 import { useConsoleStore } from '../stores/console';
 import { ModelStatus } from '../types';
 import { useI18n } from '../i18n/context';
-import { showToast } from '../components/ui/toast';
 
 interface UseModelManagerParams {
   startConsoleForModel: (command: string) => void;
@@ -144,20 +143,16 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
       setLaunchCommand(result.config?.start_command || '');
       setLaunchEnvVars(result.config?.env_vars || '');
       setShowLaunchConfigModal(true);
-    } catch (e: unknown) {
-      // Audit 2026-10-22 FE-5: a failed launch-config open was a silent no-op
-      // (the button just looked dead). Surface the error instead.
-      showToast(errMsgLocalized(e) || t('Failed to load launch config'));
+    } catch {
     }
-  }, [getLaunchConfig, t]);
+  }, [getLaunchConfig]);
 
   const handleSaveLaunchConfig = async () => {
     setSavingLaunchConfig(true);
     try {
       await saveLaunchConfig(launchConfigModelId, { start_command: launchCommand, env_vars: launchEnvVars });
       setShowLaunchConfigModal(false);
-    } catch (e: unknown) {
-      showToast(errMsgLocalized(e) || t('Operation failed'));
+    } catch {
     } finally { setSavingLaunchConfig(false); }
   };
 
@@ -175,13 +170,12 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
     try {
       await deleteModel(req.modelId);
       await fetchModels();
-    } catch (e: unknown) {
-      showToast(errMsgLocalized(e) || t('Operation failed'));
+    } catch {
     } finally {
       deletingRef.current = false;
       setDeletingId(null);
     }
-  }, [deleteRequest, deleteModel, fetchModels, t]);
+  }, [deleteRequest, deleteModel, fetchModels]);
 
   const cancelDelete = useCallback(() => setDeleteRequest(null), []);
 
@@ -195,19 +189,13 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
       startConsoleForModel(command);
       await fetchModels();
       return true;
-    } catch (e: unknown) {
-      const msg = errMsg(e);
-      if (msg.includes('Start command not configured')) {
-        showToast(t("Start command not configured — open the model's Launch Config and set a start command first."));
-      } else {
-        showToast(t('Start failed: {msg}', { msg: msg || t('unknown error') }));
-      }
+    } catch {
       return false;
     } finally {
       startingRef.current = false;
       setStarting(false);
     }
-  }, [startModel, fetchModels, startConsoleForModel, t]);
+  }, [startModel, fetchModels, startConsoleForModel]);
 
   // Starting a second model while another one is running/loading would leave
   // two vLLM processes fighting for the GPU (single current-model platform),
@@ -232,14 +220,13 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
       await setModelLock(modelId, locked);
       await fetchModels();
       return true;
-    } catch (e: unknown) {
-      showToast(errMsgLocalized(e) || t('Operation failed'));
+    } catch {
       return false;
     } finally {
       lockingRef.current = false;
       setLockingId(null);
     }
-  }, [setModelLock, fetchModels, t]);
+  }, [setModelLock, fetchModels]);
 
   const doStopModel = useCallback(async (modelId: string): Promise<boolean> => {
     stoppingRef.current = true;
@@ -250,20 +237,17 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
     let stopped = false;
     try {
       const result = await stopModel(modelId);
-      if (result && result.stopped === false) {
-        showToast(t('Stop timed out: the process may still be running. GPU memory may remain in use.'));
-      } else {
+      if (!(result && result.stopped === false)) {
         stopped = true;
       }
-    } catch (e: unknown) {
-      showToast(errMsgLocalized(e) || t('Operation failed'));
+    } catch {
     } finally {
       stoppingRef.current = false;
       setStoppingId(null);
       fetchModels();
     }
     return stopped;
-  }, [stopModel, fetchModels, t]);
+  }, [stopModel, fetchModels]);
 
   const handleStopModel = useCallback((modelId: string) => {
     if (stoppingRef.current) return;
@@ -294,12 +278,8 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
     const stopped = await doStopModel(req.stopId);
     if (stopped) {
       await doStartModel(req.modelId);
-    } else {
-      // Audit 2026-10-22 FE-6: when the "stop first" step fails the start is
-      // silently skipped — say so, or the user believes the switch worked.
-      showToast(t('Stop failed — starting {name} was skipped. Resolve the running model and retry.', { name: req.name }), 'error');
     }
-  }, [startRequest, doStopModel, doStartModel, t]);
+  }, [startRequest, doStopModel, doStartModel]);
 
   const cancelStart = useCallback(() => setStartRequest(null), []);
 

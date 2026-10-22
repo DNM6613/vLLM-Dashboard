@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { errMsg, useModelStore } from '../stores/model';
-import { showToast } from '../components/ui/toast';
 import { getServerConfig, getSshStatus, getServerHealth, getDashboardHealth, updateServerConfig, shutdownServer, powerOnServer, getBmcStatus, resetModelsAfterPowerOff } from '../api/serverConfig';
 import type { ServerConfig as ServerConfigType, BmcStatus } from '../types';
 import { useI18n } from '../i18n/context';
@@ -179,7 +178,6 @@ export function useServerConfig() {
     try {
       const newConfig = await updateServerConfig(payload ?? { ...serverConfig });
       setServerConfig(newConfig);
-      showToast(t('Configuration saved'), 'info');
       setShowServerConfig(false);
       checkServerConnection();
     } catch (error: unknown) {

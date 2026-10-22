@@ -5,13 +5,9 @@ import { ConsolePanel } from './ConsolePanel';
 import { ModelStatus } from '../../types';
 import type { ModelInfo } from '../../types';
 import { copyText } from '../../utils/clipboard';
-import { showToast } from '../ui/toast';
 
 vi.mock('../../utils/clipboard', () => ({
   copyText: vi.fn(() => Promise.resolve(true)),
-}));
-vi.mock('../ui/toast', () => ({
-  showToast: vi.fn(),
 }));
 vi.mock('./ChatTab', () => ({
   ChatTab: () => null,
@@ -90,7 +86,6 @@ describe('ConsolePanel Ctrl+C copy', () => {
     state.keyCb = null;
     state.selection = '';
     vi.mocked(copyText).mockClear();
-    vi.mocked(showToast).mockClear();
     cleanup();
   });
 
@@ -103,8 +98,6 @@ describe('ConsolePanel Ctrl+C copy', () => {
     state.keyCb?.({ domEvent: new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }), key: '\x03' });
     await flush();
     expect(copyText).toHaveBeenCalledWith('line two: selectable text 12345');
-    // Success is silent: no "Copied" toast (user ruling 2026-10-22).
-    expect(showToast).not.toHaveBeenCalled();
   });
 
   it('does not copy on Ctrl+C without a selection', async () => {
@@ -113,7 +106,6 @@ describe('ConsolePanel Ctrl+C copy', () => {
     state.keyCb?.({ domEvent: new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }), key: '\x03' });
     await flush();
     expect(copyText).not.toHaveBeenCalled();
-    expect(showToast).not.toHaveBeenCalled();
   });
 
   it('ignores Ctrl+Shift+C (browser DevTools shortcut)', async () => {
@@ -125,18 +117,6 @@ describe('ConsolePanel Ctrl+C copy', () => {
     });
     await flush();
     expect(copyText).not.toHaveBeenCalled();
-    expect(showToast).not.toHaveBeenCalled();
-  });
-
-  it('toasts an error only when the copy fails', async () => {
-    vi.mocked(copyText).mockResolvedValueOnce(false);
-    renderPanel();
-    state.selection = 'text';
-    state.keyCb?.({ domEvent: new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }), key: '\x03' });
-    await flush();
-    expect(copyText).toHaveBeenCalledWith('text');
-    expect(showToast).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(showToast).mock.calls[0][1]).toBe('error');
   });
 });
 

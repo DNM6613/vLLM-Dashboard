@@ -4,7 +4,7 @@ import { useI18n } from '../i18n/context';
 import { updateServerConfig } from '../api/serverConfig';
 import { useTheme } from '../hooks/useTheme';
 import { invalidateHardwareFetch, invalidateSoftwareFetch, useHardwareStore } from '../stores/hardware';
-import { useModelStore, errMsgLocalized } from '../stores/model';
+import { useModelStore } from '../stores/model';
 import { useServerConfig } from '../hooks/useServerConfig';
 import { useHardwareWebSocket } from '../hooks/useHardwareWebSocket';
 import { useModelStatusStore } from '../stores/modelStatus';
@@ -27,7 +27,6 @@ import { deriveServerOn } from '../utils/powerState';
 import { useSettledFlag } from '../hooks/useSettledFlag';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { IconButton } from '../components/ui/IconButton';
-import { showToast } from '../components/ui/toast';
 
 // After clicking power-on the button keeps spinning for this long (unless
 // the server comes up sooner): the backend reports success as soon as the
@@ -134,13 +133,11 @@ export function HomePage() {
     }, POWER_ON_WAIT_MS);
     try {
       await handlePowerOnServer();
-    } catch (e: unknown) {
+    } catch {
       clearPowerOnWait();
       setPowerOnWaiting(false);
-      const reason = errMsgLocalized(e);
-      showToast(`${t('Power-on failed')}${reason ? `: ${reason}` : ''}`, 'error');
     }
-  }, [handlePowerOnServer, clearPowerOnWait, t]);
+  }, [handlePowerOnServer, clearPowerOnWait]);
   useEffect(() => {
     if (serverOn) {
       clearPowerOnWait();

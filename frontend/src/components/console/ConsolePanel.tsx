@@ -12,7 +12,6 @@ import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from '../../styles/terminalTheme'
 import { ChatTab } from './ChatTab';
 import { ConnectionsPanel } from './ConnectionsPanel';
 import { copyText } from '../../utils/clipboard';
-import { showToast } from '../ui/toast';
 import type { ModelInfo } from '../../types';
 
 type ConsoleTab = 'console' | 'chat' | 'connections';
@@ -47,10 +46,6 @@ export const ConsolePanel = memo(function ConsolePanel({ models, onSendResize }:
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<(() => void) | null>(null);
   const { t } = useI18n();
-  // Live ref for the long-lived terminal effect: adding `t` to its deps would
-  // rebuild the terminal on a language switch and drop the console history.
-  const tRef = useRef(t);
-  tRef.current = t;
   const { theme } = useTheme();
   const [tab, setTab] = useState<ConsoleTab>('console');
 
@@ -90,12 +85,7 @@ export const ConsolePanel = memo(function ConsolePanel({ models, onSendResize }:
       const mod = domEvent.ctrlKey || domEvent.metaKey;
       if (mod && !domEvent.shiftKey && !domEvent.altKey
           && (domEvent.key === 'c' || domEvent.key === 'C') && term.hasSelection()) {
-        void copyText(term.getSelection()).then((ok) => {
-          // Silent on success (user ruling 2026-10-22: no "Copied" toast); a
-          // failed copy must stay visible, or a silent no-op looks like the
-          // original bug (user cannot tell the copy never landed).
-          if (!ok) showToast(tRef.current('Copy failed'), 'error');
-        });
+        void copyText(term.getSelection());
       }
     });
     const core = term as unknown as { _core?: { viewport?: { scrollBarWidth: number } } };

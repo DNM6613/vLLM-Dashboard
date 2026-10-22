@@ -5,8 +5,6 @@ import type { CudaInfo, DeployState, DriverList, Preflight, VllmInfo } from '../
 import { tRaw } from '../i18n/strings';
 import { useDeployment } from './useDeployment';
 
-vi.mock('../components/ui/toast', () => ({ showToast: vi.fn() }));
-
 vi.mock('../api/deployment', () => ({
   apiErrorMessage: (e: unknown) => (e instanceof Error ? e.message : String(e)),
   applyCuda: vi.fn(),

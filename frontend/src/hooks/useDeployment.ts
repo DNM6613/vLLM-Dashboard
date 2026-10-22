@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { showToast } from '../components/ui/toast';
 import { tRaw } from '../i18n/strings';
 import {
   apiErrorMessage,
@@ -143,12 +142,11 @@ export function useDeployment(open: boolean) {
     return () => clearInterval(timer);
   }, [open, refreshPreflight, refreshDrivers, refreshState, refreshCuda, refreshVllm]);
 
-  const runAction = useCallback(async (fn: () => Promise<unknown>, successMsg = ''): Promise<boolean> => {
+  const runAction = useCallback(async (fn: () => Promise<unknown>): Promise<boolean> => {
     setBusy(true);
     setError('');
     try {
       await fn();
-      if (successMsg) showToast(tRaw(successMsg), 'info');
       await refreshDrivers();
       await refreshState();
       return true;
@@ -162,7 +160,6 @@ export function useDeployment(open: boolean) {
 
   const handleApplyDriver = useCallback((pkg: string) => runAction(
     () => applyDriver(pkg),
-    'Driver task started.',
   ), [runAction]);
 
   const handleReboot = useCallback(() => runAction(() => rebootServer()), [runAction]);
@@ -175,7 +172,6 @@ export function useDeployment(open: boolean) {
 
   const handleVllm = useCallback((payload: VllmApplyPayload) => runAction(
     () => applyVllm(payload),
-    'vLLM install task started.',
   ), [runAction]);
 
   const handleRollback = useCallback((target: 'driver' | 'vllm') => runAction(

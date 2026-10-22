@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { errMsgLocalized, useModelStore } from '../stores/model';
+import { useModelStore } from '../stores/model';
 import { checkCliTools, downloadModel, getDownloadStatus, getInstallStatus, installCliTool, stopDownload } from '../api/models';
 import type { CliStatus } from '../types';
 import { useI18n } from '../i18n/context';
-import { showToast } from '../components/ui/toast';
 
 interface UseModelDownloadParams {
   defaultSavePath: string;
@@ -142,9 +141,7 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted, hfToken
       try {
         await saveHfTokenRef.current(hfTokenDraft);
         hfTokenInitialRef.current = hfTokenDraft;
-      } catch (e: unknown) {
-        const msg = errMsgLocalized(e);
-        showToast(tRef.current('Failed to save HF token') + (msg ? `: ${msg}` : ''), 'error');
+      } catch {
         return;
       }
     }
@@ -175,7 +172,6 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted, hfToken
       const maxPolls = 1200;
       const logFile = result.log_file;
       const stopPolling = () => {
-        showToast(tRef.current('Download status polling stopped after 1 hour — the download may still be running in the background. Check the model list or backend logs for its real status.'));
         setDownloading(false); setDownloadProgress(0); setDownloadStalledSecs(null); setActiveDownloadName(''); fetchModels();
       };
       const pollDownload = async () => {
@@ -200,16 +196,12 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted, hfToken
             setTimeout(() => { if (isMountedRef.current) { setDownloadProgress(0); setActiveDownloadName(''); } }, 2000);
             scanModels().then(() => fetchModels());
           } else if (status.status === 'failed') {
-            const reason = status.reason?.slice(0, 300);
-            showToast(tRef.current('Download failed') + (reason ? `\n${reason}` : ''));
             setDownloadStalledSecs(null);
             setDownloading(false); setDownloadProgress(0); setActiveDownloadName('');
             fetchModels();
           } else if (status.status === 'stopped') {
-            const wasCancelled = cancelRequestedRef.current;
             cancelRequestedRef.current = false;
             setDownloadStalledSecs(null);
-            if (!wasCancelled) showToast(tRef.current('Download stopped before completion'));
             setDownloading(false); setDownloadProgress(0); setActiveDownloadName('');
             fetchModels();
           } else {
@@ -224,9 +216,7 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted, hfToken
         }
       };
       downloadPollTimeoutRef.current = setTimeout(pollDownload, 3000);
-    } catch (e: unknown) {
-      const msg = errMsgLocalized(e);
-      showToast(tRef.current('Download request failed') + (msg ? `: ${msg}` : ''));
+    } catch {
       setDownloading(false); setDownloadProgress(0); setActiveDownloadName('');
     }
   };
@@ -237,10 +227,8 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted, hfToken
     cancelRequestedRef.current = true;
     try {
       await stopDownload(repo);
-      if (isMountedRef.current) showToast(tRef.current('Download cancelled'));
     } catch {
       cancelRequestedRef.current = false;
-      if (isMountedRef.current) showToast(tRef.current('Cancel download failed'));
     }
   };
 

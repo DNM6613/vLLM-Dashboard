@@ -7,7 +7,6 @@ import type { ModelInfo, BenchmarkResult, DownloadProgressInfo } from '../../typ
 import { useI18n } from '../../i18n/context';
 import { IconButton } from '../ui/IconButton';
 import { ProgressBar } from '../ui/ProgressBar';
-import { showToast } from '../ui/toast';
 
 interface ModelListProps {
   models: ModelInfo[];
@@ -38,9 +37,7 @@ interface ModelListProps {
 function ModelApiInfo({ endpoint, apiKey }: { endpoint: string | null; apiKey: string | null }) {
   const { t } = useI18n();
   const copy = (text: string) => {
-    void copyText(text).then((ok) => {
-      showToast(ok ? t('Copied') : t('Copy failed'), ok ? 'info' : 'error');
-    });
+    void copyText(text);
   };
   return (
     <div className="mt-1 space-y-1">
@@ -174,11 +171,7 @@ export const ModelList = memo(function ModelList({
                   <IconButton
                     size="xs"
                     ariaLabel={t('Copy model name')}
-                    onClick={() => {
-                      void copyText(model.name).then((ok) => {
-                        showToast(ok ? t('Copied') : t('Copy failed'), ok ? 'info' : 'error');
-                      });
-                    }}
+                    onClick={() => void copyText(model.name)}
                   >
                     <Copy className="w-3 h-3 text-text-muted" />
                   </IconButton>
@@ -273,11 +266,7 @@ export const ModelList = memo(function ModelList({
                 <IconButton
                   size="xs"
                   ariaLabel={t('Copy model path')}
-                  onClick={() => {
-                    void copyText(model.path).then((ok) => {
-                      showToast(ok ? t('Copied') : t('Copy failed'), ok ? 'info' : 'error');
-                    });
-                  }}
+                  onClick={() => void copyText(model.path)}
                 >
                   <Copy className="w-3 h-3 text-text-muted" />
                 </IconButton>
