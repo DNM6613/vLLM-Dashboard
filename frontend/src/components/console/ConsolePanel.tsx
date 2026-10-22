@@ -11,6 +11,8 @@ import { getCurrentTheme, useTheme } from '../../hooks/useTheme';
 import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from '../../styles/terminalTheme';
 import { ChatTab } from './ChatTab';
 import { ConnectionsPanel } from './ConnectionsPanel';
+import { copyText } from '../../utils/clipboard';
+import { showToast } from '../ui/toast';
 import type { ModelInfo } from '../../types';
 
 type ConsoleTab = 'console' | 'chat' | 'connections';
@@ -45,6 +47,10 @@ export const ConsolePanel = memo(function ConsolePanel({ models, onSendResize }:
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<(() => void) | null>(null);
   const { t } = useI18n();
+  // Live ref for the long-lived terminal effect: adding `t` to its deps would
+  // rebuild the terminal on a language switch and drop the console history.
+  const tRef = useRef(t);
+  tRef.current = t;
   const { theme } = useTheme();
   const [tab, setTab] = useState<ConsoleTab>('console');
 
@@ -66,6 +72,26 @@ export const ConsolePanel = memo(function ConsolePanel({ models, onSendResize }:
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.open(container);
+    // xterm 5.5 has no Ctrl+C copy path of its own (bundle-verified): its only
+    // copy hook is a `copy`-event listener, and the browser fires that event
+    // only when a DOM selection exists — xterm's selection is internal state,
+    // so on this read-only terminal Ctrl+C was a silent no-op while
+    // right-click always worked (user report 2026-10-22). onKey fires before
+    // the disableStdin check, so copy explicitly with the same util the model
+    // copy buttons use. Check domEvent.key, not the onKey `key` arg — xterm
+    // passes its processed key there (Ctrl+C = ETX '\x03').
+    term.onKey(({ domEvent }) => {
+      const mod = domEvent.ctrlKey || domEvent.metaKey;
+      if (mod && !domEvent.shiftKey && !domEvent.altKey
+          && (domEvent.key === 'c' || domEvent.key === 'C') && term.hasSelection()) {
+        void copyText(term.getSelection()).then((ok) => {
+          // Silent on success (user ruling 2026-10-22: no "Copied" toast); a
+          // failed copy must stay visible, or a silent no-op looks like the
+          // original bug (user cannot tell the copy never landed).
+          if (!ok) showToast(tRef.current('Copy failed'), 'error');
+        });
+      }
+    });
     const core = term as unknown as { _core?: { viewport?: { scrollBarWidth: number } } };
     if (core._core?.viewport) core._core.viewport.scrollBarWidth = 0;
     fit.fit();
