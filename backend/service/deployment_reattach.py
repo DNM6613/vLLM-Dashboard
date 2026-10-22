@@ -83,6 +83,12 @@ class ReattachMixin:
         re-run instruction once the job settles."""
         executor = _ds.get_remote_executor()
         log_file, pid_file, exit_file = job["log"], job["pid"], job["exit"]
+        # Audit 2026-10-22 REM-6: the sudo password temp file is part of the
+        # job's remote footprint — every terminal branch must delete it (it
+        # is chmod 600 plaintext and must not outlive the job). Older jobs
+        # (pre-REM-6) have no "pw" key; _cleanup's rm -f tolerates the miss.
+        pw_file = job.get("pw", "")
+        cleanup_paths = [p for p in (log_file, pid_file, exit_file, pw_file) if p]
         marker = "VDB_POLL"
         offset = 0
         gone_polls = 0
@@ -92,7 +98,7 @@ class ReattachMixin:
                 event = self._cancel.get(task.id)
             if event is not None and event.is_set():
                 self._kill_long(task.id, pid_file)
-                self._cleanup(task.id, log_file, pid_file, exit_file)
+                self._cleanup(task.id, *cleanup_paths)
                 with self._lock:
                     task.status = "cancelled"
                     task.finished_at = _now_iso()
@@ -128,6 +134,10 @@ class ReattachMixin:
                     code = int(status.split(":", 1)[1])
                 except ValueError:
                     code = -1
+                # Audit 2026-10-22 REM-6: clean the remote job files (incl. the
+                # sudo password temp) on the terminal branch — the job has
+                # settled, so nothing needs them any more.
+                self._cleanup(task.id, *cleanup_paths)
                 self._finalize_reattached(task, code)
                 return
             if status == "VDB_RUNNING":
@@ -135,6 +145,9 @@ class ReattachMixin:
             elif status == "VDB_GONE":
                 gone_polls += 1
                 if gone_polls >= 3:
+                    # Audit 2026-10-22 REM-6: clean the remote job files
+                    # (incl. the sudo password temp) before finalizing.
+                    self._cleanup(task.id, *cleanup_paths)
                     self._finalize_reattached(task, None)
                     return
             if time.monotonic() > deadline:
@@ -143,7 +156,7 @@ class ReattachMixin:
                 # outlives the 6h watch window must be terminated, not just
                 # abandoned: it still holds the GPU / apt locks remotely.
                 self._kill_long(task.id, pid_file)
-                self._cleanup(task.id, log_file, pid_file, exit_file)
+                self._cleanup(task.id, *cleanup_paths)
                 self._finalize_reattached(task, None)
                 return
             time.sleep(2.5)
@@ -175,11 +188,22 @@ class ReattachMixin:
     def _kill_long(self, task_id: str, pid_file: str) -> None:
         """Kill the remote nohup job's whole process tree (wrapper bash →
         sudo → apt). The wrapper is not a process-group leader, so walk the
-        process tree recursively instead of a group signal."""
+        process tree recursively instead of a group signal.
+
+        Audit 2026-10-22 REM-12: re-check /proc/<pid>/cmdline still carries
+        the job's log base name before killing — the pid file is never
+        removed, so a recycled pid (a long-lived process reusing the number)
+        would otherwise have its whole tree killed. Mirrors the reattach
+        probe's cmdline re-check; the wrapper's own cmdline references the
+        exit file (a superset of the base name), so a live job always
+        matches and a recycled pid never does.
+        """
         with suppress(Exception):
             _ds.get_remote_executor().execute(
-                f"P=$(cat {pid_file} 2>/dev/null); "
-                "if [ -n \"$P\" ] && kill -0 \"$P\" 2>/dev/null; then "
+                f"PFILE={shlex.quote(pid_file)}; P=$(cat \"$PFILE\" 2>/dev/null); "
+                "B=${PFILE%.log.pid}; "
+                "if [ -n \"$P\" ] && kill -0 \"$P\" 2>/dev/null && "
+                "tr '\\0' ' ' < \"/proc/$P/cmdline\" 2>/dev/null | grep -qF \"$B\"; then "
                 "kterm() { for c in $(ps -o pid= --ppid \"$1\" 2>/dev/null); do kterm \"$c\"; done; kill -TERM \"$1\" 2>/dev/null; }; "
                 "kkill() { for c in $(ps -o pid= --ppid \"$1\" 2>/dev/null); do kkill \"$c\"; done; kill -KILL \"$1\" 2>/dev/null; }; "
                 "kterm \"$P\"; sleep 2; kkill \"$P\"; echo VDB_KILLED; else echo VDB_GONE; fi",

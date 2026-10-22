@@ -58,11 +58,22 @@ async def lifespan(_: FastAPI):
     finally:
         await stop_watchdog()
         await stop_driver_reconcile_timer()
+        # Audit 2026-10-22 BCK-13: cancel pending start-verification probes
+        # (plain 10 s delayed asyncio tasks) so they stop poking the remote
+        # after the app is shutting down. Local import matches the
+        # close_http_client pattern below (avoids an import at module load).
+        from .service.model_service import stop_start_probes
+        stop_start_probes()
         await hardware_broadcaster.shutdown()
         from .config.remote_client import close_http_client
         await close_http_client()
 
-app = FastAPI(title="vLLM-Dashboard", version=__version__, lifespan=lifespan)
+# Audit 2026-10-22 SEC-3 (user ruling: close all three): the interactive
+# docs / OpenAPI schema endpoints serve the full route listing and are an
+# information-leak surface on a LAN dashboard — the deploy verify now probes
+# a concrete API route instead of /openapi.json (tools/server_deploy.py).
+app = FastAPI(title="vLLM-Dashboard", version=__version__, lifespan=lifespan,
+              docs_url=None, redoc_url=None, openapi_url=None)
 
 app.middleware("http")(auth_middleware)
 app.middleware("http")(request_id_metrics_middleware)

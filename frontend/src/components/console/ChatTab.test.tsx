@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { I18nProvider } from '../../i18n';
 import { ChatTab } from './ChatTab';
 import { ModelStatus } from '../../types';
@@ -21,6 +21,7 @@ const mockChat = {
   streaming: false,
   send: vi.fn(),
   stop: vi.fn(),
+  clear: vi.fn(),
   queue: [] as string[],
   removeQueued: vi.fn(),
   editQueued: vi.fn(),
@@ -167,5 +168,27 @@ describe('ChatTab transcript auto-scroll (audit 2026-10-22 FE-3)', () => {
       </I18nProvider>,
     );
     expect(el.scrollTop).toBe(0);
+  });
+});
+
+describe('ChatTab clear button (audit 2026-10-22 FE-10)', () => {
+  afterEach(() => {
+    mockChat.entries = [];
+    vi.mocked(mockChat.clear).mockClear();
+    cleanup();
+  });
+
+  it('offers a clear button while there are entries and hides it on an empty transcript', () => {
+    mockChat.entries = [entryWithContent('hello')];
+    const { unmount } = renderChat();
+    const btn = screen.getByTitle('Clear chat');
+    fireEvent.click(btn);
+    expect(mockChat.clear).toHaveBeenCalledTimes(1);
+
+    // empty transcript: the button disappears
+    unmount();
+    mockChat.entries = [];
+    renderChat();
+    expect(screen.queryByTitle('Clear chat')).toBeNull();
   });
 });

@@ -20,6 +20,7 @@ export const useHardwareStore = create<HardwareStore>((set) => ({
   memory: null,
   disk: null,
   software: null,
+  lastUpdated: null,
 
   addMetrics: (payload) => {
     const gpus = payload.gpus || [];
@@ -28,6 +29,8 @@ export const useHardwareStore = create<HardwareStore>((set) => ({
       cpu: payload.cpu || state.cpu,
       memory: payload.memory || state.memory,
       disk: payload.disk || state.disk,
+      // FE-7: a received frame is fresh evidence the feed is alive.
+      lastUpdated: Date.now(),
     }));
   },
 
@@ -41,6 +44,8 @@ export const useHardwareStore = create<HardwareStore>((set) => ({
           cpu: data.cpu || null,
           memory: data.memory || null,
           disk: data.disk || null,
+          // FE-7: same for the REST fallback (initial load / WS gap).
+          lastUpdated: Date.now(),
         });
       }
     } catch (error) {

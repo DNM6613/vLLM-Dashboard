@@ -70,7 +70,13 @@ export const ConsolePanel = memo(function ConsolePanel({ models, onSendResize }:
     termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.loadAddon(new WebLinksAddon());
+    term.loadAddon(new WebLinksAddon((_event, uri) => {
+      // Audit 2026-10-22 FE-12: the default handler window.opens whatever its
+      // URL regex matched — arbitrary PTY output could carry a link a user
+      // then clicks. Only open well-formed http(s) links, isolated tab.
+      if (!/^https?:\/\//i.test(uri)) return;
+      window.open(uri, '_blank', 'noopener,noreferrer');
+    }));
     term.open(container);
     // xterm 5.5 has no Ctrl+C copy path of its own (bundle-verified): its only
     // copy hook is a `copy`-event listener, and the browser fires that event

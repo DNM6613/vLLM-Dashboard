@@ -15,7 +15,6 @@ so the SSH probe load on an (usually down) host is unchanged.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 
 from . import deployment_service as ds
@@ -57,6 +56,13 @@ async def stop_driver_reconcile_timer() -> None:
     _stopping = True
     if _task is not None:
         _task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
+        # Audit 2026-10-22 BCK-9: only the expected CancelledError is
+        # swallowed — the old suppress(CancelledError, Exception) hid real
+        # shutdown-path bugs without a trace.
+        try:
             await _task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("Driver reconcile timer: loop failed to stop cleanly")
         _task = None

@@ -201,8 +201,14 @@ class TaskContext:
         # manager re-attaches a still-live job, and cancellation needs the
         # pid file to kill the remote process tree.
         with self.manager._lock:
+            # Audit 2026-10-22 REM-6: include the sudo password temp file so a
+            # dashboard restart (reattach) knows its path and can delete it on
+            # the job's terminal branch — it is chmod 600 plaintext and must
+            # not outlive the job. _cleanup's rm -f tolerates a missing file,
+            # so the passwordless-sudo case (no pw file written) is safe.
             self.task.result["job_files"] = {
                 "log": log_file, "pid": pid_file, "exit": exit_file,
+                "pw": pw_file,
             }
             self.manager._persist_locked()
 

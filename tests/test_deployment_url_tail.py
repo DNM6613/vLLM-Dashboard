@@ -41,6 +41,17 @@ class TestUrlWhitelist(unittest.TestCase):
         self.assertFalse(
             URL_RE.fullmatch("https://pypi.org/simple/ with space"))
 
+    def test_rejects_query_containing_space(self):
+        # Audit 2026-10-22 REM-10: the query class was written ``[^\\s]`` in a
+        # raw string — two backslashes, i.e. "not (literal backslash, letter
+        # s)" — so a SPACE passed the "whitelist". It is now ``[^\s]``.
+        for url in (
+            "https://pypi.org/simple/?api key=abc",
+            "https://pypi.org/simple/?key=abc def",
+            "https://pypi.org/simple/?a=1 ;reboot",
+        ):
+            self.assertFalse(URL_RE.fullmatch(url), url)
+
 
 class TestTailOffset(unittest.TestCase):
     def test_ascii_advances_by_byte_length(self):

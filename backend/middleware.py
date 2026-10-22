@@ -121,12 +121,16 @@ async def request_id_metrics_middleware(request: Request, call_next):
 # The panel's own plumbing must not flood the log it serves.
 _MONITOR_PATH_PREFIX = "/api/v1/monitor/"
 _BODY_METHODS = ("POST", "PUT", "PATCH")
-# The only /api/v1 endpoint that receives plaintext credentials in one body
+# /api/v1 endpoints that receive plaintext credentials in one body
 # (api_key / ssh_password / bmc_password / hf_token — see the
-# server_config payload): its body must NOT enter the request log, which
-# GET /api/v1/monitor/requests returns verbatim to the connections panel
-# (audit 2026-10-20 P2-1). The entry is still recorded, with body=None.
-_CREDENTIAL_BODY_PATHS = ("/api/v1/config/server",)
+# server_config payload): their bodies must NOT enter the request log,
+# which GET /api/v1/monitor/requests returns verbatim to the connections
+# panel (audit 2026-10-20 P2-1). The entry is still recorded, with
+# body=None.
+# Audit 2026-10-22 SEC-2: the launch-config body is credential-shaped too —
+# start_command may carry --api-key and env_vars may carry VLLM_API_KEY,
+# which would otherwise leak verbatim into the access log.
+_CREDENTIAL_BODY_PATHS = ("/api/v1/config/server", "/api/v1/models/launch-config")
 # Audit 2026-10-22 SEC-1: the access log is an in-memory + on-disk trail
 # served verbatim to the connections panel, so an unbounded request body
 # must not be read into memory (or into the log) just to preview it.

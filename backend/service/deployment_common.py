@@ -47,10 +47,18 @@ PY_VER_RE = re.compile(r"^\d+\.\d{1,2}$")
 # ``bash -c``. Path segments are now restricted to unreserved characters;
 # an optional query (enterprise artifactory URLs) may use the usual query
 # charset. Interpolation is additionally shlex.quote'd at the pipeline sites.
+#
+# Audit 2026-10-22 REM-10: the query class was written ``[^\\s]`` in a raw
+# string — two backslashes — which the regex engine reads as "not (literal
+# backslash, letter s)", NOT "not whitespace". Spaces / ``;`` / backticks /
+# ``$()`` therefore passed the "whitelist" and only the shlex.quote at the
+# interpolation sites stood between them and a remote ``bash -c``. The
+# intended class is ``[^\s]`` (reject whitespace; a URL with a space is
+# malformed anyway).
 URL_RE = re.compile(
     r"^https?://[\w.\-]+(?::\d+)?"
     r"(?:/[\w.\-~]+)*/?"
-    r"(\?[^\\s]*)?$"
+    r"(\?[^\s]*)?$"
 )
 
 TASK_STATUSES = ("queued", "running", "success", "failed",

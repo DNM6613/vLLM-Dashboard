@@ -1,14 +1,23 @@
 FROM node:22-slim AS frontend-builder
 
+# Audit 2026-10-22 INF-5: opt-in npm registry mirror. Empty (the default)
+# keeps the official registry — identical to the previous build; intranet
+# hosts can pass --build-arg NPM_REGISTRY=https://... to speed up npm ci.
+ARG NPM_REGISTRY=""
+
 WORKDIR /build
 
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci
+RUN if [ -n "$NPM_REGISTRY" ]; then npm ci --registry "$NPM_REGISTRY"; else npm ci; fi
 
 COPY frontend/ ./
 RUN npm run build
 
 FROM python:3.12-slim AS runtime
+
+# Audit 2026-10-22 INF-5: opt-in pip index mirror (same semantics as the
+# NPM_REGISTRY build-arg above).
+ARG PIP_INDEX_URL=""
 
 WORKDIR /app
 
@@ -19,7 +28,11 @@ RUN apt-get update \
 RUN useradd -m -s /bin/bash appuser
 
 COPY requirements-lock.txt .
-RUN pip install --no-cache-dir -r requirements-lock.txt
+RUN if [ -n "$PIP_INDEX_URL" ]; then \
+        pip install --no-cache-dir -i "$PIP_INDEX_URL" -r requirements-lock.txt; \
+    else \
+        pip install --no-cache-dir -r requirements-lock.txt; \
+    fi
 
 COPY backend/ ./backend/
 

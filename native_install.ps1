@@ -1,7 +1,16 @@
 
+# Audit 2026-10-22 INF-4 (user ruling): renamed from deploy.ps1 — this
+# script installs a LOCAL NATIVE uvicorn instance (venv + local static\).
+# It is NOT the production path; the production docker deploy is
+# tools/server_deploy.py. (Comment before any statement: PowerShell would
+# otherwise execute a bare string as an expression and print it.)
+
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  vLLM-Dashboard 部署脚本" -ForegroundColor Cyan
+Write-Host "  vLLM-Dashboard 本地原生安装脚本" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "  ⚠ 注意：本脚本只做本地原生安装（venv + uvicorn + 本地 static\），" -ForegroundColor Yellow
+Write-Host "    不触碰生产 docker 容器。" -ForegroundColor Yellow
+Write-Host "    生产部署（10.131.1.9 docker 容器）请改用 tools/server_deploy.py。" -ForegroundColor Yellow
 
 Write-Host "`n[1/5] 检查 Python 安装..." -ForegroundColor Yellow
 $pyCmd = Get-Command python -ErrorAction SilentlyContinue
@@ -78,7 +87,7 @@ if ((Test-Path "frontend") -and (Get-Command node -ErrorAction SilentlyContinue)
 }
 
 Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "  部署完成!" -ForegroundColor Cyan
+Write-Host "  本地原生安装完成!" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "`n启动服务:" -ForegroundColor White
 Write-Host "  .\venv\Scripts\activate" -ForegroundColor Gray

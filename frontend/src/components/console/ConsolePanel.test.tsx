@@ -30,6 +30,7 @@ vi.stubGlobal('ResizeObserver', class {
 const state = vi.hoisted(() => ({
   keyCb: null as ((e: { domEvent: KeyboardEvent; key: string }) => void) | null,
   selection: '',
+  webLinks: null as ((e: unknown, uri: string) => void) | null,
 }));
 
 vi.mock('@xterm/xterm', () => ({
@@ -61,7 +62,11 @@ vi.mock('@xterm/addon-fit', () => ({
   FitAddon: class { fit() {} },
 }));
 vi.mock('@xterm/addon-web-links', () => ({
-  WebLinksAddon: class {},
+  WebLinksAddon: class {
+    constructor(handler?: (e: unknown, uri: string) => void) {
+      state.webLinks = handler ?? null;
+    }
+  },
 }));
 
 const models: ModelInfo[] = [
@@ -132,5 +137,28 @@ describe('ConsolePanel Ctrl+C copy', () => {
     expect(copyText).toHaveBeenCalledWith('text');
     expect(showToast).toHaveBeenCalledTimes(1);
     expect(vi.mocked(showToast).mock.calls[0][1]).toBe('error');
+  });
+});
+
+describe('ConsolePanel web links (audit 2026-10-22 FE-12)', () => {
+  afterEach(() => {
+    state.webLinks = null;
+    cleanup();
+  });
+
+  it('only opens well-formed http(s) links from terminal output', () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    renderPanel();
+    expect(state.webLinks).not.toBeNull();
+    const handler = state.webLinks!;
+    handler({}, 'https://docs.vllm.ai/en/latest/');
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith('https://docs.vllm.ai/en/latest/', '_blank', 'noopener,noreferrer');
+    // anything else in PTY output must NOT open
+    handler({}, 'file:///etc/passwd');
+    handler({}, 'javascript:alert(1)');
+    handler({}, 'www.example.com');
+    expect(open).toHaveBeenCalledTimes(1);
+    open.mockRestore();
   });
 });

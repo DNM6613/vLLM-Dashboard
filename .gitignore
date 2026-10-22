@@ -46,6 +46,13 @@ build/
 *.egg-info/
 frontend/dist/
 
+# Audit 2026-10-22 INF-15: local static build output (dev/native installs
+# copy the built frontend here) must never be committed — production
+# serves the bundle from the image build, and committing it would shadow
+# the real bundle in git history.
+static/
+static.bak.*
+
 *_deploy.tar
 
 data/logs/

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Pencil, Send, Square, X } from 'lucide-react';
+import { Loader2, Pencil, Send, Square, Trash2, X } from 'lucide-react';
 import { useI18n } from '../../i18n/context';
 import { useChat } from '../../hooks/useChat';
 import { getLaunchConfig } from '../../api/models';
@@ -38,7 +38,10 @@ export function ChatTab({ models }: ChatTabProps) {
   const [input, setInput] = useState('');
   const [thinkingSupported, setThinkingSupported] = useState(false);
   const [showThinking, setShowThinking] = useState(readShowThinking);
-  const { entries, streaming, send, stop, queue, removeQueued, editQueued } = useChat();
+  // Audit 2026-10-22 FE-10: the hook already exposes clear() (with its
+  // streaming guard) — wire it up so the 24/7 transcript can actually be
+  // emptied.
+  const { entries, streaming, send, stop, clear, queue, removeQueued, editQueued } = useChat();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const reasoningRef = useRef<HTMLPreElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -241,6 +244,17 @@ export function ChatTab({ models }: ChatTabProps) {
           className="flex-1 resize-none rounded-lg border border-border bg-bg px-2 py-1.5 font-mono text-sm disabled:opacity-50"
         />
         <div className="flex flex-col items-end gap-1.5">
+          {entries.length > 0 && (
+            <button
+              type="button"
+              title={t('Clear chat')}
+              onClick={clear}
+              disabled={streaming}
+              className="rounded p-1 text-text-muted hover:bg-bg-hover hover:text-danger disabled:opacity-40"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
           {thinkingSupported && (
             <label className="flex cursor-pointer items-center gap-1 text-xs text-text-muted select-none">
               <input

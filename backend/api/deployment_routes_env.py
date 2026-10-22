@@ -126,7 +126,13 @@ async def get_preflight():
 @router.get("/drivers")
 async def get_drivers():
     _require_remote()
-    ds.reconcile_driver_task()
+    # Audit 2026-10-22 BCK-6: reconcile does a remote SSH probe — the old
+    # synchronous call ran it in the event loop, stalling every in-flight
+    # request for the probe's duration while the frontend polls /drivers.
+    # The 30 s reconcile timer already runs it off-loop; this read endpoint
+    # must not block the loop either. complete_driver is idempotent, so a
+    # timer and a read-endpoint reconcile racing is safe.
+    await asyncio.to_thread(ds.reconcile_driver_task)
     executor = _dep.get_remote_executor()
     info = await _probe_in_thread(executor.get_driver_list, 45)
     if not info.get("success"):

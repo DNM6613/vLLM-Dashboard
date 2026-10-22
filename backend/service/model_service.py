@@ -64,6 +64,14 @@ _auto_bench_tasks: set[asyncio.Task] = set()
 _dl_growth: dict[str, tuple[str, int, float]] = {}
 _dl_total_cache: dict[str, tuple[float, int]] = {}
 
+def stop_start_probes() -> None:
+    """Cancel pending start-verification probes (shutdown, audit 2026-10-22
+    BCK-13). The 10 s delayed probes are plain asyncio tasks; on shutdown
+    they would otherwise keep poking the remote after the app is gone.
+    """
+    for task in list(_start_probe_tasks):
+        task.cancel()
+
 from .model_benchmark import (
     _AUTO_BENCH_PENDING_FILE as _AUTO_BENCH_PENDING_FILE,
 )
@@ -279,6 +287,7 @@ __all__ = [
     "state_machine",
     "stop_download",
     "stop_model",
+    "stop_start_probes",
     "stop_watchdog",
     "stream_chat",
     "sync_status",

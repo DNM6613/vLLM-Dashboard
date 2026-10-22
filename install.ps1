@@ -21,8 +21,15 @@ Write-Host "  vLLM-Dashboard 安装脚本 (Windows)" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
 Write-Host "`n[1/5] 获取源码..." -ForegroundColor Yellow
-if (Test-Path (Join-Path $InstallDir "deploy.sh")) {
+# 已有安装标记：native_install.sh（2026-10-22 INF-4 由 deploy.sh 改名，
+# 旧安装目录里还是 deploy.sh，两个名都认）。
+if ((Test-Path (Join-Path $InstallDir "native_install.sh")) -or (Test-Path (Join-Path $InstallDir "deploy.sh"))) {
+    # Audit 2026-10-22 INF-14: an existing install is NOT upgraded by this
+    # script — say so explicitly and tell the user how to actually upgrade.
     Write-Host "  ✓ 发现已有安装: $InstallDir（跳过下载）" -ForegroundColor Green
+    Write-Host "  ⚠ 本脚本不会升级已有安装。要升级请到 $InstallDir 执行:" -ForegroundColor Yellow
+    Write-Host "      git fetch; git checkout master; git pull" -ForegroundColor Yellow
+    Write-Host "    或删除 $InstallDir 后重跑本脚本（全量重装，.env 会丢失）。" -ForegroundColor Yellow
 } else {
     $tmpTar = Join-Path $env:TEMP "vllm-dashboard-install.tar.gz"
     $tmpHeaders = Join-Path $env:TEMP "vllm-dashboard-install.headers"

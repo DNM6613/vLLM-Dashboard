@@ -55,7 +55,7 @@ python tools/server_deploy.py deploy
 
 The target server needs Docker and SSH; the local machine needs Python 3.10+ with `paramiko`. `verify` re-checks a running deployment and `probe` shows its current state.
 
-With an existing repository clone, install manually: run `bash deploy.sh` on Linux / macOS, or `powershell -ExecutionPolicy Bypass -File deploy.ps1` on Windows. After installation, edit `.env` (created from `.env.example` on first run) to configure your settings.
+With an existing repository clone, install manually: run `bash native_install.sh` on Linux / macOS, or `powershell -ExecutionPolicy Bypass -File native_install.ps1` on Windows (a *local native* uvicorn install only — the production docker deploy is `tools/server_deploy.py`). After installation, edit `.env` (created from `.env.example` on first run) to configure your settings.
 
 ## Quick Start
 

@@ -35,7 +35,9 @@ export function useServerConfig() {
   const powerOningRef = useRef(false);
 
   const [configLoadFailed, setConfigLoadFailed] = useState(false);
-  const loadServerConfig = async () => {
+  // Audit 2026-10-22 FE-11: stable identity so the retry effect below can
+  // depend on it without rebuilding the probe intervals.
+  const loadServerConfig = useCallback(async () => {
     try {
       const configData = await getServerConfig();
       setServerConfig(configData);
@@ -44,7 +46,7 @@ export function useServerConfig() {
       console.error('Failed to load config:', error);
       setConfigLoadFailed(true);
     }
-  };
+  }, []);
 
   const checkSshConnection = useCallback(async () => {
     let failed = false;
@@ -131,7 +133,16 @@ export function useServerConfig() {
 
   useEffect(() => {
     loadServerConfig();
-  }, []);
+  }, [loadServerConfig]);
+
+  // Audit 2026-10-22 FE-11: the initial load ran once on mount; if it failed
+  // (a transient blip, or the API key not (re)entered yet), saving would stay
+  // disabled until a full page reload. Retry once the API answers again.
+  useEffect(() => {
+    if (apiConnected && configLoadFailed) {
+      loadServerConfig();
+    }
+  }, [apiConnected, configLoadFailed, loadServerConfig]);
 
   const sshProbeInFlightRef = useRef(false);
   const apiBmcProbeInFlightRef = useRef(false);

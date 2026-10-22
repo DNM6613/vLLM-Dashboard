@@ -1,9 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
+# Audit 2026-10-22 INF-4 (user ruling): renamed from deploy.sh — this script
+# installs a LOCAL NATIVE uvicorn instance (venv + local static/). It is NOT
+# the production path; the production docker deploy is tools/server_deploy.py.
+
 echo "========================================"
-echo "  vLLM-Dashboard 部署脚本"
+echo "  vLLM-Dashboard 本地原生安装脚本"
 echo "========================================"
+echo "  ⚠ 注意：本脚本只做本地原生安装（venv + uvicorn + 本地 static/），"
+echo "    不触碰生产 docker 容器。"
+echo "    生产部署（10.131.1.9 docker 容器）请改用 tools/server_deploy.py。"
 
 echo -e "\n[1/5] 检查 Python 安装..."
 if command -v python3 &> /dev/null; then
@@ -61,7 +68,7 @@ else
 fi
 
 echo -e "\n========================================"
-echo "  部署完成!"
+echo "  本地原生安装完成!"
 echo "========================================"
 echo -e "\n启动服务:"
 echo "  source venv/bin/activate"

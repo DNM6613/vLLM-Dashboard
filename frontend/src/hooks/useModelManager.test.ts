@@ -6,7 +6,11 @@ import { useModelStore } from '../stores/model';
 import { ModelStatus } from '../types';
 import type { ModelInfo } from '../types';
 import * as modelsApi from '../api/models';
+import { showToast } from '../components/ui/toast';
 
+vi.mock('../components/ui/toast', () => ({
+  showToast: vi.fn(),
+}));
 vi.mock('../api/models', () => ({
   getModels: vi.fn(async () => []),
   startModel: vi.fn(async () => ({ status: 'loading', model_id: 'b', command: 'vllm serve /b' })),
@@ -68,6 +72,20 @@ describe('useModelManager model switch (start while another runs)', () => {
     expect(modelsApi.stopModel).toHaveBeenCalledTimes(1);
     expect(modelsApi.startModel).not.toHaveBeenCalled();
     expect(result.current.startRequest).toBeNull();
+    // FE-6: the skipped start is announced (the last toast), not silently dropped.
+    const calls = vi.mocked(showToast).mock.calls;
+    expect(calls[calls.length - 1]?.[0]).toContain('was skipped');
+  });
+
+  it('toasts when opening the launch config fails (FE-5)', async () => {
+    vi.mocked(modelsApi.getLaunchConfig).mockRejectedValueOnce(new Error('boom'));
+    const { result } = renderManager();
+    await act(async () => {
+      await result.current.handleOpenLaunchConfig('b', 'Beta', '/models/b');
+    });
+    expect(result.current.showLaunchConfigModal).toBe(false);
+    const toastCalls = vi.mocked(showToast).mock.calls;
+    expect(toastCalls[toastCalls.length - 1]?.[0]).toContain('boom');
   });
 
   it('starts directly when nothing else is running or loading', async () => {

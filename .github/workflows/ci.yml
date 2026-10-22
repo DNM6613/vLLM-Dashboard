@@ -115,3 +115,26 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t vllm-dashboard:ci .
+
+      # Audit 2026-10-22 INF-13: a green `docker build` only proves the
+      # image *builds* — run it and poll /health so a container that
+      # crashes at startup (bad entrypoint, missing data dir, frontend
+      # bundle not wired) is caught here instead of in production.
+      - name: Smoke test (run container + poll /health)
+        run: |
+          docker run -d --name vllm-dashboard-smoke -p 127.0.0.1:5199:5199 \
+            -e API_HOST=0.0.0.0 -e API_PORT=5199 -e STATIC_DIR=/app/static \
+            vllm-dashboard:ci
+          for i in $(seq 1 12); do
+            body=$(curl -s http://127.0.0.1:5199/health 2>/dev/null || true)
+            case "$body" in
+              *healthy*) echo "HEALTHY: $body"; break ;;
+            esac
+            if [ "$i" -eq 12 ]; then
+              docker logs vllm-dashboard-smoke 2>&1 | tail -40
+              echo "SMOKE FAILED: container not healthy after 60s"
+              exit 1
+            fi
+            sleep 5
+          done
+          docker rm -f vllm-dashboard-smoke > /dev/null

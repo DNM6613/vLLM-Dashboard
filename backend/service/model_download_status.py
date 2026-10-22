@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 import shlex
+import threading
 import time
 
 from ..executor.remote.model_ops import DL_PROBE_SENTINEL, DL_PROCESS_PATTERN
@@ -35,9 +36,27 @@ def _build_download_status_command(log_file: str, repo: str = "") -> str:
     # The pid file (written when the download started) is authoritative: it
     # names the exact wrapper process and survives a backend restart. The
     # ps|grep fallback covers a missing/stale pid file.
+    #
+    # Audit 2026-10-22 REM-7: `kill -0` alone misjudges a reused pid as live —
+    # the pid file is never removed, so once a download ends a long-lived
+    # process can own the same pid and the status would report
+    # downloading/stalled forever, prompting a needless multi-GB re-download
+    # (the reattach probe already re-checks cmdline for exactly this). Confirm
+    # /proc/<pid>/cmdline still names this repo before trusting the pid file
+    # (the repo is in the cmdline in both the bash -c wrapper and the exec'd
+    # `hf` process). Without a repo we cannot re-check, so keep the plain
+    # liveness test.
+    if repo:
+        _pid_live = (
+            f"[ -n \"$WP\" ] && kill -0 \"$WP\" 2>/dev/null && "
+            f"tr '\\0' ' ' < \"/proc/$WP/cmdline\" 2>/dev/null | "
+            f"grep -qF {shlex.quote(repo)}"
+        )
+    else:
+        _pid_live = "[ -n \"$WP\" ] && kill -0 \"$WP\" 2>/dev/null"
     pid_expr = (
         f"PF={pid_file}; WP=$(cat \"$PF\" 2>/dev/null); "
-        f"if [ -n \"$WP\" ] && kill -0 \"$WP\" 2>/dev/null; then echo \"$WP\"; "
+        f"if {_pid_live}; then echo \"$WP\"; "
         f"else {dl_pids}; fi"
     )
     return (
@@ -66,8 +85,52 @@ def _get_download_total(executor, model_repo: str, hf_mirror: bool) -> int:
     return total
 
 
+# Audit 2026-10-22 BCK-8: in-flight guard. The frontend polls
+# /download/status every ~3 s and N open tabs each fanned out 2-3 serial SSH
+# round trips. If a query for this log file is already running, a concurrent
+# caller waits on the same event and reuses its result instead of a duplicate
+# SSH burst. No post-hoc TTL cache: sequential polls always recompute (the
+# download advances between polls), so this never returns a stale snapshot.
+_dl_status_lock = threading.Lock()
+_dl_status_inflight: dict[str, threading.Event] = {}
+_dl_status_last: dict[str, dict] = {}
+
 def get_download_status(log_file: str, repo: str = "", save_path: str = "",
                         hf_mirror: bool = True) -> dict:
+    evt = None
+    with _dl_status_lock:
+        evt = _dl_status_inflight.get(log_file)
+    if evt is not None:
+        # A query for this log file is already in flight — wait for it and
+        # reuse its result (no duplicate SSH round trips).
+        evt.wait(timeout=30)
+        with _dl_status_lock:
+            return _dl_status_last.get(log_file) or {
+                "status": "unknown", "log": "",
+                "message": "Status query in flight; try again"}
+    evt = threading.Event()
+    with _dl_status_lock:
+        racing = _dl_status_inflight.get(log_file)
+        if racing is not None:
+            # A thread claimed it just before us — follow it instead of
+            # starting a second SSH burst.
+            racing.wait(timeout=30)
+            return _dl_status_last.get(log_file) or {
+                "status": "unknown", "log": "",
+                "message": "Status query in flight; try again"}
+        _dl_status_inflight[log_file] = evt
+    try:
+        result = _compute_download_status(log_file, repo, save_path, hf_mirror)
+        with _dl_status_lock:
+            _dl_status_last[log_file] = result
+        return result
+    finally:
+        with _dl_status_lock:
+            _dl_status_inflight.pop(log_file, None)
+        evt.set()
+
+def _compute_download_status(log_file: str, repo: str = "", save_path: str = "",
+                             hf_mirror: bool = True) -> dict:
     executor = _ms.get_remote_executor()
     cmd = _build_download_status_command(log_file, repo)
     result = executor.execute(cmd)

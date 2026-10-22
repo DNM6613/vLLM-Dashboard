@@ -113,8 +113,15 @@ class HardwareBroadcaster:
     async def shutdown(self) -> None:
         if self._poll_task is not None and not self._poll_task.done():
             self._poll_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
+            # Audit 2026-10-22 BCK-9: only the expected CancelledError is
+            # swallowed — the old suppress(CancelledError, Exception) hid real
+            # shutdown-path bugs without a trace.
+            try:
                 await self._poll_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception("Hardware broadcaster: poll task failed to stop cleanly")
 
 hardware_broadcaster = HardwareBroadcaster()
 
@@ -122,6 +129,14 @@ hardware_broadcaster = HardwareBroadcaster()
 # client->server direction is idle by design — without a heartbeat, middle
 # boxes that drop long-idle TCP connections leave both ends hanging.
 _KEEPALIVE_TIMEOUT = 60.0
+# Audit 2026-10-22 BCK-7: the keepalive SEND must be wall-clock bounded too.
+# A client that dies hard (power loss, no RST/FIN) leaves a half-open socket;
+# the receive times out, then an unbounded send_text can block until the TCP
+# stack gives up (minutes) — pinning this handler so the finally-unregister
+# never runs and the zombie stays in the broadcaster's client set. A bounded
+# send that times out means the connection is dead: close it so unregister
+# runs and the broadcaster stops paying a 0.5 s cycle to a corpse.
+_KEEPALIVE_SEND_TIMEOUT = 5.0
 
 async def websocket_hardware(websocket: WebSocket):
     if not ws_api_key_valid(websocket):
@@ -138,8 +153,18 @@ async def websocket_hardware(websocket: WebSocket):
             except TimeoutError:
                 # Nudge the client (the UI ignores unknown message types);
                 # a dead socket surfaces on the next receive.
-                with contextlib.suppress(Exception):
-                    await websocket.send_text(json.dumps({"type": "keepalive"}))
+                try:
+                    await asyncio.wait_for(
+                        websocket.send_text(json.dumps({"type": "keepalive"})),
+                        timeout=_KEEPALIVE_SEND_TIMEOUT)
+                except Exception:
+                    # Keepalive send hung or failed — the connection is dead;
+                    # close so the finally unregisters it (no zombie
+                    # subscriber). The broadcaster's bounded broadcast would
+                    # also evict it, but the handler must not stay pinned.
+                    with contextlib.suppress(Exception):
+                        await websocket.close()
+                    return
     except WebSocketDisconnect:
         pass
     finally:

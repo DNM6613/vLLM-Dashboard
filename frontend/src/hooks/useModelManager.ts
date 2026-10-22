@@ -144,9 +144,12 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
       setLaunchCommand(result.config?.start_command || '');
       setLaunchEnvVars(result.config?.env_vars || '');
       setShowLaunchConfigModal(true);
-    } catch {
+    } catch (e: unknown) {
+      // Audit 2026-10-22 FE-5: a failed launch-config open was a silent no-op
+      // (the button just looked dead). Surface the error instead.
+      showToast(errMsgLocalized(e) || t('Failed to load launch config'));
     }
-  }, [getLaunchConfig]);
+  }, [getLaunchConfig, t]);
 
   const handleSaveLaunchConfig = async () => {
     setSavingLaunchConfig(true);
@@ -291,8 +294,12 @@ export function useModelManager({ startConsoleForModel, sshConnected, connectCon
     const stopped = await doStopModel(req.stopId);
     if (stopped) {
       await doStartModel(req.modelId);
+    } else {
+      // Audit 2026-10-22 FE-6: when the "stop first" step fails the start is
+      // silently skipped — say so, or the user believes the switch worked.
+      showToast(t('Stop failed — starting {name} was skipped. Resolve the running model and retry.', { name: req.name }), 'error');
     }
-  }, [startRequest, doStopModel, doStartModel]);
+  }, [startRequest, doStopModel, doStartModel, t]);
 
   const cancelStart = useCallback(() => setStartRequest(null), []);
 

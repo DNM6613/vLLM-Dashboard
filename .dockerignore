@@ -11,6 +11,9 @@ frontend/dist/
 data/
 .env
 .env.example
+# Audit 2026-10-22 INF-12: cover every local env variant, not just the two
+# named files (.env.prod, .env.local, ...) — they may carry real secrets.
+.env.*
 
 *.key
 *.pem
@@ -37,7 +40,10 @@ build/
 .ruff_cache/
 
 *.md
+# Audit 2026-10-22 INF-4: renamed from deploy.sh (both listed so an image
+# built from an un-migrated tree never ships the old name either).
 deploy.sh
+native_install.sh
 start.ps1
 
 fpk/

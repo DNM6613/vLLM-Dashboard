@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import re
 import shutil
@@ -59,8 +61,40 @@ def remote_with_rc(c: paramiko.SSHClient, cmd: str, timeout: int = 900) -> tuple
         print("[stderr]", e.strip()[-1500:])
     return rc, o, e
 
+def _tracked_files() -> list[str] | None:
+    """Tracked files under SHIP_FILES + SHIP_DIRS (git ls-files, i.e. the
+    working-tree content including uncommitted edits). Audit 2026-10-22
+    INF-6 — the filesystem walk used to ship untracked junk (build output,
+    caches, editor files) into the tar. ``git archive HEAD`` is NOT used
+    because the release flow deploys BEFORE committing, so archiving HEAD
+    would drop the very changes being deployed. Returns None when git is
+    unavailable (the caller falls back to the walk)."""
+    git = shutil.which("git")
+    if not git:
+        return None
+    try:
+        r = subprocess.run([git, "ls-files", "-z", "--",
+                            *(SHIP_FILES + SHIP_DIRS)],
+                           capture_output=True)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    return [p for p in r.stdout.decode("utf-8", "replace").split("\0") if p]
+
+
 def build_tar(path: str) -> None:
+    tracked = _tracked_files()
     with tarfile.open(path, "w:gz") as tf:
+        if tracked is not None:
+            # Ship exactly the tracked files (worktree content) — the
+            # Dockerfile / .dockerignore / requirements-lock.txt plus the
+            # backend/ + frontend/ trees, with none of the untracked junk.
+            for f in tracked:
+                if os.path.isfile(f):
+                    tf.add(f)
+            return
+        # Fallback (no git available): the original filesystem walk.
         for f in SHIP_FILES:
             if os.path.isfile(f):
                 tf.add(f)
@@ -94,10 +128,17 @@ def run_container_cmd(image: str, api_key_arg: str) -> str:
         f"-e PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ {image}"
     )
 
+# Audit 2026-10-22 INF-11: the health-gate window is configurable via env —
+# a large image on a slow disk can take longer than the fixed 6 x 5s to
+# report healthy. Defaults preserve the original 6 x 5s behavior.
+HEALTH_ATTEMPTS = int(os.environ.get("DEPLOY_HEALTH_ATTEMPTS", "6"))
+HEALTH_INTERVAL = int(os.environ.get("DEPLOY_HEALTH_INTERVAL", "5"))
+
+
 def health_gate(c: paramiko.SSHClient) -> bool:
-    """Poll /health up to 6 x 5s; True once the body says healthy."""
-    for i in range(6):
-        time.sleep(5)
+    """Poll /health up to HEALTH_ATTEMPTS x HEALTH_INTERVAL s."""
+    for i in range(HEALTH_ATTEMPTS):
+        time.sleep(HEALTH_INTERVAL)
         _, o, e = remote(c, f"{health_wget()} 2>&1")
         body = (o or "").strip()
         if "healthy" in body:
@@ -106,9 +147,47 @@ def health_gate(c: paramiko.SSHClient) -> bool:
         print(f"      attempt {i + 1}: {body[:160] or e.strip()[:160]}")
     return False
 
+
+def _stop_and_remove(c: paramiko.SSHClient) -> None:
+    """Stop + remove the running container, then VERIFY it is gone (audit
+    2026-10-22 INF-11). The old ``2>/dev/null; true`` swallowed every
+    failure — a container stuck in "removing" (busy / OOM-killing) would then
+    leave a name conflict that the next ``docker run`` trips on. Now a
+    non-empty ``docker ps -a`` result raises so the deploy stops instead of
+    silently misbehaving."""
+    remote(c, f"docker stop {CONTAINER} 2>/dev/null; "
+              f"docker rm {CONTAINER} 2>/dev/null; true", timeout=120)
+    fmt = "'{{.Names}}'"
+    _, o, _ = remote(c, f"docker ps -a --filter 'name=^{CONTAINER}$' "
+                        f"--format {fmt}")
+    if o.strip():
+        raise RuntimeError(
+            f"container {CONTAINER} is still present after stop/rm "
+            f"({o.strip()!r}) — aborting to avoid a name conflict on docker run")
+
 def deploy(c: paramiko.SSHClient) -> None:
     tag = time.strftime("v%Y%m%d-%H%M%S")
     image = f"vllm-dashboard:{tag}"
+    try:
+        _run_deploy(c, image)
+    finally:
+        # Audit 2026-10-22 INF-10: remove the local tarball (it holds the
+        # full source tree and leaked on every deploy) and the remote
+        # upload/build artifacts on EVERY terminal path — success or
+        # failure. The built docker image is intentionally kept (forensics
+        # / rollback source).
+        try:
+            if os.path.exists(TAR_LOCAL):
+                os.remove(TAR_LOCAL)
+        except OSError as e:
+            print(f"      WARNING: could not remove local {TAR_LOCAL}: {e}")
+        try:
+            remote(c, f"rm -rf {TAR_REMOTE} {BUILD_DIR}", timeout=60)
+        except Exception as e:
+            print(f"      WARNING: could not clean remote artifacts: {e}")
+
+
+def _run_deploy(c: paramiko.SSHClient, image: str) -> None:
     print(f"[1/5] Building local tar {TAR_LOCAL} ...")
     build_tar(TAR_LOCAL)
     print(f"      tar size = {os.path.getsize(TAR_LOCAL) // 1024} KB")
@@ -143,32 +222,30 @@ def deploy(c: paramiko.SSHClient) -> None:
     api_key_arg = f"-e VLLM_DASHBOARD_API_KEY={API_KEY} " if API_KEY else ""
     if not API_KEY:
         print("      WARNING: DEPLOY_API_KEY not set — the container will run WITHOUT an API key (auth open)")
-    remote_with_rc(c, f"docker stop {CONTAINER} 2>/dev/null; "
-                      f"docker rm {CONTAINER} 2>/dev/null; true")
+    _stop_and_remove(c)
     rc, o, e = remote(c, run_container_cmd(image, api_key_arg), timeout=90)
     print(o, e)
     if rc != 0:
         print(f"RUN FAILED (rc={rc})")
         sys.exit(1)
 
-    print("[5/5] Health gate (up to 6 x 5s) ...")
+    print(f"[5/5] Health gate (up to {HEALTH_ATTEMPTS} x {HEALTH_INTERVAL}s) ...")
     if health_gate(c):
-        remote(c, f"rm -rf {TAR_REMOTE} {BUILD_DIR}")
         print(f"DEPLOY_OK {image}")
         return
 
     # Audit 2026-10-22 INF-2 (user ruling): the new image never became
     # healthy — roll back to the previous image with the same run
-    # parameters and re-verify. The build artifacts are kept for forensics.
+    # parameters and re-verify. The built docker image stays on the server
+    # (forensics); the uploaded tar / build dir are cleaned by deploy().
     if old_image:
         print(f"      HEALTH GATE FAILED — rolling back to {old_image} ...")
-        remote_with_rc(c, f"docker stop {CONTAINER} 2>/dev/null; "
-                          f"docker rm {CONTAINER} 2>/dev/null; true")
+        _stop_and_remove(c)
         rc, o, e = remote(c, run_container_cmd(old_image, api_key_arg), timeout=90)
         if rc != 0:
             print(f"ROLLBACK RUN FAILED (rc={rc})")
             sys.exit(1)
-        print("      rollback health gate (up to 6 x 5s) ...")
+        print(f"      rollback health gate (up to {HEALTH_ATTEMPTS} x {HEALTH_INTERVAL}s) ...")
         if health_gate(c):
             print(f"ROLLED_BACK {old_image}")
             return
@@ -201,12 +278,32 @@ def verify(c: paramiko.SSHClient) -> None:
         ok = False
         print("  FAIL: version mismatch")
 
-    print("=== [3/7] openapi has shutdown endpoint ===")
-    _, o, _ = remote(c, f"wget -qO- {API}/openapi.json 2>/dev/null | grep -c 'config/server/shutdown'")
-    print(o.strip())
-    if o.strip() == "0":
+    print("=== [3/7] config-server API alive ===")
+    # Audit 2026-10-22 SEC-3: /openapi.json is now closed (docs_url /
+    # redoc_url / openapi_url = None in main.py), so a live-API check must use
+    # a real business route. We probe GET /api/v1/config/server — NOT the
+    # POST-only /server/shutdown: a probe (2026-10-22, prod) showed a GET on a
+    # POST-only route returns 404, IDENTICAL to an absent path, because the
+    # SPA static fallback (mounted after the API routers) swallows every
+    # unmatched GET before FastAPI can answer 405. Presence of a POST route is
+    # therefore NOT distinguishable via GET; a GET route in the same router
+    # (200) is the reliable liveness signal. The probe carries the API key
+    # when configured: auth_middleware rejects every /api/v1 path BEFORE
+    # routing, so an unauthenticated probe would see 401 for every route.
+    header = f"--header='X-API-Key: {API_KEY}' " if API_KEY else ""
+    _, o, _ = remote(c, f"wget -S -O /dev/null {header}{API}/api/v1/config/server 2>&1 "
+                        f"| grep -oE 'HTTP/[0-9.]+ [0-9][0-9][0-9]' | head -1")
+    line = o.strip()
+    print(line or "(no status line — probe failed)")
+    status = line.rsplit(" ", 1)[-1] if line else ""
+    if status == "200":
+        print("  OK: config-server route group is live")
+    elif status == "401":
         ok = False
-        print("  FAIL: endpoint missing")
+        print("  FAIL: 401 — API key mismatch (check DEPLOY_API_KEY)")
+    else:
+        ok = False
+        print(f"  FAIL: unexpected status {status or '(none)'}")
 
     print("=== [4/7] bundle marker ===")
     _, o, _ = remote(c, f"docker exec {CONTAINER} sh -c "
@@ -236,8 +333,10 @@ def push() -> None:
     if not git:
         print("PUSH_FAILED (git not found on PATH)")
         sys.exit(1)
-    print("git push origin master ...")
-    r = subprocess.run([git, "push", "origin", "master"])
+    # Audit 2026-10-22 INF-7: Gitea is the default remote (user ruling
+    # 2026-09-10); pushing to "origin" (GitHub) is on-request only.
+    print("git push gitea master ...")
+    r = subprocess.run([git, "push", "gitea", "master"])
     if r.returncode != 0:
         print(f"PUSH_FAILED (exit {r.returncode})")
         sys.exit(1)

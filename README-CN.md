@@ -55,7 +55,7 @@ python tools/server_deploy.py deploy
 
 目标服务器需 Docker 与 SSH；本机需 Python 3.10+ 及 `paramiko`。`verify` 复检已运行的部署，`probe` 查看当前状态。
 
-已有仓库副本时可手动安装：Linux / macOS 运行 `bash deploy.sh`，Windows 运行 `powershell -ExecutionPolicy Bypass -File deploy.ps1`。安装后编辑 `.env`（首次自动从 `.env.example` 复制）配置参数。
+已有仓库副本时可手动安装：Linux / macOS 运行 `bash native_install.sh`，Windows 运行 `powershell -ExecutionPolicy Bypass -File native_install.ps1`（仅本地原生 uvicorn 安装——生产 docker 部署用 `tools/server_deploy.py`）。安装后编辑 `.env`（首次自动从 `.env.example` 复制）配置参数。
 
 ## 快速开始
 

@@ -53,3 +53,36 @@ describe('HardwareCards PCIe layout', () => {
     expect(screen.queryByText('11 MB/s')).toBeNull();
   });
 });
+
+describe('HardwareCards stale feed (audit 2026-10-22 FE-7)', () => {
+  afterEach(() => {
+    useHardwareStore.setState({ gpus: [], cpu: null, memory: null, disk: null, lastUpdated: null });
+    cleanup();
+  });
+
+  it('flags the feed stale when no frame arrived recently', () => {
+    useHardwareStore.setState({
+      gpus: [gpu], cpu: null, memory: null, disk: null,
+      lastUpdated: Date.now() - 60_000,
+    });
+    render(
+      <I18nProvider>
+        <HardwareCards sshConnected={true} />
+      </I18nProvider>,
+    );
+    expect(screen.getByText(/Hardware data not updating/)).toBeTruthy();
+  });
+
+  it('stays quiet while frames keep arriving', () => {
+    useHardwareStore.setState({
+      gpus: [gpu], cpu: null, memory: null, disk: null,
+      lastUpdated: Date.now(),
+    });
+    render(
+      <I18nProvider>
+        <HardwareCards sshConnected={true} />
+      </I18nProvider>,
+    );
+    expect(screen.queryByText(/Hardware data not updating/)).toBeNull();
+  });
+});

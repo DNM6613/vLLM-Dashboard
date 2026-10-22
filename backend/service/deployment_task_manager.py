@@ -198,15 +198,53 @@ class DeploymentTaskManager(ReattachMixin):
         return not thread.is_alive()
 
     def complete_driver(self, task: Task) -> None:
-        """Mark a post-reboot driver task successful (reconcile path)."""
+        """Mark a post-reboot driver task successful (reconcile path).
+
+        Idempotent (audit 2026-10-22 BCK-6): only a task still in
+        ``awaiting_reboot`` is flipped — the 30 s reconcile timer and the
+        /drivers read endpoint (now off-loop) can both trigger a completion
+        for the same task, and a second one must not re-complete an
+        already-success task or push a duplicate history entry. The history
+        push moves inside the lock so the status flip and the history entry
+        are atomic with respect to a racing completion.
+        """
         with self._lock:
+            if task.status != "awaiting_reboot":
+                return
             task.status = "success"
             task.finished_at = _now_iso()
             for step in task.steps:
                 if step["status"] != "done":
                     step["status"] = "done"
             self._persist_locked()
-        self._record_history(task)
+            self._record_history(task)
+
+    def supersede_awaiting_driver(self,
+                                  reason: str = "Superseded by a newer driver task") -> None:
+        """Force-finish lingering ``awaiting_reboot`` driver tasks (audit
+        2026-10-22 REM-11).
+
+        Installing a new driver without rebooting the previous one used to
+        leave the old task in ``awaiting_reboot`` forever: the post-reboot
+        reconcile only completes the task whose ``target_major`` matches
+        (the newest), so an older pending task can never flip to success and
+        its "awaiting verification" hint stays stuck (cancel refuses
+        awaiting_reboot too). Mark it failed so the UI clears.
+        """
+        with self._lock:
+            superseded = [t for t in self._tasks.values()
+                         if t.kind == "driver" and t.status == "awaiting_reboot"]
+            for t in superseded:
+                t.status = "failed"
+                t.error = reason
+                t.finished_at = _now_iso()
+                for step in t.steps:
+                    if step["status"] in ("pending", "running"):
+                        step["status"] = "skipped"
+            if superseded:
+                self._persist_locked()
+                for t in superseded:
+                    self._record_history(t)
 
     # ---- logs ----------------------------------------------------------------
     def log(self, task_id: str, message: str) -> None:

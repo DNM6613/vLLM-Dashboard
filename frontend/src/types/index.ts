@@ -223,6 +223,10 @@ export interface HardwareStore {
   memory: MemoryInfo | null;
   disk: DiskInfo | null;
   software: SoftwareInfo | null;
+  // Audit 2026-10-22 FE-7: epoch ms of the last successful data write —
+  // lets the cards mark themselves stale when the WS feed goes quiet
+  // (e.g. a deployment task occupies SSH and the probe cannot run).
+  lastUpdated: number | null;
   addMetrics: (payload: MetricsPayload) => void;
   fetchHardwareMetrics: () => Promise<void>;
   fetchSoftware: () => Promise<void>;

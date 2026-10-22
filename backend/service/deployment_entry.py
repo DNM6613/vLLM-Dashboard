@@ -70,6 +70,12 @@ def _reject_inflight(kind: str) -> None:
 def start_driver_task(package: str) -> Task:
     _require_remote()
     _reject_inflight("driver")
+    # Audit 2026-10-22 REM-11: a pending post-reboot task for a DIFFERENT
+    # driver is not rejected by _reject_inflight (it only sees queued/
+    # running) and can never be completed by the post-reboot reconcile
+    # (which matches the newest task's target_major) — force-finish it so
+    # its "awaiting verification" hint does not stay stuck forever.
+    _ds.task_manager.supersede_awaiting_driver()
     if not DRIVER_PKG_RE.fullmatch(package or ""):
         raise DeploymentError(f"Invalid driver package name: {package}")
     executor = get_remote_executor()

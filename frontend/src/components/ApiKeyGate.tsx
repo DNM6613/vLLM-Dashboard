@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { KeyRound, Loader2 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth';
 import { useI18n } from '../i18n/context';
@@ -12,6 +12,19 @@ export function ApiKeyGate() {
   const [key, setKey] = useState(getStoredApiKey);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+
+  // Audit 2026-10-22 FE-9: the useState initializer only runs on first
+  // mount, so after a 401 the interceptor clears the stored key but an
+  // already-mounted gate keeps prefilling the now-dead key. Re-seed from
+  // storage whenever auth becomes required — the interceptor has cleared
+  // the dead key by then.
+  const [prevAuthRequired, setPrevAuthRequired] = useState(authRequired);
+  useEffect(() => {
+    if (authRequired && !prevAuthRequired) {
+      setKey(getStoredApiKey());
+    }
+    setPrevAuthRequired(authRequired);
+  }, [authRequired, prevAuthRequired]);
 
   if (!authRequired) return null;
 

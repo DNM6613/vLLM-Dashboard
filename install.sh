@@ -19,8 +19,15 @@ echo "  vLLM-Dashboard 安装脚本 (Linux / macOS)"
 echo "========================================"
 
 echo -e "\n[1/5] 获取源码..."
-if [ -f "$INSTALL_DIR/deploy.sh" ]; then
+# 已有安装标记：native_install.sh（2026-10-22 INF-4 由 deploy.sh 改名，
+# 旧安装目录里还是 deploy.sh，两个名都认）。
+if [ -f "$INSTALL_DIR/native_install.sh" ] || [ -f "$INSTALL_DIR/deploy.sh" ]; then
+    # Audit 2026-10-22 INF-14: an existing install is NOT upgraded by this
+    # script — say so explicitly and tell the user how to actually upgrade.
     echo "  ✓ 发现已有安装: $INSTALL_DIR（跳过下载）"
+    echo "  ⚠ 本脚本不会升级已有安装。要升级请到 $INSTALL_DIR 执行:"
+    echo "      git fetch && git checkout master && git pull"
+    echo "    或删除 $INSTALL_DIR 后重跑本脚本（全量重装，.env 会丢失）。"
 else
     tmpTar=$(mktemp)
     tmpHeaders=$(mktemp)

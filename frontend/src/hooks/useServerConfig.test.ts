@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { shutdownServer } from '../api/serverConfig';
+import { getServerConfig, shutdownServer } from '../api/serverConfig';
 import { showToast } from '../components/ui/toast';
 import { useServerConfig } from './useServerConfig';
 
@@ -91,6 +91,27 @@ describe('useServerConfig shutdown', () => {
     expect(showToast).not.toHaveBeenCalled();
     expect(modelStoreApi.syncModelStatus).toHaveBeenCalled();
     expect(result.current.shuttingDown).toBe(false);
+    unmount();
+  });
+});
+
+describe('useServerConfig initial-load retry (audit 2026-10-22 FE-11)', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('retries the config load once the API answers (a startup blip must not disable saving forever)', async () => {
+    const cfg = vi.mocked(getServerConfig);
+    cfg.mockRejectedValueOnce(new Error('network down'));
+    const { result, unmount } = renderHook(() => useServerConfig());
+
+    // Flush mount microtasks: the initial load fails while the 2 s API probe
+    // succeeds — the retry effect must fire a second load.
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+
+    expect(cfg.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(result.current.serverConfig.host).toBe('10.131.1.7');
     unmount();
   });
 });

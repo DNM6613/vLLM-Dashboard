@@ -34,7 +34,6 @@ Semantics (2026-10-16, user-confirmed):
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from datetime import datetime, timedelta
 
@@ -305,8 +304,15 @@ async def stop_watchdog() -> None:
         task.cancel()
     if _task is not None:
         _task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
+        # Audit 2026-10-22 BCK-9: only the expected CancelledError is
+        # swallowed — the old suppress(CancelledError, Exception) hid real
+        # shutdown-path bugs without a trace.
+        try:
             await _task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("Model lock watchdog: loop failed to stop cleanly")
         _task = None
 
 
