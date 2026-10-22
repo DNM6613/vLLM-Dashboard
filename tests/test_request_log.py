@@ -98,6 +98,18 @@ class TestMonitorEndpointsAndMiddleware(unittest.TestCase):
         rows = rl.request_log.requests_for(self.client_ip(), limit=10)
         self.assertTrue(any("hello" in (e["body"] or "") for e in rows))
 
+    def test_middleware_skips_preview_for_huge_bodies(self):
+        # Audit 2026-10-22 SEC-1: a body at/above the 256 KiB cap is not
+        # read into memory (or into the log) just to preview it. The entry
+        # is still recorded — with body=None.
+        r = self.client.post(
+            "/api/v1/hardware/metrics", json={"blob": "x" * (300 * 1024)})
+        self.assertEqual(r.status_code, 405)
+        rows = rl.request_log.requests_for(self.client_ip(), limit=10)
+        entries = [e for e in rows if e["path"] == "/api/v1/hardware/metrics"]
+        self.assertTrue(entries)
+        self.assertTrue(all(e["body"] is None for e in entries))
+
     def test_config_server_credential_body_not_captured(self):
         # Audit 2026-10-20 P2-1: the server-config body carries 4 plaintext
         # credential fields and must NOT enter the log that

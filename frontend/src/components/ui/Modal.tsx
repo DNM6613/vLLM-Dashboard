@@ -18,15 +18,28 @@ interface ModalProps {
 const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 // Modals can stack (e.g. a confirm dialog on top of the deploy modal); only
-// the top-most one reacts to Escape.
-const modalStack: number[] = [];
+// the top-most one reacts to Escape. Audit 2026-10-22 FE-1: the old stack
+// was dead code (never pushed, id always 0). Top-most is now derived from
+// DOM order: all overlays share the same z-index, so whichever overlay comes
+// later in the document — or is nested inside one that does — renders on
+// top, and Escape must reach only that one. DOM order (not mount-effect
+// order) is what decides this, and mount effects run child-first, so a
+// naive push/pop stack would get nested modals backwards.
+const mountedModals = new Set<HTMLElement>();
 
 export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, footer, headerAction, hideScrollbar }: ModalProps) {
   const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const modalIdRef = useRef(0);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+
+  useEffect(() => {
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+    mountedModals.add(overlay);
+    return () => { mountedModals.delete(overlay); };
+  }, []);
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -37,7 +50,14 @@ export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, f
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (modalStack[modalStack.length - 1] !== modalIdRef.current) return;
+        // Another overlay later in document order (or nested after this
+        // one) renders on top — Escape belongs to it, not to this modal.
+        const mine = overlayRef.current;
+        const covered = mine !== null && [...mountedModals].some(
+          (other) => other !== mine
+            && (mine.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+        );
+        if (covered) return;
         e.stopPropagation();
         onCloseRef.current();
         return;
@@ -65,6 +85,7 @@ export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, f
 
   return (
     <div
+      ref={overlayRef}
       className="fixed inset-0 z-[95] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onCloseRef.current(); }}
     >

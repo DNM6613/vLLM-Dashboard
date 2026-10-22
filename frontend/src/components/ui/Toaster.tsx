@@ -14,7 +14,10 @@ export function Toaster() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
+    // Audit 2026-10-22 FE-4: above the Modal overlay (z-[95]) so operation
+    // feedback (e.g. "download already in progress") stays visible while a
+    // modal is open.
+    <div className="fixed bottom-4 right-4 z-[100] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
       {toasts.map((t) => (
         <button
           key={t.id}

@@ -38,6 +38,22 @@ DL_PROBE_SENTINEL = "VDB_DL_PROBE_SENTINEL"
 DL_PROCESS_PATTERN = r"hf download|huggingface-cli download"
 
 
+def _probe_pid_expr(repo_q: str) -> str:
+    """Shell fragment assigning $P to the PID of a live `hf download` of the
+    repo (empty when none). The sentinel trick mirrors stop_download: the
+    probe pipeline's own cmdlines carry the sentinel and are excluded by the
+    first grep -v, while a real download (no sentinel in its cmdline)
+    survives. Audit 2026-10-22 BCK-4: shared by the service-layer probe and
+    the atomic check-then-launch below."""
+    return (
+        "P=$(ps -eo pid=,args= 2>/dev/null "
+        "| grep -v '" + DL_PROBE_SENTINEL + "' "
+        "| grep -E '" + DL_PROBE_SENTINEL + "|" + DL_PROCESS_PATTERN + "' "
+        "| grep -F " + repo_q + " "
+        "| awk '{print $1}' | head -1)"
+    )
+
+
 class ModelOps(ModelScanMixin):
 
     def download_model(self, model_repo: str, model_save_path: str = "", hf_mirror: bool = True) -> dict[str, Any]:
@@ -89,16 +105,30 @@ class ModelOps(ModelScanMixin):
         # last command), so its PID is a reliable liveness marker. Written to
         # a pid file so status checks survive a backend restart and do not
         # depend on cmdline grep matching.
-        cmd = (
+        launch = (
             f"nohup bash -c \"{self._escape_double_quoted(env_prefix + activate_cmd + download_cmd)}\" "
             f"> {shlex.quote(log_file)} 2>&1 & P=$!; "
             f"echo $P > {shlex.quote(pid_file)}; echo $P"
         )
+        # Audit 2026-10-22 BCK-4: the duplicate check and the launch happen
+        # in ONE remote command so a second writer cannot slip in between
+        # (the old service-layer probe had a TOCTOU window). A live download
+        # of this repo is reported instead of launched.
+        cmd = _probe_pid_expr(safe_repo) + '; if [ -n "$P" ]; then echo VDB_ALREADY:$P; else ' + launch + '; fi'
 
         result = self.execute(cmd)
+        out = result["stdout"].strip()
+        if out.startswith("VDB_ALREADY:"):
+            return {
+                "success": False,
+                "already_running": out.split(":", 1)[1].strip(),
+                "stdout": result["stdout"],
+                "stderr": result["stderr"],
+                "log_file": log_file
+            }
 
         return {
-            "success": result["success"] and result["stdout"].strip().isdigit(),
+            "success": result["success"] and out.isdigit(),
             "stdout": result["stdout"],
             "stderr": result["stderr"],
             "log_file": log_file

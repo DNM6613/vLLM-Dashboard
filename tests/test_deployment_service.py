@@ -369,6 +369,9 @@ class TestTaskManager(unittest.TestCase):
         # pending_driver_task() must not depend on dict insertion order.
         mgr = ds.DeploymentTaskManager()
         t1 = mgr.create("driver", "first", ["s"])
+        # BCK-3: an inflight (queued/running) task of the same kind blocks
+        # new creates; a terminal one does not.
+        t1.status = "success"
         t2 = mgr.create("driver", "second", ["s"])
         t1.created_at = "2026-09-19 01:00:00"
         t2.created_at = "2026-09-19 02:00:00"
@@ -435,7 +438,8 @@ class TestTaskManager(unittest.TestCase):
     def test_persisted_tasks_capped_at_max(self):
         mgr = ds.DeploymentTaskManager()
         for i in range(ds.DeploymentTaskManager.MAX_TASKS + 5):
-            mgr.create("driver", f"task {i}", ["s1"])
+            task = mgr.create("driver", f"task {i}", ["s1"])
+            task.status = "success"  # BCK-3: terminal tasks don't block the kind
         with open(self.tasks_file, encoding="utf-8") as f:
             entries = json.load(f)
         self.assertEqual(len(entries), ds.DeploymentTaskManager.MAX_TASKS)

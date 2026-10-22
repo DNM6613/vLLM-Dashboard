@@ -81,6 +81,31 @@ def probe(c: paramiko.SSHClient) -> None:
     )
     print(o, e)
 
+def run_container_cmd(image: str, api_key_arg: str) -> str:
+    # Single source for the docker run args so the INF-2 rollback reruns
+    # the previous image with the EXACT same parameters.
+    # HF/pip mirrors are explicit opt-ins here (settings.py defaults are now
+    # empty = official sources). The intranet dev host needs the mirrors.
+    return (
+        f"docker run -d --name {CONTAINER} --network host --restart always "
+        f"-v {DATA_VOL} {api_key_arg}-e API_HOST=0.0.0.0 -e API_PORT={API_PORT} "
+        f"-e STATIC_DIR=/app/static "
+        f"-e HF_ENDPOINT=https://hf-mirror.com "
+        f"-e PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ {image}"
+    )
+
+def health_gate(c: paramiko.SSHClient) -> bool:
+    """Poll /health up to 6 x 5s; True once the body says healthy."""
+    for i in range(6):
+        time.sleep(5)
+        _, o, e = remote(c, f"{health_wget()} 2>&1")
+        body = (o or "").strip()
+        if "healthy" in body:
+            print(f"      HEALTHY: {body[:300]}")
+            return True
+        print(f"      attempt {i + 1}: {body[:160] or e.strip()[:160]}")
+    return False
+
 def deploy(c: paramiko.SSHClient) -> None:
     tag = time.strftime("v%Y%m%d-%H%M%S")
     image = f"vllm-dashboard:{tag}"
@@ -105,42 +130,53 @@ def deploy(c: paramiko.SSHClient) -> None:
     print("[4/5] stop/rm old container + run new ...")
     host_data_dir = DATA_VOL.split(":")[0]
     remote(c, f"mkdir -p {host_data_dir}")
+    # Audit 2026-10-22 INF-2 (user ruling): remember the image currently
+    # running so a failed health gate can roll back to it automatically.
+    rc, o, e = remote(c, f"docker inspect --format '{{{{.Image}}}}' {CONTAINER} 2>/dev/null")
+    old_image = (o or "").strip()
+    if old_image:
+        print(f"      previous image: {old_image}")
+    # Audit 2026-10-22 INF-1: pass the API key through so the container
+    # enforces auth when one is configured (settings.py reads
+    # VLLM_DASHBOARD_API_KEY). Without it the local .env never reaches the
+    # container and the auth gate stays silently open.
+    api_key_arg = f"-e VLLM_DASHBOARD_API_KEY={API_KEY} " if API_KEY else ""
+    if not API_KEY:
+        print("      WARNING: DEPLOY_API_KEY not set — the container will run WITHOUT an API key (auth open)")
     remote_with_rc(c, f"docker stop {CONTAINER} 2>/dev/null; "
                       f"docker rm {CONTAINER} 2>/dev/null; true")
-    # HF/pip mirrors are explicit opt-ins here (settings.py defaults are now
-    # empty = official sources). The intranet dev host needs the mirrors.
-    rc, o, e = remote(
-        c,
-        f"docker run -d --name {CONTAINER} --network host --restart always "
-        f"-v {DATA_VOL} -e API_HOST=0.0.0.0 -e API_PORT={API_PORT} "
-        f"-e STATIC_DIR=/app/static "
-        f"-e HF_ENDPOINT=https://hf-mirror.com "
-        f"-e PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ {image}",
-        timeout=90,
-    )
+    rc, o, e = remote(c, run_container_cmd(image, api_key_arg), timeout=90)
     print(o, e)
     if rc != 0:
         print(f"RUN FAILED (rc={rc})")
         sys.exit(1)
 
     print("[5/5] Health gate (up to 6 x 5s) ...")
-    ok = False
-    for i in range(6):
-        time.sleep(5)
-        rc, o, e = remote(c, f"{health_wget()} 2>&1")
-        body = (o or "").strip()
-        if "healthy" in body:
-            ok = True
-            print(f"      HEALTHY: {body[:300]}")
-            break
-        print(f"      attempt {i + 1}: {body[:160] or e.strip()[:160]}")
-
-    if ok:
+    if health_gate(c):
         remote(c, f"rm -rf {TAR_REMOTE} {BUILD_DIR}")
         print(f"DEPLOY_OK {image}")
-    else:
-        print("DEPLOY_FAILED (never became healthy)")
+        return
+
+    # Audit 2026-10-22 INF-2 (user ruling): the new image never became
+    # healthy — roll back to the previous image with the same run
+    # parameters and re-verify. The build artifacts are kept for forensics.
+    if old_image:
+        print(f"      HEALTH GATE FAILED — rolling back to {old_image} ...")
+        remote_with_rc(c, f"docker stop {CONTAINER} 2>/dev/null; "
+                          f"docker rm {CONTAINER} 2>/dev/null; true")
+        rc, o, e = remote(c, run_container_cmd(old_image, api_key_arg), timeout=90)
+        if rc != 0:
+            print(f"ROLLBACK RUN FAILED (rc={rc})")
+            sys.exit(1)
+        print("      rollback health gate (up to 6 x 5s) ...")
+        if health_gate(c):
+            print(f"ROLLED_BACK {old_image}")
+            return
+        print("ROLLBACK_FAILED — both new and previous image unhealthy")
         sys.exit(1)
+
+    print("DEPLOY_FAILED (never became healthy, no previous image to roll back to)")
+    sys.exit(1)
 
 def verify(c: paramiko.SSHClient) -> None:
     ok = True

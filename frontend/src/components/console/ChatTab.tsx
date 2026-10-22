@@ -91,10 +91,16 @@ export function ChatTab({ models }: ChatTabProps) {
     wasStreaming.current = streaming;
   }, [streaming]);
 
-  // Keep the transcript pinned to the latest line.
+  // Keep the transcript pinned to the latest line — but only when the user
+  // is already near the bottom (audit 2026-10-22 FE-3: unconditional pinning
+  // yanked readers back to the bottom while they scrolled up through earlier
+  // messages; mirrors the thinking-block guard below).
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) {
+      el.scrollTop = el.scrollHeight;
+    }
   }, [entries]);
 
   // Pin the streaming thinking block to its newest line; if the user has

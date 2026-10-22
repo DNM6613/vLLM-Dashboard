@@ -51,6 +51,14 @@ async def get_state():
     }
 
 
+# Audit 2026-10-22 SEC-1: these fields are stored verbatim in the deployment
+# state file and re-embedded into remote shell commands (mirror URLs, pip /
+# uv index flags, venv names). Cap them so a pathological client cannot
+# bloat the persisted state or the command lines they flow into.
+_MIRROR_URL_MAX = 300
+_SELECTED_STR_MAX = 512
+
+
 @router.put("/state")
 async def put_state(body: dict[str, Any]):
     mirrors = body.get("mirrors")
@@ -58,6 +66,8 @@ async def put_state(body: dict[str, Any]):
         for key in ("pypi", "hf"):
             if key in mirrors:
                 value = str(mirrors[key] or "").strip()
+                if len(value) > _MIRROR_URL_MAX:
+                    raise HTTPException(status_code=400, detail=f"Mirror URL too long for {key}")
                 if value and not ds.URL_RE.fullmatch(value):
                     raise HTTPException(status_code=400, detail=f"Invalid mirror URL for {key}")
         ds.deployment_state.update_section("mirrors", **{k: str(v or "") for k, v in mirrors.items() if k in ("pypi", "hf")})
@@ -80,7 +90,10 @@ async def put_state(body: dict[str, Any]):
         values = {}
         for key, conv in allowed_selected.items():
             if key in selected:
-                values[key] = _to_bool(key, selected[key]) if conv is bool else conv(selected[key])
+                value = _to_bool(key, selected[key]) if conv is bool else conv(selected[key])
+                if conv is str and len(value) > _SELECTED_STR_MAX:
+                    raise HTTPException(status_code=400, detail=f"Value too long for {key}")
+                values[key] = value
         if values.get("vllm_runtime") and values["vllm_runtime"] not in ("builtin", "system"):
             raise HTTPException(status_code=400, detail="Invalid vllm_runtime")
         if values:

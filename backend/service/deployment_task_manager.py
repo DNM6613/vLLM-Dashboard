@@ -79,6 +79,15 @@ class DeploymentTaskManager(ReattachMixin):
         task_id = f"dep_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(4)}"
         task = Task(task_id, kind, title, steps)
         with self._lock:
+            # Audit 2026-10-22 BCK-3: claim the kind atomically inside the
+            # lock. The entry-level _reject_inflight precheck is a fast UX
+            # check, but between it and create another request could already
+            # have claimed the kind (TOCTOU) — double pipelines fighting
+            # over apt/uv locks. inflight_task re-enters the same RLock.
+            if self.inflight_task(kind):
+                raise DeploymentError(
+                    f"A {kind} task is already in progress — wait for it to "
+                    "finish before starting another")
             self._tasks[task_id] = task
             self._cancel[task_id] = threading.Event()
             self._persist_locked()

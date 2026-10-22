@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from uvicorn.config import LOGGING_CONFIG as _UVICORN_LOGGING_CONFIG
@@ -37,6 +37,7 @@ from .middleware import (
     unhandled_exception_handler,
     validation_exception_handler,
 )
+from .service.deployment_service import DATA_DIR
 from .service.driver_reconcile_timer import (
     start_driver_reconcile_timer,
     stop_driver_reconcile_timer,
@@ -108,6 +109,25 @@ app.add_api_websocket_route("/ws/console", websocket_console)
 
 @app.get("/health")
 def health_check():
+    # Audit 2026-10-22 INF-3: readiness probe — the deploy pipeline's health
+    # gate (tools/server_deploy.py) treats any non-"healthy" body as a
+    # failure and rolls back to the previous image (INF-2), so a container
+    # that is up but broken (frontend bundle missing, data dir not
+    # writable) must not pass the gate and only 404 for users.
+    problems: list[str] = []
+    # Static-file serving is only declared via the STATIC_DIR env var (the
+    # deploy script always sets it in the container); local dev serves the
+    # frontend via vite and must not be judged degraded.
+    if os.environ.get("STATIC_DIR") and not os.path.exists(
+            os.path.join(_STATIC_DIR, "index.html")):
+        problems.append("static index.html missing")
+    if not (os.path.isdir(DATA_DIR) and os.access(DATA_DIR, os.W_OK)):
+        problems.append("data dir missing or not writable")
+    if problems:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "version": __version__, "problems": problems},
+        )
     config = config_manager.get_config()
     return {
         "status": "healthy",

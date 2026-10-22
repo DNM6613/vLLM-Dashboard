@@ -35,8 +35,16 @@ def _build_stop_command(model_path: str, signal_flag: str,
 
     mp_expr = shlex.quote(model_path)
 
+    # Audit 2026-10-22 REM-4: the vLLM tree is main -> EngineCore -> 4x
+    # Worker (grandchildren, verified on 10.131.1.7), so the old single-level
+    # `pkill -P` killed the main process but left the Workers alive on the
+    # GPU. Recurse post-order (children first) so the Workers die while the
+    # main process is still their parent — an orphaned Worker would no longer
+    # match the scoped checks and could hold the GPU past the stop.
     kill_main_and_children = (
-        f"for p in $main_pids; do kill {signal_flag} $p 2>/dev/null; pkill {signal_flag} -P $p 2>/dev/null; done; "
+        "kterm() { for c in $(ps -o pid= --ppid \"$1\" 2>/dev/null); do kterm \"$c\"; done; "
+        f"kill {signal_flag} \"$1\" 2>/dev/null; }}; "
+        "for p in $main_pids; do kterm \"$p\"; done; "
     )
 
     gpu_cleanup_scoped = (

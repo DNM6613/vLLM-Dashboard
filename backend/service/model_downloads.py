@@ -12,7 +12,7 @@ import shlex
 
 from fastapi import HTTPException
 
-from ..executor.remote.model_ops import DL_PROBE_SENTINEL, DL_PROCESS_PATTERN
+from ..executor.remote.model_ops import _probe_pid_expr
 from . import model_service as _ms
 from .model_download_status import (
     _build_download_status_command as _build_download_status_command,
@@ -39,31 +39,30 @@ def download_model(model_repo: str, model_save_path: str, hf_mirror: bool) -> di
     # closes the same-frame double-click window; a second tab or a manual
     # API call could still start a second `hf download` for the same repo
     # (two writers on one cache dir corrupt partial files). Probe for a
-    # live download of this repo and refuse with 409. The sentinel trick
-    # mirrors stop_download: the probe's own pipeline carries the sentinel
-    # in its cmdline and is excluded by the first grep -v, while a real
-    # download (no sentinel in its cmdline) survives.
+    # live download of this repo and refuse with 409. (The sentinel trick
+    # lives in _probe_pid_expr; the executor's launch re-checks atomically —
+    # see BCK-4 below.)
     repo_q = shlex.quote(model_repo)
-    probe = (
-        "P=$(ps -eo pid=,args= 2>/dev/null "
-        "| grep -v '" + DL_PROBE_SENTINEL + "' "
-        "| grep -E '" + DL_PROBE_SENTINEL + "|" + DL_PROCESS_PATTERN + "' "
-        "| grep -F " + repo_q + " "
-        "| awk '{print $1}' | head -1); "
-        'echo "EXIST=${P:-NONE}"'
-    )
+    probe = _probe_pid_expr(repo_q) + '; echo "EXIST=${P:-NONE}"'
     probe_res = executor.execute(probe)
     probe_out = (probe_res.get("stdout") or "").strip()
-    if probe_res.get("success") and probe_out.startswith("EXIST="):
-        existing = probe_out[len("EXIST="):].strip()
-        if existing and existing != "NONE":
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"A download of {model_repo} is already in progress "
-                    f"(pid {existing}) — wait for it to finish or stop it first"
-                ),
-            )
+    # Audit 2026-10-22 BCK-4: fail closed — an unreadable probe must not
+    # green-light a second writer on the same cache dir.
+    if not (probe_res.get("success") and probe_out.startswith("EXIST=")):
+        logger.error(f"Download probe failed for {model_repo}: {probe_res.get('stderr', '')}")
+        raise HTTPException(
+            status_code=503,
+            detail="Cannot verify existing downloads (probe failed) — try again",
+        )
+    existing = probe_out[len("EXIST="):].strip()
+    if existing and existing != "NONE":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"A download of {model_repo} is already in progress "
+                f"(pid {existing}) — wait for it to finish or stop it first"
+            ),
+        )
 
     try:
         mirror = executor.set_hf_mirror(hf_mirror)
@@ -77,6 +76,18 @@ def download_model(model_repo: str, model_save_path: str, hf_mirror: bool) -> di
         model_save_path=model_save_path if model_save_path else "",
         hf_mirror=hf_mirror,
     )
+
+    # Audit 2026-10-22 BCK-4: the launch re-checked for a live download of
+    # this repo inside the same remote command (closing the probe-then-
+    # launch TOCTOU window); a hit means a second writer just appeared.
+    if result.get("already_running"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"A download of {model_repo} is already in progress "
+                f"(pid {result['already_running']}) — wait for it to finish or stop it first"
+            ),
+        )
 
     if not result["success"]:
         logger.error(f"Download failed for {model_repo}: {result.get('stderr', '')}")

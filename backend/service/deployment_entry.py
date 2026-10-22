@@ -48,16 +48,23 @@ _INFLIGHT_LABELS = {"driver": "Driver", "cuda": "CUDA", "vllm": "vLLM",
 
 
 def _reject_inflight(kind: str) -> None:
-    """Refuse a second pipeline of the same kind while one is in flight
-    (audit 2026-10-20 P2-6): a double-clicked "apply" used to spawn two
-    parallel pipelines fighting over apt/uv locks. Checked before any SSH
-    round-trip so the rejection is immediate."""
-    existing = _ds.task_manager.inflight_task(kind)
-    if existing is not None:
-        label = _INFLIGHT_LABELS.get(kind, kind)
-        raise DeploymentError(
-            f"{label} task is already in progress — wait for it to finish before starting another"
-        )
+    """Refuse a second pipeline while one is in flight (audit 2026-10-20
+    P2-6): a double-clicked "apply" used to spawn two parallel pipelines
+    fighting over apt/uv locks. Checked before any SSH round-trip so the
+    rejection is immediate.
+
+    Audit 2026-10-22 REM-5: driver and CUDA installs both write the system
+    (apt / driver packages / nvidia kernel modules), so they also refuse
+    each other — the same-kind check alone let a driver install and a CUDA
+    toolkit install race over the same system state."""
+    kinds = ("driver", "cuda") if kind in ("driver", "cuda") else (kind,)
+    for k in kinds:
+        existing = _ds.task_manager.inflight_task(k)
+        if existing is not None:
+            label = _INFLIGHT_LABELS.get(k, k)
+            raise DeploymentError(
+                f"{label} task is already in progress — wait for it to finish before starting another"
+            )
 
 
 def start_driver_task(package: str) -> Task:

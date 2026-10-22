@@ -138,6 +138,12 @@ class ReattachMixin:
                     self._finalize_reattached(task, None)
                     return
             if time.monotonic() > deadline:
+                # Audit 2026-10-22 REM-3: align with run_long's deadline
+                # branch (deployment_task_ctx) — a reattached job that
+                # outlives the 6h watch window must be terminated, not just
+                # abandoned: it still holds the GPU / apt locks remotely.
+                self._kill_long(task.id, pid_file)
+                self._cleanup(task.id, log_file, pid_file, exit_file)
                 self._finalize_reattached(task, None)
                 return
             time.sleep(2.5)

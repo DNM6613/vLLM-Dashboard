@@ -38,4 +38,13 @@ describe('Toaster (audit 2026-10-20 P1-1: showToast had no consumer)', () => {
     expect(screen.queryByText('第一条')).toBeNull();
     expect(screen.getByText('第二条')).toBeTruthy();
   });
+
+  it('renders above the Modal overlay (audit 2026-10-22 FE-4: z-50 sat below z-[95])', () => {
+    render(<Toaster />);
+    act(() => {
+      showToast('层级检查');
+    });
+    const layer = screen.getByText('层级检查').closest('div.fixed') as HTMLElement;
+    expect(layer.className).toContain('z-[100]');
+  });
 });

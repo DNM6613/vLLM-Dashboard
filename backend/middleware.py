@@ -127,6 +127,12 @@ _BODY_METHODS = ("POST", "PUT", "PATCH")
 # GET /api/v1/monitor/requests returns verbatim to the connections panel
 # (audit 2026-10-20 P2-1). The entry is still recorded, with body=None.
 _CREDENTIAL_BODY_PATHS = ("/api/v1/config/server",)
+# Audit 2026-10-22 SEC-1: the access log is an in-memory + on-disk trail
+# served verbatim to the connections panel, so an unbounded request body
+# must not be read into memory (or into the log) just to preview it.
+# Bodies at/above this cap are recorded WITHOUT a preview; the entry
+# itself is still written.
+_BODY_PREVIEW_MAX = 256 * 1024
 
 
 def _sanitize_body(raw: bytes) -> str | None:
@@ -144,10 +150,18 @@ async def request_log_middleware(request: Request, call_next):
         return await call_next(request)
     body_preview = None
     if request.method in _BODY_METHODS and path not in _CREDENTIAL_BODY_PATHS:
+        # Audit 2026-10-22 SEC-1: gate on Content-Length — a body at/above
+        # the cap (or with no parsable length, e.g. chunked transfer) is
+        # NOT read; the entry is still recorded, without a preview.
         try:
-            body_preview = _sanitize_body(await request.body())
-        except Exception:
-            body_preview = None
+            content_length = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            content_length = 0
+        if 0 < content_length < _BODY_PREVIEW_MAX:
+            try:
+                body_preview = _sanitize_body(await request.body())
+            except Exception:
+                body_preview = None
     response = await call_next(request)
     ip = request.client.host if request.client else "?"
     request_log.record(ip, request.method, path, response.status_code, body_preview)

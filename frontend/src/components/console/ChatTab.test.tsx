@@ -108,3 +108,64 @@ describe('ChatTab thinking block auto-scroll', () => {
     expect(pre.scrollTop).toBe(0);
   });
 });
+
+function entryWithContent(content: string): ChatEntry {
+  return {
+    id: 1,
+    role: 'assistant',
+    content,
+    reasoning: '',
+    streaming: false,
+    error: null,
+    usage: null,
+    elapsedMs: null,
+  };
+}
+
+// The transcript container is the only DIV with overflow-y-auto in ChatTab
+// (the thinking block is a PRE).
+function getScrollEl(): HTMLElement {
+  const els = Array.from(document.querySelectorAll<HTMLElement>('.overflow-y-auto'));
+  const div = els.find((el) => el.tagName === 'DIV');
+  if (!div) throw new Error('scroll container not found');
+  return div;
+}
+
+describe('ChatTab transcript auto-scroll (audit 2026-10-22 FE-3)', () => {
+  afterEach(() => {
+    mockChat.entries = [];
+    cleanup();
+  });
+
+  it('pins the transcript to the newest line while the user is near the bottom', () => {
+    mockChat.entries = [entryWithContent('first')];
+    const { rerender } = renderChat();
+    const el = getScrollEl();
+    Object.defineProperty(el, 'scrollHeight', { configurable: true, writable: true, value: 120 });
+    Object.defineProperty(el, 'clientHeight', { configurable: true, writable: true, value: 100 });
+    el.scrollTop = 110; // distance from bottom < 40
+    mockChat.entries = [entryWithContent('first'), entryWithContent('second')];
+    rerender(
+      <I18nProvider>
+        <ChatTab models={models} />
+      </I18nProvider>,
+    );
+    expect(el.scrollTop).toBe(120);
+  });
+
+  it('does not yank back a user who scrolled up through the transcript', () => {
+    mockChat.entries = [entryWithContent('first')];
+    const { rerender } = renderChat();
+    const el = getScrollEl();
+    Object.defineProperty(el, 'scrollHeight', { configurable: true, writable: true, value: 1000 });
+    Object.defineProperty(el, 'clientHeight', { configurable: true, writable: true, value: 100 });
+    el.scrollTop = 0; // distance from bottom > 40
+    mockChat.entries = [entryWithContent('first'), entryWithContent('second')];
+    rerender(
+      <I18nProvider>
+        <ChatTab models={models} />
+      </I18nProvider>,
+    );
+    expect(el.scrollTop).toBe(0);
+  });
+});
