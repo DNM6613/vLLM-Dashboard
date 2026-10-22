@@ -17,7 +17,7 @@ trips the breaker after 3 cycles instead of flapping forever — incident
 import asyncio
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -25,6 +25,11 @@ from fastapi import HTTPException
 from backend.controller.state_machine import StateMachine, state_machine
 from backend.schemas.model import ModelStatus
 from backend.service import model_service, model_watchdog
+
+# model_lifecycle / model_status_sync must be imported only after the facade
+# is fully loaded: they bind the facade on import, and importing one first
+# re-enters the still-initializing facade (circular from-import).
+from backend.service import model_lifecycle, model_status_sync  # isort: skip
 
 
 def _reset_watchdog():
@@ -501,6 +506,202 @@ class TestModelLock(unittest.TestCase):
             self.assertEqual(reloaded.take_pending_locked_restarts(), [mid])
             self.assertEqual(reloaded.take_pending_locked_restarts(), [])
             self.assertEqual(reloaded.get_model(mid).status, ModelStatus.STOPPED)
+
+
+class TestManualStopCrashClearing(unittest.TestCase):
+    """Incident 2026-10-22: a manual stop of a locked model was recorded
+    as a crash by the status-sync — during the stop window the process is
+    already dead while the status is still RUNNING/LOADING, so the sync's
+    RUNNING/LOADING→STOPPED hooks fired and the watchdog re-launched the
+    model on every 30 s tick (the user could not stop it). Fix: a stop in
+    flight must not record a crash (model_status_sync guards), and a
+    successful stop clears the pending crash history (model_lifecycle) —
+    docstring semantics: a manual stop of a locked model is NOT re-started.
+    """
+
+    def setUp(self):
+        _reset_watchdog()
+        self._sm = state_machine
+        self._mid = self._sm.add_model(
+            "stop-flap", "stop-flap", "/models/stop-flap",
+            config={"name": "stop-flap", "path": "/models/stop-flap"},
+        ).id
+        self._sm.set_model_locked(self._mid, True)
+        self._started: list[str] = []
+        self._orig = {
+            name: getattr(model_service, name)
+            for name in (
+                "start_model", "_sync_status_once",
+                "_check_vllm_present_strict", "console_session_manager",
+                "get_remote_executor", "config_manager",
+                "get_http_client", "resolve_api_target",
+            )
+        }
+        # stop_model / _sync_status_once resolve these helpers through
+        # their OWN module namespace (bare calls, not the facade), so the
+        # stubs must land on those modules.
+        self._orig_local = {
+            (model_lifecycle, "_wait_for_remote_stop"):
+                model_lifecycle._wait_for_remote_stop,
+            (model_lifecycle, "_unset_launch_env_vars"):
+                model_lifecycle._unset_launch_env_vars,
+            (model_status_sync, "_check_vllm_present_strict"):
+                model_status_sync._check_vllm_present_strict,
+        }
+
+        async def fake_start(model_id):
+            self._started.append(model_id)
+            self._sm.update_model_status(model_id, ModelStatus.LOADING)
+            return {"status": "loading", "model_id": model_id,
+                    "command": f"vllm serve /models/{model_id}"}
+
+        async def no_sync(timeout):
+            return 0
+
+        async def unknown_present(host, port):
+            return None
+
+        class _FakeSession:
+            def send_command(self, cmd):
+                return True
+
+        class _FakeConsoleManager:
+            def get_or_create(self, config):
+                return _FakeSession(), True
+
+        model_service.start_model = fake_start
+        model_service._sync_status_once = no_sync
+        model_service._check_vllm_present_strict = unknown_present
+        model_service.console_session_manager = _FakeConsoleManager()
+
+    def tearDown(self):
+        for name, value in self._orig.items():
+            setattr(model_service, name, value)
+        for (mod, name), value in self._orig_local.items():
+            setattr(mod, name, value)
+        _reset_watchdog()
+        self._sm.remove_model(self._mid)
+
+    @staticmethod
+    def _stopped_executor():
+        class _FakeExecutor:
+            def stop_vllm(self, force=False, model_path=""):
+                return {"success": True, "error": None, "mode": "scoped"}
+
+        async def stopped_wait(executor, max_wait=8, model_path=""):
+            return True
+
+        async def no_unset(model_id):
+            return None
+
+        model_service.get_remote_executor = lambda: _FakeExecutor()
+        model_lifecycle._wait_for_remote_stop = stopped_wait
+        model_lifecycle._unset_launch_env_vars = no_unset
+
+    def test_successful_stop_clears_crash_history(self):
+        self._stopped_executor()
+
+        async def drive():
+            self._sm.update_model_status(self._mid, ModelStatus.RUNNING)
+            model_watchdog.on_model_crash(self._mid)
+            self.assertIn(self._mid, model_watchdog._crash_events)
+            return await model_service.stop_model(self._mid)
+
+        result = asyncio.run(drive())
+        self.assertTrue(result["stopped"])
+        self.assertEqual(
+            self._sm.get_model(self._mid).status, ModelStatus.STOPPED)
+        # the manual stop dropped the crash history: the watchdog must not
+        # re-launch the model the user just stopped
+        self.assertNotIn(self._mid, model_watchdog._crash_events)
+        asyncio.run(model_watchdog.watchdog_tick())
+        self.assertEqual(self._started, [])
+
+    def test_stop_clears_breaker_suspension(self):
+        # a breaker-suspended (FAILED) locked model is stopped manually:
+        # the history AND the suspension must be cleared so a later manual
+        # start begins with a clean breaker count
+        self._stopped_executor()
+        model_watchdog._suspended.add(self._mid)
+        model_watchdog._crash_events[self._mid] = [(datetime.now(), False)]
+        self._sm.update_model_status(self._mid, ModelStatus.FAILED)
+
+        async def drive():
+            return await model_service.stop_model(self._mid)
+
+        asyncio.run(drive())
+        self.assertNotIn(self._mid, model_watchdog._crash_events)
+        self.assertFalse(model_watchdog.is_suspended(self._mid))
+        asyncio.run(model_watchdog.watchdog_tick())
+        self.assertEqual(self._started, [])
+
+    def _remote_dead(self):
+        """Remote vLLM API unreachable + no process: the stop window."""
+        class _DeadConfig:
+            host = "10.131.1.7"
+            port = 8000
+
+        class _DeadConfigManager:
+            def get_config(self):
+                return _DeadConfig()
+
+        class _DeadTarget:
+            base_url = "http://10.131.1.7:8000"
+            port = 8000
+            headers = {}
+
+        class _DeadClient:
+            async def get(self, *args, **kwargs):
+                raise RuntimeError("connection refused")
+
+        async def gone_present(host, port):
+            return False
+
+        model_service.config_manager = _DeadConfigManager()
+        model_service.get_http_client = lambda: _DeadClient()
+        model_service.resolve_api_target = lambda config: _DeadTarget()
+        # _sync_status_once resolves the probe in its own module namespace
+        model_status_sync._check_vllm_present_strict = gone_present
+
+    def test_sync_running_to_stopped_during_stop_no_crash(self):
+        self._remote_dead()
+        self._sm.update_model_status(self._mid, ModelStatus.RUNNING)
+        model_lifecycle._stopping_models.add(self._mid)
+        try:
+            asyncio.run(model_status_sync._sync_status_once(timeout=3.0))
+        finally:
+            model_lifecycle._stopping_models.discard(self._mid)
+        self.assertEqual(
+            self._sm.get_model(self._mid).status, ModelStatus.STOPPED)
+        # a manual stop in flight is not a crash: no event recorded
+        self.assertNotIn(self._mid, model_watchdog._crash_events)
+
+    def test_sync_running_to_stopped_without_stop_records_crash(self):
+        # control: the same transition with NO stop in flight IS a crash
+        self._remote_dead()
+        self._sm.update_model_status(self._mid, ModelStatus.RUNNING)
+        asyncio.run(model_status_sync._sync_status_once(timeout=3.0))
+        self.assertEqual(
+            self._sm.get_model(self._mid).status, ModelStatus.STOPPED)
+        self.assertIn(self._mid, model_watchdog._crash_events)
+
+    def test_sync_loading_to_stopped_during_stop_no_crash(self):
+        self._remote_dead()
+        self._sm.update_model_status(self._mid, ModelStatus.LOADING)
+        # age the LOADING state past the reset grace so the sync would
+        # otherwise reset it (and record a crash for a locked model)
+        self._sm.get_model(self._mid).loading_since = (
+            datetime.now()
+            - timedelta(seconds=model_service.LOADING_GRACE_SECONDS + 5)
+        )
+        model_lifecycle._stopping_models.add(self._mid)
+        try:
+            asyncio.run(model_status_sync._sync_status_once(timeout=3.0))
+        finally:
+            model_lifecycle._stopping_models.discard(self._mid)
+        self.assertEqual(
+            self._sm.get_model(self._mid).status, ModelStatus.STOPPED)
+        self.assertNotIn(self._mid, model_watchdog._crash_events)
 
 
 class _FakeLaunchConfig:

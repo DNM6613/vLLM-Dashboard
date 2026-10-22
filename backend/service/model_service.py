@@ -182,6 +182,9 @@ from .model_lifecycle import (
     _wait_for_remote_stop as _wait_for_remote_stop,
 )
 from .model_lifecycle import (
+    is_stopping as is_stopping,
+)
+from .model_lifecycle import (
     start_model as start_model,
 )
 from .model_lifecycle import (
@@ -215,6 +218,9 @@ from .model_status_sync import (
     sync_status as sync_status,
 )
 from .model_watchdog import (
+    _clear as _watchdog_clear,
+)
+from .model_watchdog import (
     apply_model_lock as apply_model_lock,
 )
 from .model_watchdog import (
@@ -244,6 +250,7 @@ __all__ = [
     "BenchmarkInfo",
     "ModelInfo",
     "ModelStatus",
+    "_watchdog_clear",
     "_watchdog_on_crash",
     "apply_model_lock",
     "benchmark_model",
@@ -260,6 +267,7 @@ __all__ = [
     "get_model",
     "get_remote_executor",
     "install_cli_tool",
+    "is_stopping",
     "launch_config_manager",
     "list_models",
     "parse_env_vars",

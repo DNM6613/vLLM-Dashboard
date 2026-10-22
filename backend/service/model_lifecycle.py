@@ -23,6 +23,22 @@ from . import model_service as _ms
 
 logger = logging.getLogger(__name__)
 
+# Audit 2026-10-22 BCK-5: models currently being stopped by a user action.
+# _verify_start_probe must not interpret the expected "process gone" as a
+# start crash while a manual stop is in flight — that path would roll the
+# status back to STOPPED, record a crash, and let the watchdog re-launch
+# the model the user just stopped. The same flag guards the status-sync
+# crash hooks (model_status_sync): during the stop window the process is
+# already dead while the status is still RUNNING/LOADING, and without the
+# guard the sync records a "crash" for a deliberate stop (incident
+# 2026-10-22 stop↔auto-restart loop on a locked model).
+_stopping_models: set[str] = set()
+
+
+def is_stopping(model_id: str) -> bool:
+    """True while a user-initiated stop is in flight for the model."""
+    return model_id in _stopping_models
+
 
 def _build_stop_wait_command(model_path: str) -> str:
     if not model_path:
@@ -47,7 +63,14 @@ def _build_stop_wait_command(model_path: str) -> str:
         "for gpid in $(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null); do "
         "  if ps -p $gpid -o args= 2>/dev/null | grep -Fq \"$mp\"; then gpu_hit=$gpid; fi; "
         "done; "
-        "if [ -z \"$main_pids\" ] && [ -z \"$gpu_hit\" ]; then echo CLEAN; else echo BUSY; fi"
+        # Audit 2026-10-22 REM-4: a leaked VLLM::Worker grandchild does not
+        # carry the model path in its cmdline, so the checks above would call
+        # the stop CLEAN while the worker still holds the GPU. The platform
+        # runs a single current model, so any live VLLM::Worker means this
+        # stop is not finished. The probe chain's own cmdlines carry the
+        # sentinel and are filtered by grep -v (same trick as main_pids).
+        f"worker_cnt=$(ps -eo cmd= 2>/dev/null | grep -v '{_STOP_SELF_SENTINEL}' | grep -cE '{_STOP_SELF_SENTINEL}|VLLM::Worker'); "
+        "if [ -z \"$main_pids\" ] && [ -z \"$gpu_hit\" ] && [ \"${worker_cnt:-0}\" = 0 ]; then echo CLEAN; else echo BUSY; fi"
     )
 
 
@@ -115,6 +138,12 @@ async def _verify_start_probe(model_id: str, api_host: str, api_port: int) -> No
             return
         present = await _ms._check_vllm_present_strict(api_host, api_port)
     if present is False:
+        # Audit 2026-10-22 BCK-5: a manual stop in flight removes the
+        # process on purpose — skip the rollback/crash path entirely. If
+        # the stop has ALREADY finished, the status re-check above caught
+        # it (stop flips LOADING→STOPPED before clearing the flag).
+        if model_id in _stopping_models:
+            return
         logger.warning(
             f"No vLLM process detected ~{2 * _ms._START_PROBE_DELAY:.0f}s after start "
             f"for {model_id} — rolling back to STOPPED")
@@ -207,24 +236,36 @@ async def stop_model(model_id: str) -> dict:
     model = _ms.state_machine.get_model(model_id)
     model_path = model.path if model else ""
 
-    stop_result = await asyncio.to_thread(executor.stop_vllm, force=True, model_path=model_path)
-    if stop_result.get("mode") == "global":
-        logger.warning(
-            f"stop_vllm fell back to GLOBAL kill for model {model_id} "
-            f"(model_path={model_path!r} not matched — external launch or stale path)"
-        )
+    # Audit 2026-10-22 BCK-5: the flag must cover the whole stop (kill +
+    # verify-wait) so the start probe never sees the "process gone" window
+    # of an intentional stop.
+    _stopping_models.add(model_id)
+    try:
+        stop_result = await asyncio.to_thread(executor.stop_vllm, force=True, model_path=model_path)
+        if stop_result.get("mode") == "global":
+            logger.warning(
+                f"stop_vllm fell back to GLOBAL kill for model {model_id} "
+                f"(model_path={model_path!r} not matched — external launch or stale path)"
+            )
 
-    wait_path = model_path if stop_result.get("mode") == "scoped" else ""
-    stopped = await _wait_for_remote_stop(executor, max_wait=5, model_path=wait_path)
-    if not stopped:
-        logger.warning(f"vLLM process still running after stop for model {model_id}")
+        wait_path = model_path if stop_result.get("mode") == "scoped" else ""
+        stopped = await _wait_for_remote_stop(executor, max_wait=5, model_path=wait_path)
+        if not stopped:
+            logger.warning(f"vLLM process still running after stop for model {model_id}")
 
-    model = _ms.state_machine.get_model(model_id)
-    if model and stopped:
-        _ms.state_machine.update_model_status(model_id, ModelStatus.STOPPED)
-        _ms.state_machine.clear_current_model(model_id)
+        model = _ms.state_machine.get_model(model_id)
+        if model and stopped:
+            _ms.state_machine.update_model_status(model_id, ModelStatus.STOPPED)
+            _ms.state_machine.clear_current_model(model_id)
+            # A manual stop is a deliberate user action, not a crash:
+            # drop any pending watchdog crash history (and suspension) so
+            # a locked model is NOT re-launched right after the user
+            # stopped it (incident 2026-10-22 stop↔auto-restart loop).
+            _ms._watchdog_clear(model_id)
 
-    await _unset_launch_env_vars(model_id)
+        await _unset_launch_env_vars(model_id)
+    finally:
+        _stopping_models.discard(model_id)
 
     result = {"status": "success" if stopped else "timeout", "stopped": stopped}
     if not stopped and stop_result.get("error"):

@@ -136,7 +136,10 @@ async def _sync_status_once(timeout: float, track_current: bool = False,
                 if _loading_reset_allowed(model):
                     _ms.state_machine.update_model_status(model.id, ModelStatus.STOPPED)
                     _ms.state_machine.clear_current_model(model.id)
-                    if model.locked:
+                    # A user-initiated stop in flight is not a crash: the
+                    # stop path clears the crash history itself (incident
+                    # 2026-10-22 stop↔auto-restart loop).
+                    if model.locked and not _ms.is_stopping(model.id):
                         _ms._watchdog_on_crash(model.id)
                     changed += 1
             elif (model.status == ModelStatus.LOADING
@@ -161,7 +164,11 @@ async def _sync_status_once(timeout: float, track_current: bool = False,
             if not is_running and (remote_model_ids or strict_present is False):
                 _ms.state_machine.update_model_status(model.id, ModelStatus.STOPPED)
                 _ms.state_machine.clear_current_model(model.id)
-                if model.locked:
+                # A manual stop in flight is not a crash (see
+                # model_lifecycle.is_stopping) — recording it here let the
+                # watchdog re-launch a model the user just stopped
+                # (incident 2026-10-22 stop↔auto-restart loop).
+                if model.locked and not _ms.is_stopping(model.id):
                     _ms._watchdog_on_crash(model.id)
                 changed += 1
             elif is_running and engine_healthy is False:
