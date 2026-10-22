@@ -168,6 +168,29 @@ def _build_supervisor_script(venv_path: str, task_id: str) -> str:
     )
 
 
+def _install_precompiled_kernels(ctx: TaskContext, venv_path: str) -> None:
+    """Pre-install vLLM's precompiled kernels (``vllm download-kernels``,
+    vLLM >= 0.32.0) so the first ``vllm serve`` skips the compile round.
+
+    Non-fatal step: on failure (older vLLM without the subcommand, or a
+    network hiccup) the engine falls back to downloading/compiling kernels
+    at first start — the vLLM install itself has already been verified, so
+    a failed optimization must not fail the pipeline. TaskCancelled is not
+    a DeploymentError, so a user cancel still propagates to the step
+    machinery.
+    """
+    cmd = (
+        f"bash -lc 'source {venv_path}/bin/activate 2>/dev/null; "
+        f"vllm download-kernels'"
+    )
+    try:
+        ctx.run_long(cmd, timeout=1800)
+        ctx.log("Precompiled kernels installed (vllm download-kernels).")
+    except DeploymentError as e:
+        ctx.log(
+            f"warning: precompiled kernel install failed ({e}) — vLLM will "
+            "download/compile kernels at first start (slower startup).")
+
 def _run_vllm(ctx: TaskContext, payload: dict[str, Any], venv_path: str,
               previous_version: str) -> None:
     mirrors = _ds.deployment_state.get()["mirrors"]
@@ -201,8 +224,11 @@ def _run_vllm(ctx: TaskContext, payload: dict[str, Any], venv_path: str,
                                           venv=payload.get("venv_name", ""))
         ctx.log(f"vLLM {version} verified in {venv_path}.")
 
-    if payload.get("auto_register_service") and len(ctx.task.steps) > 4:
-        with ctx.step(4):
+    with ctx.step(4):
+        _install_precompiled_kernels(ctx, venv_path)
+
+    if payload.get("auto_register_service") and len(ctx.task.steps) > 5:
+        with ctx.step(5):
             sup_script = _build_supervisor_script(venv_path, ctx.task.id)
             ctx.run_long(sup_script, timeout=300)
             ctx.log("supervisor template written (autostart=false — edit the model path, then enable).")
@@ -243,3 +269,6 @@ def _run_rollback_vllm(ctx: TaskContext, target_version: str, venv_path: str,
             )
         _ds.deployment_state.set_snapshot("vllm", version=target_version)
         ctx.log(f"vLLM rolled back to {target_version}.")
+
+    with ctx.step(3):
+        _install_precompiled_kernels(ctx, venv_path)

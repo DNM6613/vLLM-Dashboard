@@ -99,6 +99,16 @@ export const ModelStatusCard = memo(function ModelStatusCard() {
               format={fmtInt}
             />
             <Stat
+              label={t('Admission Rejections (Total)')}
+              num={model?.admission_rejections_total}
+              format={fmtInt}
+            />
+            <Stat
+              label={t('Preemptions (Total)')}
+              num={model?.num_preemptions_total}
+              format={fmtInt}
+            />
+            <Stat
               label={t('KV Cache')}
               num={model?.kv_cache_usage_pct}
               format={fmtPct}
@@ -107,6 +117,9 @@ export const ModelStatusCard = memo(function ModelStatusCard() {
             <Stat label={t('Avg TTFT (s)')} num={model?.avg_ttft_s} />
             <Stat label={t('Avg TPOT (ms)')} num={model?.avg_tpot_ms} />
             <Stat label={t('Avg E2E Latency (s)')} num={model?.avg_e2e_latency_s} />
+            <Stat label={t('Avg Queue (s)')} num={model?.avg_queue_s} />
+            <Stat label={t('Avg Prefill (s)')} num={model?.avg_prefill_s} />
+            <Stat label={t('Avg Decode (s)')} num={model?.avg_decode_s} />
             <Stat
               label={t('MTP Hit Rate (Realtime/Cumulative)')}
               num={model?.mtp_hit_rate_pct}

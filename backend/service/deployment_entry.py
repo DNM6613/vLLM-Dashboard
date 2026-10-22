@@ -185,7 +185,7 @@ def start_vllm_task(payload: dict[str, Any]) -> Task:
     venv_path = _resolve_venv_path(venv_name)
     title = (f"Install vLLM {version}" if version != "latest" else "Install vLLM (latest)")
     steps = ["Stop vLLM service", "Prepare Python environment", "Install vLLM",
-             "Verify version"]
+             "Verify version", "Install precompiled kernels"]
     if payload.get("auto_register_service"):
         steps.append("Write supervisor template")
     task = _ds.task_manager.create("vllm", title, steps)
@@ -219,7 +219,8 @@ def start_rollback_vllm() -> Task:
     _validate_venv_name(venv_name)
     venv_path = _resolve_venv_path(venv_name)
     task = _ds.task_manager.create("rollback_vllm", f"Roll back vLLM to {target}",
-                                   ["Stop vLLM service", f"Reinstall vllm=={target}", "Verify version"])
+                                   ["Stop vLLM service", f"Reinstall vllm=={target}",
+                                    "Verify version", "Install precompiled kernels"])
     task.result = {"target_version": target, "venv": venv_name}
     _ds.task_manager.submit(
         task,

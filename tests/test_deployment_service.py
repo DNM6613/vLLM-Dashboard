@@ -1111,5 +1111,173 @@ class TestInflightGuard(unittest.TestCase):
         self.entry._reject_inflight("driver")
 
 
+class TestVllmKernelsStepSchedule(unittest.TestCase):
+    """vLLM 0.32.0 added `vllm download-kernels` (pre-install the
+    precompiled kernels so the first start skips the compile round). The
+    install and rollback pipelines must schedule it right after version
+    verification — before the optional supervisor step."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._files = patch.multiple(
+            ds,
+            STATE_FILE=os.path.join(self.tmp.name, "state.json"),
+            TASKS_FILE=os.path.join(self.tmp.name, "tasks.json"),
+            DATA_DIR=self.tmp.name,
+            LOG_DIR=os.path.join(self.tmp.name, "logs"),
+        )
+        self._files.start()
+        import backend.service.deployment_entry as entry
+        self.entry = entry
+        self.mgr = ds.DeploymentTaskManager()
+        # Capture the submitted task without running the pipeline (it would
+        # need a live remote; the steps-list assertions don't execute it).
+        self.mgr.submit = MagicMock()
+        self.state = MagicMock()
+        self.state.get.return_value = ds._default_state()
+        self._tm = patch.object(ds, "task_manager", self.mgr)
+        self._st = patch.object(ds, "deployment_state", self.state)
+        self._tm.start()
+        self._st.start()
+        cfg = MagicMock()
+        cfg.host = "10.131.1.7"
+        cfg.venv_name = ""
+        self._cfg = patch.object(entry.config_manager, "get_config", return_value=cfg)
+        self._cfg.start()
+        # Defensive: no SSH round-trip may escape (the entry points only
+        # call the executor for the pre-start probes).
+        self._exec = patch.object(entry, "get_remote_executor",
+                                  return_value=MagicMock())
+        self._exec.start()
+
+    def tearDown(self):
+        self._exec.stop()
+        self._cfg.stop()
+        self._st.stop()
+        self._tm.stop()
+        self._files.stop()
+        self.tmp.cleanup()
+
+    def test_vllm_steps_include_kernels_before_supervisor(self):
+        task = self.entry.start_vllm_task(
+            {"version": "0.32.0", "runtime_mode": "builtin", "env_mode": "new",
+             "auto_register_service": True})
+        self.assertEqual([s["name"] for s in task.steps], [
+            "Stop vLLM service", "Prepare Python environment", "Install vLLM",
+            "Verify version", "Install precompiled kernels",
+            "Write supervisor template",
+        ])
+        self.assertTrue(self.mgr.submit.called)
+
+    def test_vllm_steps_include_kernels_without_supervisor(self):
+        task = self.entry.start_vllm_task(
+            {"version": "0.32.0", "runtime_mode": "builtin", "env_mode": "new",
+             "auto_register_service": False})
+        names = [s["name"] for s in task.steps]
+        self.assertEqual(names[-1], "Install precompiled kernels")
+        self.assertNotIn("Write supervisor template", names)
+
+    def test_rollback_steps_include_kernels(self):
+        state = self.state.get.return_value
+        state["snapshots"]["vllm"]["previous_version"] = "0.31.0"
+        task = self.entry.start_rollback_vllm()
+        self.assertEqual([s["name"] for s in task.steps], [
+            "Stop vLLM service", "Reinstall vllm==0.31.0", "Verify version",
+            "Install precompiled kernels",
+        ])
+
+
+class TestInstallPrecompiledKernels(unittest.TestCase):
+    """The kernels step is an optimization: a failed `vllm download-kernels`
+    (older vLLM without the subcommand, network hiccup) logs a warning and
+    the pipeline continues — the vLLM install already verified. A user
+    cancel still propagates."""
+
+    def _ctx(self):
+        return MagicMock()
+
+    def test_success_logs_confirmation(self):
+        from backend.service import deployment_pipelines_vllm as pv
+        ctx = self._ctx()
+        pv._install_precompiled_kernels(ctx, "/home/uforce/.vllm")
+        ctx.run_long.assert_called_once()
+        cmd = ctx.run_long.call_args[0][0]
+        self.assertIn("vllm download-kernels", cmd)
+        self.assertIn("source /home/uforce/.vllm/bin/activate", cmd)
+        logged = " ".join(str(c.args[0]) for c in ctx.log.call_args_list)
+        self.assertIn("Precompiled kernels installed", logged)
+
+    def test_failure_is_non_fatal_and_warned(self):
+        from backend.service import deployment_pipelines_vllm as pv
+        ctx = self._ctx()
+        ctx.run_long.side_effect = ds.DeploymentError("Step failed (exit code 1)")
+        pv._install_precompiled_kernels(ctx, "/home/uforce/.vllm")  # must not raise
+        logged = " ".join(str(c.args[0]) for c in ctx.log.call_args_list)
+        self.assertIn("warning", logged)
+        self.assertIn("first start", logged)
+
+    def test_cancel_still_propagates(self):
+        from backend.service import deployment_pipelines_vllm as pv
+        ctx = self._ctx()
+        ctx.run_long.side_effect = ds.TaskCancelled()
+        with self.assertRaises(ds.TaskCancelled):
+            pv._install_precompiled_kernels(ctx, "/home/uforce/.vllm")
+
+    def test_run_vllm_survives_kernels_failure(self):
+        # Full pipeline with the kernels step (run_long call #3, after
+        # prepare and install) failing: the supervisor step must still run
+        # and _run_vllm must return without raising.
+        import types
+        from contextlib import contextmanager
+
+        from backend.service import deployment_pipelines_vllm as pv
+
+        class _FakeCtx:
+            def __init__(self, steps):
+                self.task = types.SimpleNamespace(
+                    id="t-kernels",
+                    steps=[{"name": s, "status": "pending"} for s in steps])
+                self.executor = MagicMock()
+                self.executor.stop_vllm.return_value = {"success": True, "mode": "scoped"}
+                self.logs = []
+                self.step_indices = []
+                self._run_long_calls = 0
+
+            def log(self, message):
+                self.logs.append(str(message))
+
+            def exec(self, command, timeout=None, stdin_data=None):
+                # the verify step must see a parseable vLLM version
+                return {"success": True, "stdout": "0.32.0", "stderr": ""}
+
+            def run_long(self, command, timeout=1800):
+                self._run_long_calls += 1
+                if self._run_long_calls == 3:  # the kernels step
+                    raise ds.DeploymentError("Step failed (exit code 1)")
+                return {"success": True, "exit_code": 0}
+
+            @contextmanager
+            def step(self, index):
+                self.step_indices.append(index)
+                yield
+
+        steps = ["Stop vLLM service", "Prepare Python environment", "Install vLLM",
+                 "Verify version", "Install precompiled kernels",
+                 "Write supervisor template"]
+        ctx = _FakeCtx(steps)
+        payload = {"auto_register_service": True, "venv_name": ".vllm",
+                   "env_mode": "new", "source_build": False, "runtime_mode": "builtin"}
+        # get() must return the real default-state dict: _run_vllm reads
+        # get()["mirrors"] and the install-command builder shell-quotes the
+        # pypi mirror (a bare MagicMock is not a str).
+        fake_state = MagicMock()
+        fake_state.get.return_value = ds._default_state()
+        with patch.object(ds, "deployment_state", fake_state):
+            pv._run_vllm(ctx, payload, "/home/uforce/.vllm", "0.31.0")
+        self.assertEqual(ctx.step_indices, [0, 1, 2, 3, 4, 5])
+        joined = "\n".join(ctx.logs)
+        self.assertIn("warning: precompiled kernel install failed", joined)
+
+
 if __name__ == "__main__":
     unittest.main()

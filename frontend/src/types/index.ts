@@ -173,6 +173,11 @@ export interface ModelRuntimeStatus {
   avg_ttft_s: number | null;
   avg_tpot_ms: number | null;
   avg_e2e_latency_s: number | null;
+  admission_rejections_total: number | null;
+  num_preemptions_total: number | null;
+  avg_queue_s: number | null;
+  avg_prefill_s: number | null;
+  avg_decode_s: number | null;
   api_port: number | null;
   api_key: string | null;
   timestamp: number;
