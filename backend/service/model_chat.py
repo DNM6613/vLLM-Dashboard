@@ -73,6 +73,17 @@ async def chat_precheck(model_id: str) -> tuple[httpx.AsyncClient, ApiTarget, st
             status_code=400,
             detail=f"Model '{model_id}' is not loaded on vLLM. Loaded models: {sorted(remote_ids)}",
         )
+    # Audit 2026-10-22 BCK-1: /v1/models is static — a zombie engine (core
+    # dead, API process alive) still lists the model, but the completion
+    # request then dies mid-stream with an obscure error. /health is the
+    # engine's own liveness answer; fail fast with a clear 503 instead of
+    # a broken SSE stream.
+    healthy = await _ms._check_vllm_engine_health(timeout=5.0)
+    if healthy is False:
+        raise HTTPException(
+            status_code=503,
+            detail="vLLM 引擎不健康（/health 异常）——引擎可能已崩溃，等待自动恢复或手动重启",
+        )
     return client, target, vllm_model_id
 
 

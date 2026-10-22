@@ -17,7 +17,11 @@ Semantics (2026-10-16, user-confirmed):
   on the remote: ``_attempt_restart`` probes remote presence first
   (``_check_vllm_present_strict``) because after a dashboard restart the
   in-memory status is the coerced STOPPED and the start_model 409 guard
-  cannot see a live remote (audit 2026-10-17 P2-1).
+  cannot see a live remote (audit 2026-10-17 P2-1). Exception: a *zombie*
+  engine (port alive, /health non-2xx — the API process outlived the
+  engine core) is force-killed and restarted right there, because the
+  status-sync zombie downgrade that armed the crash event and this
+  presence guard would otherwise deadlock (audit 2026-10-22 BCK-1).
 - Breaker: 3 *real* crash/start-failure events within 10 minutes suspends
   auto-restart and marks the model FAILED. Crash history is cleared only
   when the model reaches RUNNING (or on unlock): an in-flight LOADING
@@ -183,10 +187,31 @@ async def _attempt_restart(model_id: str) -> None:
             logger.warning(f"Model lock watchdog: presence probe failed for {model_id}: {e}")
             present = None
         if present is True:
-            logger.info(
-                f"Model lock watchdog: {model_id} still has a vLLM process on the "
-                f"remote — skipping auto-start until sync reconciles the status")
-            return
+            # Audit 2026-10-22 BCK-1: a live port is not proof of a live
+            # engine — after an engine-core crash the API process keeps the
+            # port open while /health answers non-2xx (the 2026-10-22 01:19
+            # zombie sat invisible for 70 minutes). A healthy engine keeps
+            # the old behavior (skip — sync reconciles the status); a dead
+            # engine under a live port is force-killed and restarted here,
+            # because waiting for sync would deadlock: sync's zombie
+            # downgrade is what armed this event, and this guard used to
+            # block the restart path forever.
+            engine_healthy = await _ms._check_vllm_engine_health()
+            if engine_healthy is not False:
+                logger.info(
+                    f"Model lock watchdog: {model_id} still has a vLLM process on the "
+                    f"remote — skipping auto-start until sync reconciles the status")
+                return
+            executor = _ms.get_remote_executor()
+            logger.error(
+                f"Model lock watchdog: {model_id} zombie state — vLLM port alive "
+                f"but /health unhealthy (engine core dead); force-killing the "
+                f"leftover process before the restart")
+            kill = await asyncio.to_thread(executor.stop_vllm, True, model.path)
+            if not kill.get("success"):
+                logger.warning(
+                    f"Model lock watchdog: zombie force-kill of {model_id} reported "
+                    f"failure: {kill.get('error')} — attempting the start anyway")
         result = await _ms.start_model(model_id)
         logger.info(f"Model lock watchdog: auto-restarted locked model {model_id}")
         try:

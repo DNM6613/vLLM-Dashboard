@@ -136,7 +136,19 @@ async def _start_model(model_id: str) -> dict:
     if model.status in (ModelStatus.RUNNING, ModelStatus.LOADING):
         raise HTTPException(status_code=409, detail=f"Model is already {model.status.value}")
 
-    ssh = await asyncio.to_thread(_ms.check_ssh_connectivity, True)
+    # Audit 2026-10-22 BCK-2: refresh=True bypasses the cache and runs a
+    # full SSH round in this thread — bound it with the event-loop wall
+    # clock so a wedged round cannot stall the start path indefinitely.
+    try:
+        ssh = await asyncio.wait_for(
+            asyncio.to_thread(_ms.check_ssh_connectivity, True),
+            timeout=_ms.settings.SSH_CMD_TIMEOUT * 4,
+        )
+    except TimeoutError:
+        raise HTTPException(
+            status_code=503,
+            detail="AI server unreachable via SSH — the connectivity probe itself timed out"
+        )
     if not ssh.get("connected"):
         raise HTTPException(
             status_code=503,

@@ -188,6 +188,9 @@ from .model_lifecycle import (
     stop_model as stop_model,
 )
 from .model_status_sync import (
+    _check_vllm_engine_health as _check_vllm_engine_health,
+)
+from .model_status_sync import (
     _check_vllm_present_strict as _check_vllm_present_strict,
 )
 from .model_status_sync import (

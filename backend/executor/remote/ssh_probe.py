@@ -13,6 +13,11 @@ SSH_PROBE_CMD_TIMEOUT = 5
 SSH_REACH_PROBE_TIMEOUT = 1
 
 SSH_PROBE_INTERVAL = 1.0
+# Audit 2026-10-22 BCK-2 residue: beyond this cache age the shared probe
+# thread is treated as wedged and restarted — a wedged thread stays alive,
+# so the `is_alive()` rebuild check alone never fires and the stale result
+# (possibly 'connected' on a dead machine) is served forever.
+SSH_PROBE_STALE_SECONDS = 60.0
 
 _ssh_probe_lock = threading.Lock()
 _ssh_probe_cache: dict[str, Any] | None = None
@@ -24,9 +29,12 @@ _ssh_probe_stop = threading.Event()
 # emitted no transition log across the real off window and the container
 # was redeployed before the scene could be inspected): _ssh_probe_ts lets
 # API readers detect a stale cache and the loop heartbeat proves thread
-# liveness. Logging only — probe behavior and return values are unchanged.
+# liveness.
 _ssh_probe_ts: float = 0.0
 _stale_warn_ts: float = 0.0
+# Last probe-thread restart (audit 2026-10-22 BCK-2): throttle the wedged
+# rebuild so a still-wedged fresh thread is not rebuilt on every call.
+_probe_restart_ts: float = 0.0
 
 def _ssh_probe_fingerprint(config) -> tuple:
     return (
@@ -153,7 +161,7 @@ def _ssh_probe_loop() -> None:
                 return
 
 def check_ssh_connectivity(refresh: bool = False) -> dict[str, Any]:
-    global _ssh_probe_thread, _stale_warn_ts
+    global _ssh_probe_thread, _stale_warn_ts, _probe_restart_ts
     from ...config.remote_client import config_manager
     config = config_manager.get_config()
 
@@ -172,6 +180,32 @@ def check_ssh_connectivity(refresh: bool = False) -> dict[str, Any]:
                 and _ssh_probe_fp == _ssh_probe_fingerprint(config)):
             now = time.monotonic()
             age = now - _ssh_probe_ts
+            if age > SSH_PROBE_STALE_SECONDS:
+                # Audit 2026-10-22 BCK-2: a wedged probe thread stays alive,
+                # so the is_alive() check below never rebuilds it and this
+                # stale result (possibly 'connected' on a dead machine) is
+                # served forever. Beyond the stale bound, restart the thread
+                # and keep serving the old value until the first new round.
+                # Throttled so a still-wedged fresh thread is not rebuilt on
+                # every caller.
+                if now - _probe_restart_ts >= SSH_PROBE_STALE_SECONDS:
+                    logger.warning(
+                        "SSH shared probe cache %.0fs stale — restarting the "
+                        "probe thread (audit 2026-10-22 BCK-2)", age)
+                    if _ssh_probe_thread is not None:
+                        _ssh_probe_stop.set()
+                        _ssh_probe_thread.join(timeout=2.0)
+                    _ssh_probe_stop.clear()
+                    _ssh_probe_thread = threading.Thread(
+                        target=_ssh_probe_loop, name="ssh-probe", daemon=True)
+                    _ssh_probe_thread.start()
+                    _probe_restart_ts = now
+                elif now - _stale_warn_ts >= 30.0:
+                    _stale_warn_ts = now
+                    logger.warning(
+                        "SSH shared probe cache %.0fs stale after restart "
+                        "(thread still wedged)", age)
+                return dict(_ssh_probe_cache)
             if age > 15.0 and now - _stale_warn_ts >= 30.0:
                 # The shared thread refreshes every second; a cache this
                 # old means it is no longer making rounds (2026-10-21

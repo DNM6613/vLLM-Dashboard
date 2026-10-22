@@ -26,12 +26,17 @@ def _read_and_wait_bounded(stdout, stderr, deadline: float) -> tuple[bytes, byte
     """Read a command's stdout/stderr to EOF and its exit status under a
     wall-clock ``deadline``.
 
-    The executor's per-command timeout only bounds opening the SSH channel —
-    ``stdout.read()`` is unbounded, so a half-dead remote (sshd up but silent)
-    can pin this worker thread forever (audit 2026-10-20 P1-3/P1-4: the
-    watchdog self-heal chain and the deployment task threads die silently).
-    On expiry the caller raises TimeoutError and closes the channel; the
-    abandoned reader thread wakes on the close and exits.
+    The deadline is the second, independent bound on the read end: paramiko
+    5.0.0's ``exec_command(timeout=)`` sets ``chan.settimeout`` and the
+    channel recv raises socket.timeout when it expires (verified against the
+    local source — audit 2026-10-22 REM-2; the older "stdout.read() is
+    unbounded" note here is stale for calls that pass a timeout), but that
+    bound only exists when the caller passed a timeout. This deadline covers
+    those reads too, and guarantees the watchdog self-heal chain and the
+    deployment task threads can never be pinned by a half-dead remote
+    (audit 2026-10-20 P1-3/P1-4). On expiry the caller raises TimeoutError
+    and closes the channel; the abandoned reader thread wakes on the close
+    and exits.
     """
     box: dict[str, Any] = {}
 

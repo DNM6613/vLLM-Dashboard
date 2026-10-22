@@ -83,10 +83,19 @@ def build_ssh_client(
                     pass
                 with contextlib.suppress(OSError):
                     os.chmod(known_hosts, 0o600)
+            # Audit 2026-10-22 REM-1: the lock only guards known_hosts file
+            # I/O (load here / persist in the missing_host_key callback).
+            # paramiko invokes the policy's missing_host_key() synchronously
+            # in the connect() thread (paramiko 5.0.0, client.py L448), and
+            # the callback re-takes this non-reentrant lock to persist the
+            # key — with the handshake inside the lock, the FIRST connection
+            # to a host not yet in known_hosts deadlocked itself and left
+            # the lock held forever, poisoning every later strict
+            # connection process-wide. The handshake must run outside.
             with _KNOWN_HOSTS_LOCK:
                 client.load_host_keys(known_hosts)
-                client.set_missing_host_key_policy(_RecordingHostKeyPolicy())
-                _ssh_handshake(client, host, port, username, password, key_path, sock)
+            client.set_missing_host_key_policy(_RecordingHostKeyPolicy())
+            _ssh_handshake(client, host, port, username, password, key_path, sock)
         else:
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # noqa: S507
             _ssh_handshake(client, host, port, username, password, key_path, sock)

@@ -1,3 +1,4 @@
+import concurrent.futures
 import logging
 import os
 import shutil
@@ -130,7 +131,19 @@ class PowerOps:
             if time.monotonic() - last_ssh >= self.POWERON_SSH_PROBE_INTERVAL:
                 last_ssh = time.monotonic()
                 try:
-                    probe = check_ssh_connectivity(refresh=True)
+                    # Audit 2026-10-22 BCK-2: refresh=True is a full SSH
+                    # round; this is a blocking power-on verify loop, so an
+                    # unbounded round would stall the whole BMC retry loop.
+                    # Run it on a worker thread with a wall-clock bound (no
+                    # ``with`` — the context manager would wait=True for the
+                    # still-running task after the timeout, negating it).
+                    _pexec = concurrent.futures.ThreadPoolExecutor(
+                        max_workers=1, thread_name_prefix="ssh-probe-refresh")
+                    try:
+                        probe = _pexec.submit(
+                            check_ssh_connectivity, True).result(timeout=60.0)
+                    finally:
+                        _pexec.shutdown(wait=False)
                 except Exception as e:
                     probe = {"connected": False, "error": str(e)[:200]}
                 if probe.get("connected"):

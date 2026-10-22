@@ -37,6 +37,31 @@ def _loading_hard_reset_allowed(model: ModelInfo, now: datetime | None = None,
     return (now - model.loading_since).total_seconds() >= hard_cap_seconds
 
 
+async def _check_vllm_engine_health(timeout: float = 3.0) -> bool | None:
+    """Probe vLLM's own /health endpoint for engine-core liveness.
+
+    Returns True when /health answers 2xx (engine alive), False when it
+    answers non-2xx (zombie: the API process keeps port 8000 open after
+    the engine core died — incident 2026-10-22 01:19 answered 501), and
+    None on a network-level failure (unreachable/timeout — distinct from
+    a dead engine, so callers can stay conservative). /v1/models alone
+    cannot detect a zombie: it is a static endpoint that keeps listing
+    the model after the engine is gone (audit 2026-10-22 BCK-1).
+    """
+    config = _ms.config_manager.get_config()
+    client = _ms.get_http_client()
+    target = _ms.resolve_api_target(config)
+    try:
+        resp = await client.get(
+            f"{target.base_url}/health",
+            timeout=timeout,
+            headers=target.headers,
+        )
+        return 200 <= resp.status_code < 300
+    except Exception:
+        return None
+
+
 async def _check_vllm_present_strict(api_host: str, api_port: int) -> bool | None:
     probe_host = api_host if api_host not in ("", "localhost") else "127.0.0.1"
     try:
@@ -84,9 +109,17 @@ async def _sync_status_once(timeout: float, track_current: bool = False,
     has_running = any(m.status == ModelStatus.RUNNING for m in models)
     vllm_process_exists = True
     strict_present: bool | None = None
+    engine_healthy: bool | None = None
     if (has_loading or has_running) and not remote_model_ids:
         strict_present = await _check_vllm_present_strict(config.host, target.port)
         vllm_process_exists = (strict_present is True)
+    elif has_running and remote_model_ids:
+        # Audit 2026-10-22 BCK-1: the model list above keeps answering after
+        # the engine core dies (static /v1/models + live API process = the
+        # 70-minute invisible zombie of 2026-10-22 01:19). While something
+        # is RUNNING, one light GET /health per sync makes that death
+        # visible; nothing running/loading costs nothing.
+        engine_healthy = await _check_vllm_engine_health(timeout=timeout)
 
     changed = 0
     for model in models:
@@ -119,10 +152,26 @@ async def _sync_status_once(timeout: float, track_current: bool = False,
         elif model.status == ModelStatus.RUNNING:
             # Only drop RUNNING when there is positive evidence the model is
             # gone: the API returned a non-empty model list that lacks this
-            # model, or the process probe found no vLLM process. A transient
-            # empty list (API reachable but returning no models) is not
-            # sufficient — that used to flip RUNNING models to STOPPED.
+            # model, the process probe found no vLLM process, or /health
+            # proves the engine core is dead under a live API process
+            # (zombie — /v1/models is static and keeps listing the model,
+            # audit 2026-10-22 BCK-1). A transient empty list (API
+            # reachable but returning no models) is not sufficient — that
+            # used to flip RUNNING models to STOPPED.
             if not is_running and (remote_model_ids or strict_present is False):
+                _ms.state_machine.update_model_status(model.id, ModelStatus.STOPPED)
+                _ms.state_machine.clear_current_model(model.id)
+                if model.locked:
+                    _ms._watchdog_on_crash(model.id)
+                changed += 1
+            elif is_running and engine_healthy is False:
+                # Positive engine death: /health non-2xx while the model
+                # still shows up in /v1/models (2026-10-22 01:19 zombie —
+                # 70 minutes invisible to every probe except /health).
+                logger.warning(
+                    f"Model {model.id} RUNNING but vLLM /health is unhealthy "
+                    f"(zombie engine: API process alive, engine core dead) — "
+                    f"resetting to STOPPED")
                 _ms.state_machine.update_model_status(model.id, ModelStatus.STOPPED)
                 _ms.state_machine.clear_current_model(model.id)
                 if model.locked:

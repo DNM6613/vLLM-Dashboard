@@ -183,8 +183,8 @@ export const ZH: Record<string, string> = {
     '机器将断电，vLLM 停止，需重新上电后才能再次使用。',
 
   'Console': '控制台',
-  '[WebSocket] Reconnect limit reached. Check the AI server and network.':
-    '[WebSocket] 重连次数已达上限，请检查 AI 服务器与网络。',
+  'Console connection failed — the start command may not have been delivered':
+    '控制台连接失败——启动命令可能未送达',
   '✗ Connection error': '✗ 连接错误',
 
   'Chat': '对话',
