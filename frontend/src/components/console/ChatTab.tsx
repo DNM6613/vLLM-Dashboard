@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Pencil, Send, Square, Trash2, X } from 'lucide-react';
+import { Brain, Loader2, Pencil, Send, Square, Trash2, X } from 'lucide-react';
 import { useI18n } from '../../i18n/context';
 import { useChat } from '../../hooks/useChat';
 import { getLaunchConfig } from '../../api/models';
@@ -94,14 +94,38 @@ export function ChatTab({ models }: ChatTabProps) {
     wasStreaming.current = streaming;
   }, [streaming]);
 
-  // Keep the transcript pinned to the latest line — but only when the user
-  // is already near the bottom (audit 2026-10-22 FE-3: unconditional pinning
-  // yanked readers back to the bottom while they scrolled up through earlier
-  // messages; mirrors the thinking-block guard below).
+  // Stick-to-bottom: whether the transcript follows the newest line is a
+  // decision about the USER's scroll intent, not the post-render distance.
+  // A scroll listener records "near the bottom" whenever the user (or our
+  // own pinning) scrolls; content growth does NOT fire a scroll event, so the
+  // intent survives a single update that adds > 40px (a send appending the
+  // user + model entries, or the thinking block first appearing) — exactly
+  // the case a post-render `< 40px` guard reads wrong and stops following
+  // forever (audit 2026-10-22 FE-3 follow-up: "对话框不能自动滚动").
+  const stickToBottomRef = useRef(true);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) {
+    const onScroll = () => {
+      stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    };
+    onScroll();
+    el.addEventListener('scroll', onScroll);
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+  // A freshly sent user message is an explicit "show me this exchange" intent:
+  // jump to the bottom even if the user was reading up in history (ids come
+  // from useChat's monotonic counter, so "newer than the last seen" = just
+  // sent). While the reply streams, stickToBottomRef (kept true by our own
+  // pins) follows it; scrolling up mid-stream still disengages.
+  const lastUserIdRef = useRef(0);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const newestUserId = entries.reduce((m, e) => (e.role === 'user' && e.id > m ? e.id : m), 0);
+    const freshUserMessage = newestUserId > lastUserIdRef.current;
+    lastUserIdRef.current = newestUserId;
+    if (freshUserMessage || stickToBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
   }, [entries]);
@@ -244,7 +268,26 @@ export function ChatTab({ models }: ChatTabProps) {
           className="flex-1 resize-none rounded-lg border border-border bg-bg px-2 py-1.5 font-mono text-sm disabled:opacity-50"
         />
         <div className="flex flex-col items-end gap-1.5">
-          {entries.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            {thinkingSupported && (
+              <button
+                type="button"
+                title={t('Show thinking')}
+                aria-pressed={showThinking}
+                onClick={() => {
+                  const next = !showThinking;
+                  setShowThinking(next);
+                  writeShowThinking(next);
+                }}
+                className={
+                  showThinking
+                    ? 'rounded bg-bg-hover p-1 text-accent'
+                    : 'rounded p-1 text-text-muted opacity-60 hover:bg-bg-hover hover:text-accent'
+                }
+              >
+                <Brain className="h-3.5 w-3.5" />
+              </button>
+            )}
             <button
               type="button"
               title={t('Clear chat')}
@@ -254,21 +297,7 @@ export function ChatTab({ models }: ChatTabProps) {
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
-          )}
-          {thinkingSupported && (
-            <label className="flex cursor-pointer items-center gap-1 text-xs text-text-muted select-none">
-              <input
-                type="checkbox"
-                checked={showThinking}
-                onChange={(e) => {
-                  setShowThinking(e.target.checked);
-                  writeShowThinking(e.target.checked);
-                }}
-                className="accent-sky-400"
-              />
-              {t('Show thinking')}
-            </label>
-          )}
+          </div>
           {streaming ? (
             <Button size="sm" onClick={stop}>
               <Square className="w-3 h-3" /> {t('Stop')}

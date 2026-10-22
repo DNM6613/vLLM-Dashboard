@@ -191,6 +191,7 @@ export const ZH: Record<string, string> = {
   'You': '你',
   'Model': '模型',
   'Send': '发送',
+  'Clear chat': '清空对话',
   'Show thinking': '显示思考',
   'Thinking': '思考',
   'Chat input': '输入消息（Enter 发送，Shift+Enter 换行）',

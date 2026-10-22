@@ -132,12 +132,15 @@ function getScrollEl(): HTMLElement {
   return div;
 }
 
-describe('ChatTab transcript auto-scroll (audit 2026-10-22 FE-3)', () => {
+describe('ChatTab transcript auto-scroll (FE-3 follow-up: intent-based pinning)', () => {
   afterEach(() => {
     mockChat.entries = [];
     cleanup();
   });
 
+  // jsdom fires no 'scroll' event for programmatic scrollTop changes, so the
+  // tests dispatch one explicitly — in a real browser the user's scroll
+  // (or our own pinning) is what updates the follow-intent.
   it('pins the transcript to the newest line while the user is near the bottom', () => {
     mockChat.entries = [entryWithContent('first')];
     const { rerender } = renderChat();
@@ -145,6 +148,7 @@ describe('ChatTab transcript auto-scroll (audit 2026-10-22 FE-3)', () => {
     Object.defineProperty(el, 'scrollHeight', { configurable: true, writable: true, value: 120 });
     Object.defineProperty(el, 'clientHeight', { configurable: true, writable: true, value: 100 });
     el.scrollTop = 110; // distance from bottom < 40
+    fireEvent.scroll(el);
     mockChat.entries = [entryWithContent('first'), entryWithContent('second')];
     rerender(
       <I18nProvider>
@@ -161,6 +165,7 @@ describe('ChatTab transcript auto-scroll (audit 2026-10-22 FE-3)', () => {
     Object.defineProperty(el, 'scrollHeight', { configurable: true, writable: true, value: 1000 });
     Object.defineProperty(el, 'clientHeight', { configurable: true, writable: true, value: 100 });
     el.scrollTop = 0; // distance from bottom > 40
+    fireEvent.scroll(el); // user scrolled up → intent = stay put
     mockChat.entries = [entryWithContent('first'), entryWithContent('second')];
     rerender(
       <I18nProvider>
@@ -168,6 +173,54 @@ describe('ChatTab transcript auto-scroll (audit 2026-10-22 FE-3)', () => {
       </I18nProvider>,
     );
     expect(el.scrollTop).toBe(0);
+  });
+
+  it('keeps pinning when a single update grows the transcript by more than 40px while the user is at the bottom', () => {
+    // Regression for the FE-3 guard: it read the ALREADY-GROWN distance, so
+    // one update adding > 40px (a multi-line send appends user + model
+    // entries at once) stopped auto-follow forever until a manual scroll.
+    // Intent now comes from the last scroll event, which content growth
+    // does not fire.
+    mockChat.entries = [entryWithContent('first')];
+    const { rerender } = renderChat();
+    const el = getScrollEl();
+    Object.defineProperty(el, 'scrollHeight', { configurable: true, writable: true, value: 100 });
+    Object.defineProperty(el, 'clientHeight', { configurable: true, writable: true, value: 100 });
+    el.scrollTop = 0; // sitting exactly at the bottom
+    fireEvent.scroll(el);
+    // one update grows content by 300px (no 'scroll' event for that)
+    Object.defineProperty(el, 'scrollHeight', { configurable: true, writable: true, value: 400 });
+    mockChat.entries = [entryWithContent('first'), entryWithContent('second, much longer')];
+    rerender(
+      <I18nProvider>
+        <ChatTab models={models} />
+      </I18nProvider>,
+    );
+    expect(el.scrollTop).toBe(400);
+  });
+});
+
+describe('ChatTab thinking icon toggle (brain icon beside clear)', () => {
+  afterEach(() => {
+    mockChat.entries = [];
+    localStorage.removeItem('vllm_chat_show_thinking');
+    cleanup();
+  });
+
+  it('shows a brain icon beside the clear icon that toggles the thinking blocks', async () => {
+    mockChat.entries = [entry('deep reasoning text', true)];
+    renderChat();
+    // thinkingSupported arrives async (mocked getLaunchConfig carries --reasoning-parser)
+    const brain = await screen.findByTitle('Show thinking');
+    expect(screen.getByTitle('Clear chat')).toBeTruthy(); // side by side with clear
+    expect(brain.getAttribute('aria-pressed')).toBe('true'); // default on
+    expect(screen.getByText('deep reasoning text')).toBeTruthy();
+    fireEvent.click(brain);
+    expect(brain.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.queryByText('deep reasoning text')).toBeNull();
+    fireEvent.click(brain);
+    expect(brain.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByText('deep reasoning text')).toBeTruthy();
   });
 });
 
@@ -178,17 +231,18 @@ describe('ChatTab clear button (audit 2026-10-22 FE-10)', () => {
     cleanup();
   });
 
-  it('offers a clear button while there are entries and hides it on an empty transcript', () => {
+  it('always offers a clear button that calls clear() (visible even on an empty transcript)', () => {
     mockChat.entries = [entryWithContent('hello')];
     const { unmount } = renderChat();
     const btn = screen.getByTitle('Clear chat');
     fireEvent.click(btn);
     expect(mockChat.clear).toHaveBeenCalledTimes(1);
 
-    // empty transcript: the button disappears
+    // empty transcript: the button stays visible (2026-10-22 user ruling:
+    // 对话框为空时清空按钮不必隐藏)
     unmount();
     mockChat.entries = [];
     renderChat();
-    expect(screen.queryByTitle('Clear chat')).toBeNull();
+    expect(screen.getByTitle('Clear chat')).toBeTruthy();
   });
 });
