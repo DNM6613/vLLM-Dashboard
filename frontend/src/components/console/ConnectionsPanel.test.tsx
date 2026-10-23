@@ -177,4 +177,18 @@ describe('ConnectionsPanel', () => {
       vi.useRealTimers();
     }
   });
+
+  it('keeps the table layout fixed while a note is being edited (no column squeeze)', async () => {
+    renderPanel();
+    await screen.findByText('10.0.0.5');
+    const table = screen.getByText('10.0.0.5').closest('table');
+    // table-fixed: column widths come from the colgroup, not from cell
+    // content — the note edit input (or long notes) cannot reflow the
+    // columns in front of it.
+    expect(table).toBeTruthy();
+    expect(table!.className).toContain('table-fixed');
+    expect(table!.querySelectorAll('col')).toHaveLength(5);
+    fireEvent.click(screen.getByRole('button', { name: 'Notes' }));
+    expect(screen.getByRole('textbox')).toBeTruthy();
+  });
 });

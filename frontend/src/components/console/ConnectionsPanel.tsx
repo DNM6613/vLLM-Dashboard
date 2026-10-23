@@ -140,7 +140,16 @@ export const ConnectionsPanel = memo(function ConnectionsPanel() {
             {t('No requests yet')}
           </div>
         ) : (
-          <table className="w-full text-sm">
+          // table-fixed: the note edit input (or long notes) must not be able
+          // to reflow the table and squeeze the columns in front
+          <table className="w-full table-fixed text-sm">
+            <colgroup>
+              <col className="w-28" />
+              <col className="w-20" />
+              <col className="w-24" />
+              <col />
+              <col className="w-16" />
+            </colgroup>
             <thead className="sticky top-0 bg-bg-card">
               <tr className="text-left text-xs text-text-muted">
                 <th className="px-3 py-1 font-normal">IP</th>
