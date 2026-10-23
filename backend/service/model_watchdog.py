@@ -288,12 +288,27 @@ async def watchdog_tick() -> None:
         if model is None or not model.locked:
             _clear(model_id)
             continue
-        await _attempt_restart(model_id)
+        # Audit 2026-10-23 A-7: a restart attempt must never kill the tick
+        # — the loop owns the loop (an unguarded exception here died with
+        # the watchdog task and auto-restart silently stopped).
+        try:
+            await _attempt_restart(model_id)
+        except Exception:
+            logger.exception(
+                f"Model lock watchdog: restart attempt for {model_id} crashed — "
+                f"the loop survives")
 
 
 async def _watchdog_loop() -> None:
     while not _stopping:
-        await watchdog_tick()
+        # Audit 2026-10-23 A-7: same guard for the tick itself (the sync or
+        # a state change between the check and the tick could still raise).
+        # `except Exception` does NOT swallow CancelledError, so
+        # stop_watchdog's cancel unwinds cleanly.
+        try:
+            await watchdog_tick()
+        except Exception:
+            logger.exception("Model lock watchdog: tick crashed — the loop survives")
         await asyncio.sleep(TICK_SECONDS)
 
 

@@ -25,6 +25,13 @@ export function useHardwareWebSocket() {
         scheduleReconnect();
         return;
       }
+      // Audit 2026-10-23 D-4: getWsUrl is an await gap — the effect could
+      // have been cleaned up (unmount) while it was in flight; a socket
+      // minted after the cleanup must be closed immediately, never stored.
+      if (isManualClose) {
+        socket.close();
+        return;
+      }
       ws = socket;
       socket.onopen = () => {
         retryCount = 0;

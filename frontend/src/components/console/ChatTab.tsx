@@ -9,6 +9,12 @@ import type { ModelInfo } from '../../types';
 
 const SHOW_THINKING_KEY = 'vllm_chat_show_thinking';
 
+// Audit 2026-10-23 D-9: the transcript is 24/7 and unbounded, and every
+// entry re-renders on every stream token — bound the DOM to the newest
+// entries. Older ones stay in the hook's entries (the model context is
+// only the last 20 turns, so trimming the DOM costs it nothing).
+const TRANSCRIPT_WINDOW = 400;
+
 function readShowThinking(): boolean {
   try {
     return localStorage.getItem(SHOW_THINKING_KEY) !== '0';
@@ -122,13 +128,27 @@ export function ChatTab({ models }: ChatTabProps) {
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const newestUserId = entries.reduce((m, e) => (e.role === 'user' && e.id > m ? e.id : m), 0);
+    // Audit 2026-10-23 D-9: user ids come from useChat's monotonic counter,
+    // so the newest user entry sits at (or within one of) the tail — scan
+    // backwards from there instead of the O(n) reduce over the whole
+    // transcript on every stream token.
+    let newestUserId = 0;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i].role === 'user') {
+        newestUserId = entries[i].id;
+        break;
+      }
+    }
     const freshUserMessage = newestUserId > lastUserIdRef.current;
     lastUserIdRef.current = newestUserId;
     if (freshUserMessage || stickToBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
   }, [entries]);
+
+  const visibleEntries = entries.length > TRANSCRIPT_WINDOW
+    ? entries.slice(-TRANSCRIPT_WINDOW)
+    : entries;
 
   // Pin the streaming thinking block to its newest line; if the user has
   // scrolled up to read earlier reasoning, don't yank them back.
@@ -158,7 +178,7 @@ export function ChatTab({ models }: ChatTabProps) {
           )
         ) : (
           <div className="space-y-3">
-            {entries.map((e) => {
+            {visibleEntries.map((e) => {
               const usage = e.usage;
               const ms = e.elapsedMs;
               const tps = usage?.completion_tokens && ms && ms > 0

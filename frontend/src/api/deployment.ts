@@ -1,4 +1,5 @@
 import api from './client';
+import { tRaw } from '../i18n/strings';
 
 // ---- types -----------------------------------------------------------------
 
@@ -208,5 +209,6 @@ export function apiErrorMessage(err: unknown): string {
     if (typeof first?.msg === 'string') return first.msg;
   }
   if (typeof e?.message === 'string' && e.message && !e.message.startsWith(API_ERROR_PREFIX)) return e.message;
-  return 'Request failed';
+  // Audit 2026-10-23 D-8: localized fallback (was hardcoded English).
+  return tRaw('Request failed');
 }

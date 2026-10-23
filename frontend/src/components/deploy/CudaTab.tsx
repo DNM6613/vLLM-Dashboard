@@ -100,7 +100,7 @@ export function CudaTab({
                       onChange={() => onPickVersion(v)}
                       onClick={(e) => e.stopPropagation()}
                       className="accent-sky-400"
-                      aria-label={`CUDA ${v}`}
+                      aria-label={t('CUDA {ver}', { ver: v })}
                     />
                   </td>
                   <td className="px-3 py-2 font-mono">CUDA {v}</td>

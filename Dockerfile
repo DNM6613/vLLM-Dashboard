@@ -28,10 +28,16 @@ RUN apt-get update \
 RUN useradd -m -s /bin/bash appuser
 
 COPY requirements-lock.txt .
+# Audit 2026-10-23 E-5: --require-hashes makes pip verify every downloaded
+# artifact against the per-file sha256 pins in the lock — a registry (or
+# mirror) serving a tampered or renamed wheel fails the build instead of
+# installing silently. Every lock entry carries --hash= (the regeneration
+# command emits them), so hash mode accepts the whole file; a missing hash
+# is a hard error.
 RUN if [ -n "$PIP_INDEX_URL" ]; then \
-        pip install --no-cache-dir -i "$PIP_INDEX_URL" -r requirements-lock.txt; \
+        pip install --no-cache-dir --require-hashes -i "$PIP_INDEX_URL" -r requirements-lock.txt; \
     else \
-        pip install --no-cache-dir -r requirements-lock.txt; \
+        pip install --no-cache-dir --require-hashes -r requirements-lock.txt; \
     fi
 
 COPY backend/ ./backend/

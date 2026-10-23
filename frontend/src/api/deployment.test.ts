@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { apiErrorMessage } from './deployment';
+import { LANG_KEY, ZH } from '../i18n/strings';
 
 describe('apiErrorMessage', () => {
   it('prefers the backend error envelope (error.message)', () => {
@@ -42,5 +43,18 @@ describe('apiErrorMessage', () => {
     expect(apiErrorMessage(new Error('boom'))).toBe('boom');
     expect(apiErrorMessage(null)).toBe('Request failed');
     expect(apiErrorMessage(undefined)).toBe('Request failed');
+  });
+});
+
+describe('apiErrorMessage localized fallback (audit 2026-10-23 D-8)', () => {
+  it('the default fallback is localized in the zh UI', () => {
+    expect(ZH['Request failed']).toBe('请求失败');
+    expect(ZH['Detailed Metrics']).toBe('详细指标');
+    localStorage.setItem(LANG_KEY, 'zh');
+    try {
+      expect(apiErrorMessage(null)).toBe('请求失败');
+    } finally {
+      localStorage.setItem(LANG_KEY, 'en');
+    }
   });
 });

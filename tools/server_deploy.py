@@ -59,6 +59,39 @@ def health_wget() -> str:
     # file (audit 2026-10-23 C-2), never inlined into the command.
     return f"wget -qO- {_key_header_arg()}{API}/health"
 
+def _api_get_cmd(path: str) -> str:
+    # Audit 2026-10-23 E-7: the report-only probes [5/7][6/7] must carry
+    # the same key header as the health probes — with a key configured an
+    # unauthenticated wget gets 401 and prints an empty body that looks
+    # like "the API is down" during a manual verify.
+    return f"wget -qO- {_key_header_arg()}{API}{path} 2>/dev/null | head -c 400"
+
+# Audit 2026-10-23 E-8: process-level deploy mutex, held for the whole
+# run. Two concurrent runs share the build dir / tar name / container,
+# and a same-second tag let one run's rollback clobber the other's image;
+# the lock makes the second process fail fast instead of corrupting
+# state. The tag format stays vYYYYMMDD-HHMMSS — the lock already excludes
+# the race a PID suffix would only paper over.
+_deploy_lock_fh = None
+
+def _acquire_deploy_lock() -> None:
+    global _deploy_lock_fh
+    lock_path = os.path.join(REPO_ROOT, ".deploy.lock")
+    # The handle is held for the whole process run (global
+    # _deploy_lock_fh); a `with` would release the mutex on return.
+    fh = open(lock_path, "w")  # noqa: SIM115
+    try:
+        import msvcrt
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+    except ImportError:
+        import fcntl
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        print("ERROR: 另一个部署进程正在运行（.deploy.lock 被占用）——退出")
+        sys.exit(1)
+    _deploy_lock_fh = fh
+
 SHIP_FILES = ["Dockerfile", ".dockerignore", "requirements-lock.txt"]
 SHIP_DIRS = ["backend", "frontend"]
 SKIP_DIRS = {
@@ -422,11 +455,11 @@ def verify(c: paramiko.SSHClient) -> None:
         print("  FAIL: bundle marker missing")
 
     print("=== [5/7] model status (report only) ===")
-    _, o, _ = remote(c, f"wget -qO- {API}/api/v1/models 2>/dev/null | head -c 400")
+    _, o, _ = remote(c, _api_get_cmd("/api/v1/models"))
     print(o.strip() or "(empty)")
 
     print("=== [6/7] server status (report only) ===")
-    _, o, _ = remote(c, f"wget -qO- {API}/api/v1/config/server/status 2>/dev/null | head -c 400")
+    _, o, _ = remote(c, _api_get_cmd("/api/v1/config/server/status"))
     print(o.strip() or "(empty)")
 
     print("=== [7/7] log error count ===")
@@ -466,6 +499,7 @@ def main() -> None:
     if not password:
         print("ERROR: SERVER_PASS 环境变量未设置（set SERVER_PASS=<密码>& python ...）")
         sys.exit(1)
+    _acquire_deploy_lock()
     c = connect(password)
     try:
         if mode == "probe":

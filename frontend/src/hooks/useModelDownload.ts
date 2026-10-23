@@ -137,15 +137,19 @@ export function useModelDownload({ defaultSavePath, onSavePathPersisted, hfToken
     if (!downloadModelName.trim()) return;
     const repoName = downloadModelName.trim();
     const savePathForDownload = downloadModelSavePath.trim();
+    // Audit 2026-10-23 D-5: arm the synchronous guard BEFORE the hf-token
+    // save await — two rapid clicks both passed the old guard (it was set
+    // only after the save) and the second fired a duplicate download.
+    downloadInFlightRef.current = true;
     if (hfTokenDraft !== hfTokenInitialRef.current) {
       try {
         await saveHfTokenRef.current(hfTokenDraft);
         hfTokenInitialRef.current = hfTokenDraft;
       } catch {
+        downloadInFlightRef.current = false;
         return;
       }
     }
-    downloadInFlightRef.current = true;
     try {
       await _startDownload(repoName, savePathForDownload, hfMirror);
     } finally {

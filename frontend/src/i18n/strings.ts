@@ -40,6 +40,9 @@ export const ZH: Record<string, string> = {
   'Avg Queue (s)': '平均排队（s）',
   'Avg Prefill/Decode (s)': '平均 Prefill/Decode（s）',
   'Rejections/Preemptions (Total)': '拒绝/抢占',
+  // Audit 2026-10-23 D-8: formerly hardcoded English fallbacks.
+  'Request failed': '请求失败',
+  'Detailed Metrics': '详细指标',
 
   'Models': '模型',
   'Model Download': '模型下载',

@@ -142,4 +142,39 @@ describe('ConnectionsPanel', () => {
     await screen.findByText('/api/v1/b');
     expect(screen.queryByText('/api/v1/a')).toBeNull();
   });
+
+  it('drops a superseded list refresh (audit 2026-10-23 D-6)', async () => {
+    vi.useFakeTimers();
+    try {
+      const fresh: ConnectionInfo = { ...conn, count: 42 };
+      const stale: ConnectionInfo = { ...conn, count: 1 };
+      let resolveSlow!: (v: ConnectionInfo[]) => void;
+      mockGetConnections
+        .mockResolvedValueOnce([fresh])
+        .mockImplementationOnce(
+          () => new Promise<ConnectionInfo[]>((r) => { resolveSlow = r; }),
+        )
+        .mockResolvedValueOnce([fresh]);
+      // RTL's waitFor/findByText cannot observe vitest's fake timers —
+      // flush the fetch microtasks by hand and assert with queryByText.
+      const flush = () => act(async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      });
+      renderPanel();
+      await flush();
+      expect(screen.queryByText('42')).toBeTruthy();
+      // Refresh #2 (t+5 s) is slow… then refresh #3 (t+10 s) supersedes it.
+      await act(async () => { vi.advanceTimersByTime(5000); });
+      await flush();
+      await act(async () => { vi.advanceTimersByTime(5000); });
+      await flush();
+      // The slow #2 finally resolves — the reqId guard must drop it.
+      await act(async () => { resolveSlow([stale]); });
+      await flush();
+      expect(screen.queryByText('42')).toBeTruthy();
+      expect(screen.queryByText('1')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

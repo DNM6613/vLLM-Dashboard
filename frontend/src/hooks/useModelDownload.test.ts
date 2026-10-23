@@ -69,3 +69,27 @@ describe('useModelDownload HF token save', () => {
     expect(vi.mocked(downloadModel)).not.toHaveBeenCalled();
   });
 });
+
+describe('useModelDownload rapid double-click (audit 2026-10-23 D-5)', () => {
+  // The guard must be armed BEFORE the token-save await: with the old
+  // placement both rapid clicks passed the guard (it was set only after the
+  // save) and the second fired a duplicate download.
+  it('arms the in-flight guard before the token save (two clicks → one download)', async () => {
+    let resolveSave!: (v: void) => void;
+    const onSaveHfToken = vi.fn(
+      () => new Promise<void>((r) => { resolveSave = r; }),
+    );
+    const { result, unmount } = renderDownload('', onSaveHfToken);
+    await act(async () => { result.current.setShowDownloadModal(true); });
+    await waitFor(() => expect(result.current.checkingCli).toBe(false));
+    act(() => { result.current.setDownloadModelName('org/repo'); });
+    act(() => { result.current.setHfToken('hf_abc123'); });
+    void result.current.handleDownloadModel(); // arms the guard, awaits the save
+    void result.current.handleDownloadModel(); // must be a synchronous no-op
+    expect(onSaveHfToken).toHaveBeenCalledTimes(1);
+    await act(async () => { resolveSave(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(vi.mocked(downloadModel)).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+});

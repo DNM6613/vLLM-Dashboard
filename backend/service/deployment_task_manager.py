@@ -6,6 +6,7 @@ job control lives in ``deployment_reattach.py`` (mixed in below).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -33,6 +34,9 @@ class DeploymentTaskManager(ReattachMixin):
     MAX_TASKS = 50
     TAIL_LINES = 400
     LOG_CHUNK = 256 * 1024
+    # Audit 2026-10-23 B-4: deployment logs are one .log per task and were
+    # never removed — prune to this many newest on every startup.
+    LOG_KEEP = 20
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -41,8 +45,33 @@ class DeploymentTaskManager(ReattachMixin):
         self._threads: dict[str, threading.Thread] = {}
         self._tails: dict[str, deque] = {}
         self._recover()
+        self._prune_old_logs()
         with self._lock:
             self._persist_locked()
+
+    def _prune_old_logs(self) -> None:
+        """Audit 2026-10-23 B-4: keep only the LOG_KEEP newest task logs."""
+        try:
+            files = [
+                os.path.join(_ds.LOG_DIR, name)
+                for name in os.listdir(_ds.LOG_DIR)
+                if name.endswith(".log")
+            ]
+        except OSError:
+            return
+        if len(files) <= self.LOG_KEEP:
+            return
+
+        def _mtime(path: str) -> float:
+            try:
+                return os.path.getmtime(path)
+            except OSError:
+                return 0.0
+
+        files.sort(key=_mtime, reverse=True)
+        for path in files[self.LOG_KEEP:]:
+            with contextlib.suppress(OSError):
+                os.remove(path)
 
     # ---- persistence ------------------------------------------------------
     def _recover(self) -> None:

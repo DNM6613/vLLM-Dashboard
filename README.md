@@ -26,6 +26,12 @@ A management panel for vLLM inference servers: monitor model and server hardware
 - **Browser**: Chrome / Edge / Firefox and other modern browsers
 - **API key (optional)**: set `VLLM_DASHBOARD_API_KEY` (or `API_KEY`) in `.env` to gate every API behind the `X-API-Key` header — the UI prompts for the key on first visit. Leave it empty (default) for open access; `tools/server_deploy.py` takes the same key as `DEPLOY_API_KEY` for its health checks.
 
+## Security Notes
+
+- The dashboard (and the vLLM API it manages) is plain `http://` by default. With an API key set, the key travels **unencrypted** in the `X-API-Key` header and is stored in the browser's `localStorage` (readable by any script on the same origin or a malicious browser extension).
+- On a trusted lab / data-center LAN this is acceptable. **If you expose the dashboard beyond that network, put a TLS-terminating reverse proxy (Nginx / Caddy) in front** — the app has no built-in TLS.
+- Model launch configs (which may contain the vLLM API key) are stored in plaintext under `data/model_launch_configs/` (directory mode 700).
+
 ## Installation
 
 One-line install (fetches the source, installs dependencies, and builds the frontend):

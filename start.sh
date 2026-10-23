@@ -68,6 +68,7 @@ echo "  PID: $backendPid"
 
 printf "  Waiting..."
 ready=false
+backend_dead=false
 deadline=$((SECONDS + 20))
 while [ $SECONDS -lt $deadline ]; do
     if kill -0 "$backendPid" 2>/dev/null; then
@@ -78,13 +79,25 @@ while [ $SECONDS -lt $deadline ]; do
     else
         wait "$backendPid" || true
         echo ""
-        echo "  Backend process exited unexpectedly"
+        backend_dead=true
         break
     fi
     printf "."
     sleep 1
 done
 echo ""
+# Audit 2026-10-23 E-11: a DEAD backend (process exited) is not the same
+# as a slow one (port not listening yet) — starting the frontend against
+# a dead API and printing the "Started" banner hid the real failure.
+if [ "$backend_dead" = true ]; then
+    echo "========================================"
+    echo "  ERROR: Backend process exited unexpectedly"
+    echo "  (the port may already be taken, or the backend crashed at startup)"
+    echo "  Check: lsof -ti tcp:$apiPort  —  or run '$pythonExe -m uvicorn backend.main:app --host $apiHost --port $apiPort' in the foreground for the traceback"
+    echo "  The frontend is NOT started."
+    echo "========================================"
+    exit 1
+fi
 if [ "$ready" = true ]; then echo "  OK"; else echo "  Timeout, continue anyway"; fi
 
 echo ""

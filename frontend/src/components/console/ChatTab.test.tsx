@@ -293,3 +293,28 @@ describe('ChatTab queue editing (audit 2026-10-23 D-1)', () => {
     expect(mockChat.editQueued).toHaveBeenCalledWith(1, 'c');
   });
 });
+
+describe('ChatTab transcript window (audit 2026-10-23 D-9)', () => {
+  afterEach(() => {
+    mockChat.entries = [];
+    cleanup();
+  });
+
+  it('renders only the newest 400 entries of a long transcript', () => {
+    const make = (n: number): ChatEntry => ({
+      id: n,
+      role: n % 2 === 0 ? 'assistant' : 'user',
+      content: `msg-${n}`,
+      reasoning: '',
+      streaming: false,
+      error: null,
+      usage: null,
+      elapsedMs: null,
+    });
+    mockChat.entries = Array.from({ length: 401 }, (_, i) => make(i + 1));
+    renderChat();
+    expect(screen.queryByText('msg-1')).toBeNull();
+    expect(screen.getByText('msg-400')).toBeTruthy();
+    expect(screen.getByText('msg-401')).toBeTruthy();
+  });
+});

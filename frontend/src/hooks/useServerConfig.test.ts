@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getServerConfig, shutdownServer } from '../api/serverConfig';
+import { getBmcStatus, getServerConfig, resetModelsAfterPowerOff, shutdownServer } from '../api/serverConfig';
 import { useServerConfig } from './useServerConfig';
 
 // Model-store API surface the hook touches on shutdown; hoisted so the
@@ -107,4 +107,22 @@ describe('useServerConfig initial-load retry (audit 2026-10-22 FE-11)', () => {
     expect(result.current.serverConfig.host).toBe('10.131.1.7');
     unmount();
   });
+});
+
+describe('useServerConfig BMC power edge (audit 2026-10-23 D-7)', () => {
+  it('a null power reading (failed probe) must not wipe the edge detector', async () => {
+    // off → null (BMC blip) → off: the old code wiped the last known state
+    // on the null, so the third reading re-triggered resetModelsAfterPowerOff.
+    vi.mocked(getBmcStatus)
+      .mockResolvedValueOnce({ configured: true, connected: true, power: 'off', powerFresh: true })
+      .mockResolvedValueOnce({ configured: true, connected: false, power: null, powerFresh: false })
+      .mockResolvedValueOnce({ configured: true, connected: true, power: 'off', powerFresh: true });
+    const { unmount } = renderHook(() => useServerConfig());
+    // Real timers: the API/BMC probe interval is 2 s — mount tick + two more.
+    await new Promise((r) => setTimeout(r, 2100));
+    await new Promise((r) => setTimeout(r, 2100));
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(resetModelsAfterPowerOff).toHaveBeenCalledTimes(1);
+    unmount();
+  }, 15000);
 });

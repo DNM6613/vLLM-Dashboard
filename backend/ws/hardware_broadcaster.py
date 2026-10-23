@@ -129,6 +129,11 @@ hardware_broadcaster = HardwareBroadcaster()
 # client->server direction is idle by design — without a heartbeat, middle
 # boxes that drop long-idle TCP connections leave both ends hanging.
 _KEEPALIVE_TIMEOUT = 60.0
+# Audit 2026-10-23 C-5: any client frame is already protocol noise on this
+# (idle) direction, and an oversized one must be closed BEFORE the
+# framework buffers it — receive_text() has no size limit, so a hostile
+# client could allocate unbounded memory per subscriber.
+WS_MAX_INPUT_CHARS = 64 * 1024
 # Audit 2026-10-22 BCK-7: the keepalive SEND must be wall-clock bounded too.
 # A client that dies hard (power loss, no RST/FIN) leaves a half-open socket;
 # the receive times out, then an unbounded send_text can block until the TCP
@@ -148,8 +153,17 @@ async def websocket_hardware(websocket: WebSocket):
     try:
         while True:
             try:
-                await asyncio.wait_for(websocket.receive_text(),
-                                       timeout=_KEEPALIVE_TIMEOUT)
+                # Audit 2026-10-23 C-5: raw frame + size bound BEFORE
+                # buffering (receive_text() has no limit).
+                raw = await asyncio.wait_for(websocket.receive(),
+                                             timeout=_KEEPALIVE_TIMEOUT)
+                if raw.get("type") == "websocket.disconnect":
+                    break
+                text = raw.get("text")
+                if text is not None and len(text) > WS_MAX_INPUT_CHARS:
+                    # 1009 = message too big — the connection is untrusted.
+                    await websocket.close(code=1009)
+                    return
             except TimeoutError:
                 # Nudge the client (the UI ignores unknown message types);
                 # a dead socket surfaces on the next receive.

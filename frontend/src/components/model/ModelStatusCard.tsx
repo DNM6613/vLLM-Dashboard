@@ -147,7 +147,8 @@ export const ModelStatusCard = memo(function ModelStatusCard() {
             )}
             <button
               type="button"
-              aria-label="Detailed Metrics"
+              // Audit 2026-10-23 D-8: localized (was hardcoded English).
+              aria-label={t('Detailed Metrics')}
               aria-expanded={open}
               onClick={() => setOpen((v) => !v)}
               className="flex cursor-pointer select-none items-center justify-center text-text-muted hover:text-text"

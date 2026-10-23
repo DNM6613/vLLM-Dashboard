@@ -31,8 +31,17 @@ async def sync_model_status():
         logger.warning(f"Status sync failed: {e}")
         return {"synced": False, "error": str(e)}
 
+# Audit 2026-10-23 C-6: Query parameter length caps — FastAPI/Starlette
+# accepts unbounded query strings by default (DoS surface); the caps match
+# the real value ranges (ids, repo slugs, log paths).
+MODEL_ID_MAX = 128
+REPO_MAX = 256
+PATH_MAX = 512
+TOOL_MAX = 32
+
+
 @router.post("/scan")
-def scan_models(model_dir: str = ""):
+def scan_models(model_dir: str = Query("", max_length=PATH_MAX)):
     if model_dir and has_parent_path_segment(model_dir):
         raise HTTPException(status_code=400, detail="Path traversal not allowed")
 
@@ -49,11 +58,11 @@ def scan_models(model_dir: str = ""):
     }
 
 @router.post("/start")
-async def start_model(model_id: str = Query(...)):
+async def start_model(model_id: str = Query(..., max_length=MODEL_ID_MAX)):
     return await model_service.start_model(model_id)
 
 @router.get("/launch-config")
-def get_launch_config(model_id: str):
+def get_launch_config(model_id: str = Query(..., max_length=MODEL_ID_MAX)):
     config = launch_config_manager.load_config(model_id)
     if config is None:
         return {"has_config": False, "config": None}
@@ -96,8 +105,10 @@ def save_launch_config(config: dict):
     return {"success": True}
 
 @router.get("/download/status")
-def get_download_status(log_file: str = Query(...), repo: str = Query(""),
-                        save_path: str = Query(""), hf_mirror: bool = Query(True)):
+def get_download_status(log_file: str = Query(..., max_length=REPO_MAX),
+                        repo: str = Query("", max_length=REPO_MAX),
+                        save_path: str = Query("", max_length=PATH_MAX),
+                        hf_mirror: bool = Query(True)):
     if not re.fullmatch(r'/tmp/model_download_[\w.\-:@~]+\.log', log_file):
         raise HTTPException(status_code=400, detail="Invalid log file path")
     if not posixpath.normpath(log_file).startswith('/tmp/model_download_'):
@@ -106,15 +117,16 @@ def get_download_status(log_file: str = Query(...), repo: str = Query(""),
     return model_service.get_download_status(log_file, repo, save_path, hf_mirror)
 
 @router.post("/stop")
-async def stop_model(model_id: str = Query(...)):
+async def stop_model(model_id: str = Query(..., max_length=MODEL_ID_MAX)):
     return await model_service.stop_model(model_id)
 
 @router.post("/lock")
-def set_model_lock(model_id: str = Query(...), locked: bool = Query(True)):
+def set_model_lock(model_id: str = Query(..., max_length=MODEL_ID_MAX),
+                   locked: bool = Query(True)):
     return model_service.apply_model_lock(model_id, locked)
 
 @router.post("/benchmark")
-async def benchmark_model(model_id: str = Query(...)):
+async def benchmark_model(model_id: str = Query(..., max_length=MODEL_ID_MAX)):
     return await model_service.benchmark_model(model_id)
 
 CHAT_ROLES = {"system", "user", "assistant"}
@@ -160,7 +172,9 @@ async def chat_model(body: dict):
     )
 
 @router.post("/download")
-def download_model(model_repo: str = Query(...), model_save_path: str = Query(""), hf_mirror: bool = Query(True)):
+def download_model(model_repo: str = Query(..., max_length=REPO_MAX),
+                   model_save_path: str = Query("", max_length=PATH_MAX),
+                   hf_mirror: bool = Query(True)):
     if not re.fullmatch(r'[\w.\-:@~/]+', model_repo):
         raise HTTPException(status_code=400, detail="Invalid model_repo")
     if model_repo.startswith("-"):
@@ -175,7 +189,7 @@ def download_model(model_repo: str = Query(...), model_save_path: str = Query(""
     return model_service.download_model(model_repo, model_save_path, hf_mirror)
 
 @router.post("/download/stop")
-def stop_download(model_repo: str = Query(...)):
+def stop_download(model_repo: str = Query(..., max_length=REPO_MAX)):
     if not re.fullmatch(r'[\w.\-:@~/]+', model_repo):
         raise HTTPException(status_code=400, detail="Invalid model_repo")
     return model_service.stop_download(model_repo)
@@ -185,14 +199,15 @@ def check_cli_tools():
     return model_service.check_cli_tools()
 
 @router.post("/install-cli")
-def install_cli_tool(tool: str = Query(...)):
+def install_cli_tool(tool: str = Query(..., max_length=TOOL_MAX)):
     if tool != "hf":
         raise HTTPException(status_code=400, detail="Invalid tool name, must be 'hf'")
 
     return model_service.install_cli_tool(tool)
 
 @router.get("/install-status")
-def get_install_status(tool: str = Query(...), log_file: str = Query(...)):
+def get_install_status(tool: str = Query(..., max_length=TOOL_MAX),
+                       log_file: str = Query(..., max_length=REPO_MAX)):
     if tool != "hf":
         raise HTTPException(status_code=400, detail="Invalid tool name, must be 'hf'")
     if not re.fullmatch(r'/tmp/cli_install_hf\.log', log_file):

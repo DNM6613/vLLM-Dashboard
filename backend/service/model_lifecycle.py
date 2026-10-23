@@ -291,7 +291,14 @@ async def stop_model(model_id: str) -> dict:
             logger.warning(f"vLLM process still running after stop for model {model_id}")
 
         model = _ms.state_machine.get_model(model_id)
-        if model and stopped:
+        # Audit 2026-10-23 A-6: a DELIVERED kill (SIGKILL cannot be ignored)
+        # whose verify probe timed out is not evidence of a live process —
+        # the ps check can lag behind GPU teardown. Keeping the model in its
+        # old status would close the stop window and let the next sync
+        # record a phantom crash (and the watchdog re-launch a model the
+        # user just stopped). Only a FAILED kill keeps the old status for
+        # the sync loop to reconcile.
+        if model and (stopped or stop_result.get("success", False)):
             _ms.state_machine.update_model_status(model_id, ModelStatus.STOPPED)
             _ms.state_machine.clear_current_model(model_id)
             # A manual stop is a deliberate user action, not a crash:

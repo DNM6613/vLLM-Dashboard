@@ -26,6 +26,12 @@ vLLM 推理服务器管理面板：通过浏览器远程实时掌握模型与服
 - **浏览器**：Chrome / Edge / Firefox 等现代浏览器
 - **API 密钥（可选）**：在 `.env` 中设置 `VLLM_DASHBOARD_API_KEY`（或别名 `API_KEY`）后，所有 API 需携带 `X-API-Key` 头访问，前端首次访问会弹窗索取密钥；留空（默认）则开放访问。`tools/server_deploy.py` 的健康检查通过 `DEPLOY_API_KEY` 传入同一密钥。
 
+## 安全说明
+
+- 面板（及其管理的 vLLM API）默认走纯 `http://`。设置 API 密钥后，密钥会**不加加密**地通过 `X-API-Key` 头传输，并保存在浏览器 `localStorage`（同源任何脚本或恶意浏览器扩展均可读取）。
+- 在受信任的实验室 / 机房内网内可接受；**若需在内网之外暴露，请前置 TLS 终结的反向代理（如 Nginx / Caddy）**——应用本身不提供 TLS。
+- 模型启动配置（可能包含 vLLM API 密钥）以明文存于 `data/model_launch_configs/`（目录权限 700）。
+
 ## 安装
 
 一键安装（自动拉取源码、安装依赖并构建前端）：

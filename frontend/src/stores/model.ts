@@ -42,7 +42,10 @@ export const useModelStore = create<ModelStore>((set) => ({
 
   fetchModels: async () => {
     const reqId = ++_fetchModelsReqId;
-    set({ loading: true, error: null });
+    // Audit 2026-10-23 D-10: a background refresh (polls, post-download,
+    // post-shutdown sync) must not flash the whole-page loading state —
+    // only the FIRST fetch (empty list) shows the spinner.
+    set((s) => (s.models.length > 0 ? { error: null } : { loading: true, error: null }));
     try {
       const models = await modelsApi.getModels();
       if (reqId === _fetchModelsReqId) {

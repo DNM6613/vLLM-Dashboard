@@ -38,6 +38,15 @@ MAX_ENTRIES = 2000
 # with the fresh session.
 TRUNC_MARKER = "VDB_LOG_TRUNC"
 
+# Audit 2026-10-23 A-4: byte-count marker line emitted at the FRONT of
+# every poll output (``wc -c`` of the chunk, in the C locale). The offset
+# must advance by the RAW bytes read — the executor decodes with
+# errors="replace", and an invalid-UTF-8 chunk turns 1 raw byte into 3
+# bytes of U+FFFD, so the re-encoded text length drifts the offset and
+# silently drops the next poll's lines.
+BYTES_MARKER = "VDB_BYTES="
+_BYTES_RE = re.compile(r"^VDB_BYTES=(\d+)\n")
+
 # vLLM's uvicorn access line as written to VLLM_ACCESS_LOG by the dictConfig
 # formatter (ISO timestamp prefix, then client + request line + status):
 #   2026-10-23T16:06:05 10.131.8.27:51234 - "POST /v1/chat/completions HTTP/1.1" 200
@@ -166,6 +175,13 @@ class VllmAccessLog:
 
     def stop_polling(self) -> None:
         self._stop.set()
+        # Audit 2026-10-23 A-8: wait for the poller to actually exit — the
+        # set()-only version could still be inside an in-flight SSH round
+        # (up to 15 s) when shutdown returned, racing the next start or the
+        # process exit.
+        t = self._poll_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=20)
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -181,10 +197,19 @@ class VllmAccessLog:
         # manual launch); then tail from the offset. `; true` keeps the round
         # a success even when the file is missing so the (marker-only) output
         # is still consumed.
+        # Audit 2026-10-23 A-4: the chunk is captured into $T ONCE and its
+        # raw byte count reported (wc -c under LC_ALL=C — bytes, not
+        # locale-dependent characters) on the VDB_BYTES line at the front of
+        # the output, so the reader advances the offset by the bytes actually
+        # read instead of re-encoding the decoded text. The raw `printf '%s'`
+        # (no added trailing newline) keeps a mid-line chunk tail-able
+        # across polls.
         return (
             f"S=$(stat -c %s {VLLM_ACCESS_LOG} 2>/dev/null || echo 0); "
             f'[ "$S" -lt {offset} ] && echo {TRUNC_MARKER}; '
-            f"tail -c +{offset} {VLLM_ACCESS_LOG} 2>/dev/null; true"
+            f"T=$(LC_ALL=C tail -c +{offset} {VLLM_ACCESS_LOG} 2>/dev/null); "
+            f"printf '{BYTES_MARKER}%s\\n' \"$(printf '%s' \"$T\" | LC_ALL=C wc -c)\"; "
+            f"printf '%s' \"$T\"; true"
         )
 
     def _poll_once(self) -> None:
@@ -201,15 +226,29 @@ class VllmAccessLog:
         self._consume_poll_output(res.get("stdout") or "")
 
     def _consume_poll_output(self, out: str) -> None:
-        """Feed one poll's raw output (optional truncation marker + tail)."""
+        """Feed one poll's raw output (optional truncation marker, the
+        VDB_BYTES line, and the tailed chunk)."""
         truncated = out.startswith(TRUNC_MARKER)
         if truncated:
             out = out[len(TRUNC_MARKER):].lstrip("\n")
             self.reset()
+        m = _BYTES_RE.match(out)
+        if m:
+            out = out[m.end():]
+            # Audit 2026-10-23 A-4: advance by the RAW byte count the remote
+            # reported — the re-encoded text length is wrong whenever the
+            # chunk contained invalid UTF-8 (U+FFFD: 1 byte -> 3), drifting
+            # the offset forward and dropping the next poll's lines.
+            byte_len = int(m.group(1))
+        else:
+            # No marker (malformed round / pre-A-4 executor output): fall
+            # back to the old estimate — exact for valid-UTF-8 chunks.
+            byte_len = len(out.encode("utf-8", errors="replace"))
         if out:
             self.ingest(out)
+        if byte_len:
             with self._lock:
-                self._offset += len(out.encode("utf-8", errors="replace"))
+                self._offset += byte_len
 
 
 vllm_access_log = VllmAccessLog()

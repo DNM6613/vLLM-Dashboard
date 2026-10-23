@@ -89,10 +89,16 @@ export const ConnectionsPanel = memo(function ConnectionsPanel() {
 
   useEffect(() => {
     let cancelled = false;
+    // Audit 2026-10-23 D-6: poll responses can resolve out of order (a
+    // slow poll settling after a newer one) — the stale rows would
+    // overwrite the note the user just saved (a note "flash" back to the
+    // old value). Only the latest request's response may land.
+    let reqId = 0;
     const load = async () => {
+      const id = ++reqId;
       try {
         const rows = await getConnections();
-        if (!cancelled) {
+        if (!cancelled && id === reqId) {
           setConnections(rows);
           setNow(Date.now());
         }

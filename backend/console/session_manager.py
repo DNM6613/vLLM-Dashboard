@@ -219,11 +219,31 @@ async def websocket_console(websocket: WebSocket):
     try:
         while True:
             try:
-                msg = await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
+                # Audit 2026-10-23 C-5: read the RAW frame and bound it
+                # BEFORE json.loads — receive_text() buffers the whole frame
+                # into memory, so a hostile/buggy client could allocate
+                # unbounded memory past the 64KB cap that was only checked
+                # after parsing.
+                raw = await asyncio.wait_for(websocket.receive(), timeout=1.0)
             except TimeoutError:
                 if not session.is_alive():
                     await websocket.send_text(json.dumps({"type": "error", "data": "Remote session closed"}))
                     break
+                continue
+            if raw.get("type") == "websocket.disconnect":
+                break
+            msg = raw.get("text")
+            if msg is None:
+                # Binary frames are not console protocol — reject like any
+                # other malformed message.
+                await websocket.send_text(json.dumps({
+                    "type": "error", "data": "Invalid JSON format"
+                }))
+                continue
+            if len(msg) > CONSOLE_MAX_INPUT_CHARS:
+                await websocket.send_text(json.dumps({
+                    "type": "error", "data": "Input too large (max 64KB)"
+                }))
                 continue
             try:
                 message = json.loads(msg)

@@ -98,7 +98,13 @@ export function useServerConfig() {
       bmcFirstFailAtRef.current = Date.now();
     }
     const prevPower = bmcPrevPowerRef.current;
-    bmcPrevPowerRef.current = status.power;
+    // Audit 2026-10-23 D-7: only a REAL reading (non-null) may move the
+    // edge detector — a null from a failed probe would wipe the last known
+    // state, so the first reading back after a BMC blip (e.g. 'off' on an
+    // already-off machine) re-triggered resetModelsAfterPowerOff.
+    if (status.power !== null) {
+      bmcPrevPowerRef.current = status.power;
+    }
     if (status.power === 'off' && prevPower !== 'off') {
       resetModelsAfterPowerOff().catch(() => {  });
     }

@@ -59,7 +59,13 @@ export function HomePage() {
     fetchSoftware().catch((err) => { console.error('Software info error:', err); });
   }, [sshConnected, fetchSoftware]);
 
-  const { models, loading, error: modelError } = useModelStore();
+  // Audit 2026-10-23 D-10: subscribe to the fields this page actually
+  // renders — the whole-store subscription re-rendered the entire home
+  // page on every unrelated store change (an error cleared elsewhere,
+  // fetchModels in flight, ...).
+  const models = useModelStore(s => s.models);
+  const loading = useModelStore(s => s.loading);
+  const modelError = useModelStore(s => s.error);
 
   const { benchmarkResults, benchmarkingIds, benchmarkErrors, handleBenchmark, showBenchmarkModal, setShowBenchmarkModal } = useBenchmark();
 

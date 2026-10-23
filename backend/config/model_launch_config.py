@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import json
 import logging
@@ -194,7 +195,16 @@ class ModelLaunchConfigManager:
             else Path(__file__).resolve().parent.parent.parent / "data" / "model_launch_configs"
         )
         self.base_dir.mkdir(parents=True, exist_ok=True)
+        # Audit 2026-10-23 C-4: launch configs carry the vLLM API key in
+        # plaintext — keep them reachable by the service user only.
+        # (On Windows os.chmod only touches the read-only bit; harmless.)
+        self._hardening_chmod(self.base_dir, 0o700)
         self._lock = threading.Lock()
+
+    @staticmethod
+    def _hardening_chmod(path: Path, mode: int) -> None:
+        with contextlib.suppress(OSError):
+            os.chmod(path, mode)
 
     @staticmethod
     def _safe_id(model_id: str) -> str:
@@ -229,6 +239,9 @@ class ModelLaunchConfigManager:
             with open(tmp_path, 'w', encoding='utf-8') as f:
                 json.dump(config_with_id, f, indent=2, ensure_ascii=False)
             os.replace(tmp_path, config_path)
+            # Audit 2026-10-23 C-4: os.replace lands a tmp file (umask mode)
+            # — re-assert the tight mode on every save.
+            self._hardening_chmod(config_path, 0o600)
             return True
         except Exception as e:
             logger.error(f"保存模型配置失败: {e}")
