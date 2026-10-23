@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import api from './client';
-import { getConnections, getRequests } from './monitor';
+import { getConnections, getRequests, setConnectionNote } from './monitor';
 
 describe('monitor api', () => {
   afterEach(() => {
@@ -24,5 +24,11 @@ describe('monitor api', () => {
     vi.spyOn(api, 'get').mockResolvedValue({ data: { requests: [] } } as never);
     await getRequests('10.0.0.1');
     expect(api.get).toHaveBeenCalledWith('/monitor/requests?ip=10.0.0.1&limit=100');
+  });
+
+  it('setConnectionNote PUTs the note for the IP', async () => {
+    vi.spyOn(api, 'put').mockResolvedValue({ data: {} } as never);
+    await setConnectionNote('1.2.3.4', 'my box');
+    expect(api.put).toHaveBeenCalledWith('/monitor/notes/1.2.3.4', { note: 'my box' });
   });
 });

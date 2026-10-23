@@ -203,10 +203,11 @@ export const ZH: Record<string, string> = {
   'Edit queued message': '编辑待发送',
   'Chat stats: {tokens} tokens · {secs}s · {tps} tok/s': '统计：{tokens} tokens · {secs}s · {tps} tok/s',
 
-  'Connections': '接入监控',
+  'Connections': '接入',
   'Requests': '请求数',
   'Last seen': '最后活跃',
   'Details': '详情',
+  'Notes': '备注',
   'Request details ({ip})': '请求详情（{ip}）',
   'No requests yet': '暂无请求记录',
   'Request body': '请求内容',

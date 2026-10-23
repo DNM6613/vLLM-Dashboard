@@ -43,6 +43,7 @@ from .service.driver_reconcile_timer import (
     stop_driver_reconcile_timer,
 )
 from .service.model_watchdog import start_watchdog, stop_watchdog
+from .service.vllm_access_log import vllm_access_log
 from .ws.hardware_broadcaster import hardware_broadcaster, websocket_hardware
 
 load_dotenv()
@@ -53,11 +54,13 @@ logger = logging.getLogger(__name__)
 async def lifespan(_: FastAPI):
     await start_watchdog()
     await start_driver_reconcile_timer()
+    vllm_access_log.start_polling()
     try:
         yield
     finally:
         await stop_watchdog()
         await stop_driver_reconcile_timer()
+        vllm_access_log.stop_polling()
         # Audit 2026-10-22 BCK-13: cancel pending start-verification probes
         # (plain 10 s delayed asyncio tasks) so they stop poking the remote
         # after the app is shutting down. Local import matches the

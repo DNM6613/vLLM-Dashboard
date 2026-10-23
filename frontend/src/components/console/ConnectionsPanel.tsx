@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useState } from 'react';
-import { FileText } from 'lucide-react';
-import { getConnections, getRequests } from '../../api/monitor';
+import { FileText, Plus } from 'lucide-react';
+import { getConnections, getRequests, setConnectionNote } from '../../api/monitor';
 import type { ConnectionInfo, RequestEntry } from '../../api/monitor';
 import { useI18n } from '../../i18n/context';
 import type { Interp } from '../../i18n/context';
@@ -14,6 +14,65 @@ function relativeTime(ts: number, now: number, t: (key: string, vars?: Interp) =
   if (diff < 60) return t('{n}s ago', { n: diff });
   if (diff < 3600) return t('{n}m ago', { n: Math.floor(diff / 60) });
   return t('{n}h ago', { n: Math.floor(diff / 3600) });
+}
+
+function NoteCell({ ip, note, t, onSaved }: {
+  ip: string;
+  note: string;
+  t: (key: string, vars?: Interp) => string;
+  onSaved: (ip: string, note: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(note);
+
+  useEffect(() => {
+    if (!editing) setDraft(note);
+  }, [note, editing]);
+
+  const commit = () => {
+    setEditing(false);
+    const value = draft.trim();
+    if (value === note) return;
+    setConnectionNote(ip, value)
+      .then(() => onSaved(ip, value))
+      .catch(() => { /* silent (no toast): a failed save keeps the old text in place */ });
+  };
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => commit()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            (e.target as HTMLInputElement).blur();
+          } else if (e.key === 'Escape') {
+            setDraft(note);
+            setEditing(false);
+          }
+        }}
+        className="w-full rounded border border-accent bg-bg px-1 py-0.5 text-sm text-text focus:outline-none"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => { setDraft(note); setEditing(true); }}
+      className={
+        note
+          ? 'w-full cursor-pointer truncate rounded text-left text-sm text-text transition-colors hover:bg-bg-hover hover:text-accent'
+          : 'w-full cursor-pointer rounded p-0.5 text-sm text-text-muted transition-colors hover:bg-bg-hover hover:text-accent'
+      }
+      title={t('Notes')}
+    >
+      {note ? note : <Plus className="h-3.5 w-3.5" />}
+    </button>
+  );
 }
 
 export const ConnectionsPanel = memo(function ConnectionsPanel() {
@@ -56,6 +115,10 @@ export const ConnectionsPanel = memo(function ConnectionsPanel() {
     }
   }, []);
 
+  const handleNoteSaved = useCallback((ip: string, note: string) => {
+    setConnections((prev) => prev.map((c) => (c.ip === ip ? { ...c, note } : c)));
+  }, []);
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex-1 min-h-0 overflow-y-auto">
@@ -70,6 +133,7 @@ export const ConnectionsPanel = memo(function ConnectionsPanel() {
                 <th className="px-3 py-1 font-normal">IP</th>
                 <th className="px-2 py-1 font-normal">{t('Requests')}</th>
                 <th className="px-2 py-1 font-normal">{t('Last seen')}</th>
+                <th className="px-2 py-1 font-normal">{t('Notes')}</th>
                 <th className="px-2 py-1" />
               </tr>
             </thead>
@@ -79,6 +143,9 @@ export const ConnectionsPanel = memo(function ConnectionsPanel() {
                   <td className="px-3 py-1 font-mono">{c.ip}</td>
                   <td className="px-2 py-1 font-mono tabular-nums">{c.count}</td>
                   <td className="px-2 py-1 text-text-muted whitespace-nowrap">{relativeTime(c.last_seen, now, t)}</td>
+                  <td className="px-2 py-1">
+                    <NoteCell ip={c.ip} note={c.note ?? ''} t={t} onSaved={handleNoteSaved} />
+                  </td>
                   <td className="px-2 py-1 text-right">
                     <button
                       type="button"

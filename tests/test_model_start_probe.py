@@ -47,6 +47,9 @@ class TestStartModelProbe(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
 
         self.assertEqual(result["status"], "loading")
+        # start_command is delivered verbatim (env exports only when
+        # configured) — no wrapper: the start command must stay exactly
+        # what the user configured.
         self.assertEqual(result["command"], "vllm serve m1")
         probe.assert_awaited_once_with("m1", "10.131.1.7", 8000)
 

@@ -6,6 +6,7 @@ export interface ConnectionInfo {
   last_seen: number;
   last_method: string;
   last_path: string;
+  note: string;
 }
 
 export interface RequestEntry {
@@ -27,4 +28,8 @@ export const getRequests = async (ip: string, limit = 100): Promise<RequestEntry
     `/monitor/requests?ip=${encodeURIComponent(ip)}&limit=${limit}`,
   );
   return response.data.requests;
+};
+
+export const setConnectionNote = async (ip: string, note: string): Promise<void> => {
+  await api.put(`/monitor/notes/${encodeURIComponent(ip)}`, { note });
 };

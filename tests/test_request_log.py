@@ -1,5 +1,7 @@
 """Access log (Q2 接入情况): RequestLog service, /api/v1/monitor API,
 and the recording middleware (incl. body capture and path exclusions)."""
+import os
+import tempfile
 import time
 import unittest
 
@@ -8,6 +10,7 @@ from fastapi.testclient import TestClient
 from backend.main import app
 from backend.middleware import _sanitize_body
 from backend.service import request_log as rl
+from backend.service import vllm_access_log as val
 from backend.service.request_log import RequestLog
 
 
@@ -74,10 +77,12 @@ class TestMonitorEndpointsAndMiddleware(unittest.TestCase):
 
     def setUp(self):
         rl.request_log.reset()
+        val.vllm_access_log.reset()
         self.client = TestClient(app)
 
     def tearDown(self):
         rl.request_log.reset()
+        val.vllm_access_log.reset()
 
     def test_connections_endpoint_shape(self):
         r = self.client.get("/api/v1/monitor/connections")
@@ -131,7 +136,9 @@ class TestMonitorEndpointsAndMiddleware(unittest.TestCase):
         self.assertEqual(rl.request_log.connections(), [])
 
     def test_requests_endpoint_filters_by_ip(self):
-        self.client.get("/api/v1/models")
+        # /requests now reads the vLLM access log, not the middleware's
+        # own /api/v1 ring — seed a vLLM row directly.
+        val.vllm_access_log.record("testclient", "GET", "/v1/chat/completions", 200)
         ip = self.client_ip()
         r = self.client.get(f"/api/v1/monitor/requests?ip={ip}")
         self.assertEqual(r.status_code, 200)
@@ -179,3 +186,88 @@ class TestNormalizeMetricPath(unittest.TestCase):
         req = self._req("/api/v1/some/model")
         req.scope["route"] = _Route()
         self.assertEqual(_normalize_metric_path(req), "/api/v1/{model_id:path}")
+
+
+class TestConnectionNotesService(unittest.TestCase):
+    """Per-IP notes persist to disk: a fresh instance reading the same
+    file must see what was stored (survives restarts/redeploys)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self._tmp.name, "notes.json")
+        from backend.service import connection_notes as cn
+        cn.connection_notes.reset(self.path)
+
+    def tearDown(self):
+        from backend.service import connection_notes as cn
+        cn.connection_notes.reset()
+        self._tmp.cleanup()
+
+    def test_set_strips_and_persists_to_file(self):
+        from backend.service import connection_notes as cn
+        cn.connection_notes.set("1.1.1.1", "  my box  ")
+        self.assertEqual(cn.connection_notes.all(), {"1.1.1.1": "my box"})
+        fresh = cn.ConnectionNotes(path=self.path)
+        self.assertEqual(fresh.all(), {"1.1.1.1": "my box"})
+
+    def test_blank_note_clears(self):
+        from backend.service import connection_notes as cn
+        cn.connection_notes.set("1.1.1.1", "x")
+        cn.connection_notes.set("1.1.1.1", "   ")
+        self.assertEqual(cn.connection_notes.all(), {})
+        self.assertEqual(cn.ConnectionNotes(path=self.path).all(), {})
+
+    def test_malformed_file_yields_empty(self):
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write("not json")
+        from backend.service import connection_notes as cn
+        cn.connection_notes.reset(self.path)
+        self.assertEqual(cn.connection_notes.all(), {})
+
+
+class TestNotesEndpoints(unittest.TestCase):
+    """PUT /monitor/notes/{ip} persists; /connections rows carry the note."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self._tmp.name, "notes.json")
+        from backend.service import connection_notes as cn
+        cn.connection_notes.reset(self.path)
+        rl.request_log.reset()
+        val.vllm_access_log.reset()
+        self.client = TestClient(app)
+
+    def tearDown(self):
+        from backend.service import connection_notes as cn
+        cn.connection_notes.reset()
+        rl.request_log.reset()
+        val.vllm_access_log.reset()
+        self._tmp.cleanup()
+
+    def test_put_note_then_connections_row_carries_it(self):
+        # The panel rows now come from the vLLM access log (not the
+        # dashboard's own /api/v1 middleware) — seed a vLLM row directly.
+        val.vllm_access_log.record("testclient", "GET", "/v1/chat/completions", 200)
+        ip = "testclient"
+        r = self.client.put(f"/api/v1/monitor/notes/{ip}", json={"note": "my box"})
+        self.assertEqual(r.status_code, 200)
+        rows = self.client.get("/api/v1/monitor/connections").json()["connections"]
+        self.assertEqual(next(row for row in rows if row["ip"] == ip)["note"], "my box")
+
+    def test_put_blank_note_clears(self):
+        val.vllm_access_log.record("testclient", "GET", "/v1/chat/completions", 200)
+        ip = "testclient"
+        self.client.put(f"/api/v1/monitor/notes/{ip}", json={"note": "my box"})
+        self.client.put(f"/api/v1/monitor/notes/{ip}", json={"note": ""})
+        rows = self.client.get("/api/v1/monitor/connections").json()["connections"]
+        self.assertEqual(next(row for row in rows if row["ip"] == ip)["note"], "")
+
+    def test_note_over_limit_rejected(self):
+        r = self.client.put(
+            "/api/v1/monitor/notes/8.8.8.8", json={"note": "x" * 300})
+        self.assertEqual(r.status_code, 422)
+
+    def test_ip_over_limit_rejected(self):
+        r = self.client.put(
+            f"/api/v1/monitor/notes/{'9' * 80}", json={"note": "x"})
+        self.assertEqual(r.status_code, 422)
