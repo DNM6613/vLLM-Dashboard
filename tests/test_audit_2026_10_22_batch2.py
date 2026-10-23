@@ -171,8 +171,13 @@ class TestCreateAtomicClaim(unittest.TestCase):
                 with self.assertRaises(ds.DeploymentError) as ctx:
                     mgr.create("driver", "second", ["s"])
                 self.assertIn("driver", str(ctx.exception))
-                # other kinds are unaffected
-                other = mgr.create("cuda", "cuda task", ["s"])
+                # audit 2026-10-23 B-2: the claim spans the whole inflight
+                # domain — cuda (same domain as driver) is refused too,
+                # kinds outside the domain are unaffected.
+                with self.assertRaises(ds.DeploymentError) as ctx2:
+                    mgr.create("cuda", "cuda task", ["s"])
+                self.assertIn("driver", str(ctx2.exception))
+                other = mgr.create("vllm", "vllm task", ["s"])
                 self.assertEqual(other.status, "queued")
         finally:
             tmp.cleanup()

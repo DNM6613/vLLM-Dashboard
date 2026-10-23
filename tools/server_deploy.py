@@ -165,6 +165,28 @@ def _stop_and_remove(c: paramiko.SSHClient) -> None:
             f"container {CONTAINER} is still present after stop/rm "
             f"({o.strip()!r}) — aborting to avoid a name conflict on docker run")
 
+def _roll_back(c: paramiko.SSHClient, old_image: str, api_key_arg: str) -> None:
+    """Restart the previous image after the old container is already gone
+    (audit 2026-10-22 INF-2 health-gate failure; 2026-10-23 E-1 run
+    failure / SSH break): the only way back is the previous image with the
+    exact same run parameters, re-verified by the health gate. The stop/rm
+    first clears a half-started new container so its name cannot conflict.
+    Every terminal path exits the script; on ROLLED_BACK the caller
+    returns (production is back — this deployment is not)."""
+    print(f"      rolling back to {old_image} ...")
+    _stop_and_remove(c)
+    rc, _, _ = remote(c, run_container_cmd(old_image, api_key_arg), timeout=90)
+    if rc != 0:
+        print(f"ROLLBACK RUN FAILED (rc={rc}) — start the previous image manually:")
+        print(f"  {run_container_cmd(old_image, api_key_arg)}")
+        sys.exit(1)
+    print(f"      rollback health gate (up to {HEALTH_ATTEMPTS} x {HEALTH_INTERVAL}s) ...")
+    if health_gate(c):
+        print(f"ROLLED_BACK {old_image}")
+        return
+    print("ROLLBACK_FAILED — both new and previous image unhealthy")
+    sys.exit(1)
+
 def deploy(c: paramiko.SSHClient) -> None:
     tag = time.strftime("v%Y%m%d-%H%M%S")
     image = f"vllm-dashboard:{tag}"
@@ -223,14 +245,33 @@ def _run_deploy(c: paramiko.SSHClient, image: str) -> None:
     if not API_KEY:
         print("      WARNING: DEPLOY_API_KEY not set — the container will run WITHOUT an API key (auth open)")
     _stop_and_remove(c)
-    rc, o, e = remote(c, run_container_cmd(image, api_key_arg), timeout=90)
+    try:
+        rc, o, e = remote(c, run_container_cmd(image, api_key_arg), timeout=90)
+    except Exception as ex:
+        # Audit 2026-10-23 E-1: an SSH break mid-run leaves the old
+        # container gone and the new one absent — treat it as a failed run
+        # and roll back instead of leaving the port dark.
+        print(f"RUN INTERRUPTED ({type(ex).__name__}: {ex})")
+        rc, o, e = 1, "", ""
     print(o, e)
     if rc != 0:
         print(f"RUN FAILED (rc={rc})")
+        if old_image:
+            _roll_back(c, old_image, api_key_arg)
+            return
+        print("ROLLBACK_IMPOSSIBLE — no previous image recorded; start a known-good image manually:")
+        print(f"  {run_container_cmd('<image>', api_key_arg)}")
         sys.exit(1)
 
     print(f"[5/5] Health gate (up to {HEALTH_ATTEMPTS} x {HEALTH_INTERVAL}s) ...")
-    if health_gate(c):
+    try:
+        healthy = health_gate(c)
+    except Exception as ex:
+        # Audit 2026-10-23 E-1: an SSH break mid-gate leaves the new
+        # container unverified — roll back rather than guess.
+        print(f"HEALTH GATE INTERRUPTED ({type(ex).__name__}: {ex})")
+        healthy = False
+    if healthy:
         print(f"DEPLOY_OK {image}")
         return
 
@@ -239,18 +280,9 @@ def _run_deploy(c: paramiko.SSHClient, image: str) -> None:
     # parameters and re-verify. The built docker image stays on the server
     # (forensics); the uploaded tar / build dir are cleaned by deploy().
     if old_image:
-        print(f"      HEALTH GATE FAILED — rolling back to {old_image} ...")
-        _stop_and_remove(c)
-        rc, o, e = remote(c, run_container_cmd(old_image, api_key_arg), timeout=90)
-        if rc != 0:
-            print(f"ROLLBACK RUN FAILED (rc={rc})")
-            sys.exit(1)
-        print(f"      rollback health gate (up to {HEALTH_ATTEMPTS} x {HEALTH_INTERVAL}s) ...")
-        if health_gate(c):
-            print(f"ROLLED_BACK {old_image}")
-            return
-        print("ROLLBACK_FAILED — both new and previous image unhealthy")
-        sys.exit(1)
+        print("      HEALTH GATE FAILED")
+        _roll_back(c, old_image, api_key_arg)
+        return
 
     print("DEPLOY_FAILED (never became healthy, no previous image to roll back to)")
     sys.exit(1)

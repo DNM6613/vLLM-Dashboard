@@ -22,6 +22,7 @@ from .deployment_common import (
     _major_driver_version,
     _resolve_venv_path,
     _validate_venv_name,
+    inflight_domain,
 )
 from .deployment_pipelines_env import _run_cuda, _run_driver, check_cuda_compat
 from .deployment_pipelines_vllm import (
@@ -56,9 +57,13 @@ def _reject_inflight(kind: str) -> None:
     Audit 2026-10-22 REM-5: driver and CUDA installs both write the system
     (apt / driver packages / nvidia kernel modules), so they also refuse
     each other — the same-kind check alone let a driver install and a CUDA
-    toolkit install race over the same system state."""
-    kinds = ("driver", "cuda") if kind in ("driver", "cuda") else (kind,)
-    for k in kinds:
+    toolkit install race over the same system state.
+
+    Audit 2026-10-23 B-2: the same applies to a vLLM install and a vLLM
+    rollback — both rewrite the same venv. The domains live in
+    ``deployment_common.inflight_domain`` so the entry precheck and the
+    task_manager's atomic create claim check the same table."""
+    for k in inflight_domain(kind):
         existing = _ds.task_manager.inflight_task(k)
         if existing is not None:
             label = _INFLIGHT_LABELS.get(k, k)

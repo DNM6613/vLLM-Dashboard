@@ -16,7 +16,13 @@ from collections.abc import Callable
 from datetime import datetime
 
 from . import deployment_service as _ds
-from .deployment_common import DeploymentError, TaskCancelled, _now_iso, _suggest_error
+from .deployment_common import (
+    DeploymentError,
+    TaskCancelled,
+    _now_iso,
+    _suggest_error,
+    inflight_domain,
+)
 from .deployment_reattach import ReattachMixin
 from .deployment_task_ctx import Task, TaskContext
 
@@ -84,23 +90,50 @@ class DeploymentTaskManager(ReattachMixin):
             # check, but between it and create another request could already
             # have claimed the kind (TOCTOU) — double pipelines fighting
             # over apt/uv locks. inflight_task re-enters the same RLock.
-            if self.inflight_task(kind):
-                raise DeploymentError(
-                    f"A {kind} task is already in progress — wait for it to "
-                    "finish before starting another")
+            # Audit 2026-10-23 B-2: span the whole inflight domain, not
+            # just the same kind — a vLLM install and a vLLM rollback write
+            # the same venv.
+            for k in inflight_domain(kind):
+                if self.inflight_task(k):
+                    raise DeploymentError(
+                        f"A {k} task is already in progress — wait for it to "
+                        "finish before starting another")
             self._tasks[task_id] = task
             self._cancel[task_id] = threading.Event()
             self._persist_locked()
         return task
 
+    # Audit 2026-10-23 B-1: pipelines whose first step kills vLLM (driver /
+    # vllm / rollback_vllm) must run inside the model stop window — the
+    # kill bypasses stop_model, so without the window the next status sync
+    # reads it as a crash of every locked model it stopped, and the
+    # watchdog re-launches a model while `uv pip install` / `apt purge`
+    # still runs. The CUDA pipeline has no stop-vLLM step and needs none.
+    _STOP_WINDOW_KINDS = ("driver", "vllm", "rollback_vllm")
+
     def submit(self, task: Task, runner: Callable[[TaskContext], None]) -> None:
         def target() -> None:
+            # Lazy import (audit 2026-10-23 B-1): a module-level import
+            # would close a cycle along the container entry path (main.py
+            # -> api -> deployment_service -> task_manager ->
+            # model_lifecycle -> model_service facade -> model_lifecycle)
+            # and crash the app at startup; at task runtime the facade is
+            # fully loaded, so resolve it per task.
+            from . import model_lifecycle
             with self._lock:
                 task.status = "running"
                 task.started_at = _now_iso()
                 self._persist_locked()
             ctx = TaskContext(task, self)
+            window: list[str] = []
             try:
+                if task.kind in self._STOP_WINDOW_KINDS:
+                    window = model_lifecycle.begin_deployment_stop_window()
+                    if window:
+                        ctx.log(
+                            f"Stop window: {', '.join(window)} set to STOPPED for this "
+                            "deployment — not re-started automatically; start the model "
+                            "again after the deployment finishes.")
                 runner(ctx)
                 with self._lock:
                     if task.status == "running":
@@ -120,6 +153,9 @@ class DeploymentTaskManager(ReattachMixin):
                 self._fail_locked(task, str(e))
             except Exception as e:
                 self._fail_locked(task, f"{type(e).__name__}: {e}")
+            finally:
+                if window:
+                    model_lifecycle.end_deployment_stop_window(window)
 
         thread = threading.Thread(target=target, name=f"deploy-{task.kind}", daemon=True)
         with self._lock:

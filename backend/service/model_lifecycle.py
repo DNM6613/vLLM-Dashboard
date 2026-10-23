@@ -40,6 +40,43 @@ def is_stopping(model_id: str) -> bool:
     return model_id in _stopping_models
 
 
+def begin_deployment_stop_window() -> list[str]:
+    """Enter the deployment stop window (audit 2026-10-23 B-1).
+
+    The deployment pipelines kill vLLM straight through the executor
+    (``stop_vllm``), bypassing ``stop_model`` — so without this the next
+    status sync reads the deliberate kill as a crash of every locked model
+    it stopped (RUNNING/LOADING→STOPPED on positive evidence), letting the
+    watchdog re-launch a model while ``uv pip install`` / ``apt purge`` is
+    still running. Flipping the affected models to STOPPED inside the
+    window (the pipeline's kill is global) attributes the stop to the
+    deployment: no crash is recorded and nothing auto-restarts. The model
+    is deliberately NOT re-started after the pipeline — the user starts it
+    again explicitly. Returns the affected model ids; pass them to
+    ``end_deployment_stop_window`` when the pipeline ends (success,
+    failure, or cancel).
+    """
+    affected: list[str] = []
+    for model in _ms.state_machine.get_all_models():
+        if model.status in (ModelStatus.RUNNING, ModelStatus.LOADING):
+            _stopping_models.add(model.id)
+            _ms.state_machine.update_model_status(model.id, ModelStatus.STOPPED)
+            _ms.state_machine.clear_current_model(model.id)
+            # A deployment stop is a deliberate action, not a crash: drop
+            # any pending crash history / suspension (same as a manual stop).
+            _ms._watchdog_clear(model.id)
+            affected.append(model.id)
+    return affected
+
+
+def end_deployment_stop_window(model_ids: list[str]) -> None:
+    """Close the window opened by ``begin_deployment_stop_window`` (audit
+    2026-10-23 B-1): the models were already flipped to STOPPED at window
+    start, so no transition is pending — a plain discard is safe."""
+    for model_id in model_ids:
+        _stopping_models.discard(model_id)
+
+
 def _build_stop_wait_command(model_path: str) -> str:
     if not model_path:
         return (

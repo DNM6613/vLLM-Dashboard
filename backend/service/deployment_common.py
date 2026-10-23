@@ -65,6 +65,24 @@ TASK_STATUSES = ("queued", "running", "success", "failed",
                  "cancelled", "awaiting_reboot", "interrupted")
 TERMINAL_STATUSES = ("success", "failed", "cancelled", "interrupted")
 
+# Audit 2026-10-22 REM-5 / 2026-10-23 B-2: pipelines that write the same
+# system state must refuse each other — driver and CUDA installs both
+# write apt/kernel state, and a vLLM install and a vLLM rollback both
+# rewrite the same venv (concurrent `uv pip install` leaves site-packages
+# half-written and the final version indeterminate). The same-kind check
+# alone let the two vLLM pipelines run side by side.
+INFLIGHT_DOMAINS: dict[str, tuple[str, ...]] = {
+    "driver": ("driver", "cuda"),
+    "cuda": ("driver", "cuda"),
+    "vllm": ("vllm", "rollback_vllm"),
+    "rollback_vllm": ("vllm", "rollback_vllm"),
+}
+
+
+def inflight_domain(kind: str) -> tuple[str, ...]:
+    """All task kinds that must not run concurrently with ``kind``."""
+    return INFLIGHT_DOMAINS.get(kind, (kind,))
+
 
 class DeploymentError(Exception):
     """Fatal pipeline failure with a user-facing message."""
