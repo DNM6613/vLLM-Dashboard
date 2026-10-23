@@ -68,7 +68,7 @@ function NoteCell({ ip, note, t, onSaved }: {
           ? 'w-full cursor-pointer truncate rounded text-left text-sm text-text transition-colors hover:bg-bg-hover hover:text-accent'
           : 'w-full cursor-pointer rounded p-0.5 text-sm text-text-muted transition-colors hover:bg-bg-hover hover:text-accent'
       }
-      title={t('Notes')}
+      title={note || t('Notes')}
     >
       {note ? note : <Plus className="h-3.5 w-3.5" />}
     </button>
@@ -144,11 +144,11 @@ export const ConnectionsPanel = memo(function ConnectionsPanel() {
           // to reflow the table and squeeze the columns in front
           <table className="w-full table-fixed text-sm">
             <colgroup>
-              <col className="w-28" />
+              <col className="w-32" />
               <col className="w-20" />
               <col className="w-24" />
-              <col />
-              <col className="w-16" />
+              <col className="w-64" />
+              <col className="w-20" />
             </colgroup>
             <thead className="sticky top-0 bg-bg-card">
               <tr className="text-left text-xs text-text-muted">
