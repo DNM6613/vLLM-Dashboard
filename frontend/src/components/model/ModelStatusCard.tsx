@@ -1,5 +1,5 @@
-import { memo } from 'react';
-import { Activity } from 'lucide-react';
+import { memo, useState } from 'react';
+import { Activity, ChevronDown } from 'lucide-react';
 import { fmtInt, fmtNum, fmtPct } from '../../utils/format';
 import { useI18n } from '../../i18n/context';
 import { useModelStatusStore } from '../../stores/modelStatus';
@@ -67,6 +67,8 @@ export const ModelStatusCard = memo(function ModelStatusCard() {
   const model = useModelStatusStore(s => s.model);
   const { t } = useI18n();
 
+  const [open, setOpen] = useState(false);
+
   const loading = model === null;
 
   return (
@@ -99,29 +101,13 @@ export const ModelStatusCard = memo(function ModelStatusCard() {
               format={fmtInt}
             />
             <Stat
-              label={t('Admission Rejections (Total)')}
-              num={model?.admission_rejections_total}
-              format={fmtInt}
-            />
-            <Stat
-              label={t('Preemptions (Total)')}
-              num={model?.num_preemptions_total}
-              format={fmtInt}
-            />
-            <Stat
               label={t('KV Cache')}
               num={model?.kv_cache_usage_pct}
               format={fmtPct}
               suffix="%"
             />
-            <Stat label={t('Avg TTFT (s)')} num={model?.avg_ttft_s} />
-            <Stat label={t('Avg TPOT (ms)')} num={model?.avg_tpot_ms} />
-            <Stat label={t('Avg E2E Latency (s)')} num={model?.avg_e2e_latency_s} />
-            <Stat label={t('Avg Queue (s)')} num={model?.avg_queue_s} />
-            <Stat label={t('Avg Prefill (s)')} num={model?.avg_prefill_s} />
-            <Stat label={t('Avg Decode (s)')} num={model?.avg_decode_s} />
             <Stat
-              label={t('MTP Hit Rate (Realtime/Cumulative)')}
+              label={t('MTP Hit Rate (Realtime/Average)')}
               num={model?.mtp_hit_rate_pct}
               num2={model?.mtp_hit_rate_cumulative_pct}
               allowPartial
@@ -131,7 +117,7 @@ export const ModelStatusCard = memo(function ModelStatusCard() {
               perSegment
             />
             <Stat
-              label={t('Prefix Cache Hit Rate (Realtime/Cumulative)')}
+              label={t('Prefix Cache Hit Rate (Realtime/Average)')}
               num={model?.prefix_cache_hit_rate_pct}
               num2={model?.prefix_cache_hit_rate_cumulative_pct}
               allowPartial
@@ -140,6 +126,34 @@ export const ModelStatusCard = memo(function ModelStatusCard() {
               suffix="%"
               perSegment
             />
+            <Stat
+              label={t('Avg Prefill/Decode (s)')}
+              num={model?.avg_prefill_s}
+              num2={model?.avg_decode_s}
+            />
+            {open && (
+              <div className="grid grid-cols-1 gap-y-3 mb-3">
+                <Stat
+                  label={t('Rejections/Preemptions (Total)')}
+                  num={model?.admission_rejections_total}
+                  num2={model?.num_preemptions_total}
+                  format={fmtInt}
+                />
+                <Stat label={t('Avg TTFT (s)')} num={model?.avg_ttft_s} />
+                <Stat label={t('Avg E2E Latency (s)')} num={model?.avg_e2e_latency_s} />
+                <Stat label={t('Avg TPOT (ms)')} num={model?.avg_tpot_ms} />
+                <Stat label={t('Avg Queue (s)')} num={model?.avg_queue_s} />
+              </div>
+            )}
+            <button
+              type="button"
+              aria-label="Detailed Metrics"
+              aria-expanded={open}
+              onClick={() => setOpen((v) => !v)}
+              className="flex cursor-pointer select-none items-center justify-center text-text-muted hover:text-text"
+            >
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+            </button>
           </div>
         </div>
       )}
