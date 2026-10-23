@@ -96,10 +96,25 @@ class ModelOps(ModelScanMixin):
         # Gated repos reject anonymous downloads; inject the configured HF
         # token so `hf download` authenticates. Independent of the mirror —
         # the upstream endpoint needs it too.
+        # Audit 2026-10-23 C-3: the token must not sit in the remote command
+        # line (ps-visible for the WHOLE download on the single-user host).
+        # It travels the channel stdin (the sudo-password path) into a 0600
+        # file the wrapper exports and removes. The long-lived process still
+        # carries it in its environment — `hf` has no file option for the
+        # token (accepted residual surface on the single-user host).
         from ...config.remote_client import config_manager
         hf_token = (config_manager.get_config().hf_token or "").strip()
+        read_token_part = ""
         if hf_token:
-            env_prefix += f"export HF_TOKEN={shlex.quote(hf_token)} && "
+            tok_file = f"/tmp/.vdb_hf_token_{model_repo.replace('/', '_')}"
+            env_prefix += (
+                f"export HF_TOKEN=\"$(cat {tok_file})\" && "
+                f"rm -f {tok_file} && "
+            )
+            read_token_part = (
+                f"read -r VDB_TOK && printf '%s' \"$VDB_TOK\" > {tok_file} && "
+                f"chmod 600 {tok_file} && "
+            )
 
         # The wrapper bash lives for the whole download (it execs `hf` as its
         # last command), so its PID is a reliable liveness marker. Written to
@@ -113,10 +128,15 @@ class ModelOps(ModelScanMixin):
         # Audit 2026-10-22 BCK-4: the duplicate check and the launch happen
         # in ONE remote command so a second writer cannot slip in between
         # (the old service-layer probe had a TOCTOU window). A live download
-        # of this repo is reported instead of launched.
-        cmd = _probe_pid_expr(safe_repo) + '; if [ -n "$P" ]; then echo VDB_ALREADY:$P; else ' + launch + '; fi'
+        # of this repo is reported instead of launched. The token read sits
+        # in the launch branch: a VDB_ALREADY outcome never touches stdin.
+        cmd = (
+            _probe_pid_expr(safe_repo)
+            + '; if [ -n "$P" ]; then echo VDB_ALREADY:$P; else '
+            + read_token_part + launch + '; fi'
+        )
 
-        result = self.execute(cmd)
+        result = self.execute(cmd, stdin_data=hf_token or None)
         out = result["stdout"].strip()
         if out.startswith("VDB_ALREADY:"):
             return {
@@ -148,19 +168,32 @@ class ModelOps(ModelScanMixin):
             endpoints = ["https://huggingface.co", mirror] if mirror else ["https://huggingface.co"]
         # Gated repos can hide file metadata from anonymous API calls; send
         # the configured token as Bearer auth so usedStorage stays available.
+        # Audit 2026-10-23 C-3: the token must not sit in the remote command
+        # line (this probe runs once per repo-TTL hour). It travels the
+        # channel stdin into a 0600 curl config file that curl reads with
+        # --config; the file is removed right after the request.
         from ...config.remote_client import config_manager
         hf_token = (config_manager.get_config().hf_token or "").strip()
-        auth_header = (
-            f"-H {shlex.quote(f'Authorization: Bearer {hf_token}')} "
-            if hf_token else ""
-        )
+        hdr_file = f"/tmp/.vdb_hf_hdr_{model_repo.replace('/', '_')}"
         for endpoint in dict.fromkeys(endpoints):
             url = shlex.quote(f"{endpoint}/api/models/{model_repo}")
-            cmd = (
-                f"curl -sS --max-time 15 {auth_header}{url} "
-                "| grep -o '\"usedStorage\":[0-9]*' | head -1 | cut -d: -f2"
-            )
-            result = self.execute(cmd)
+            if hf_token:
+                cmd = (
+                    "read -r VDB_TOK && "
+                    f"printf \"header = \\\"Authorization: Bearer $VDB_TOK\\\"\\n\" > {hdr_file} && "
+                    f"chmod 600 {hdr_file} && "
+                    f"curl -sS --max-time 15 --config {hdr_file} {url} "
+                    "| grep -o '\"usedStorage\":[0-9]*' | head -1 | cut -d: -f2; "
+                    f"RC=$?; rm -f {hdr_file}; exit $RC"
+                )
+                stdin_data: str | None = hf_token
+            else:
+                cmd = (
+                    f"curl -sS --max-time 15 {url} "
+                    "| grep -o '\"usedStorage\":[0-9]*' | head -1 | cut -d: -f2"
+                )
+                stdin_data = None
+            result = self.execute(cmd, stdin_data=stdin_data)
             v = (result.get("stdout") or "").strip()
             if v.isdigit() and int(v) > 0:
                 return {"success": True, "total_bytes": int(v)}

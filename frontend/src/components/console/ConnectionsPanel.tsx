@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { FileText, Plus } from 'lucide-react';
 import { getConnections, getRequests, setConnectionNote } from '../../api/monitor';
 import type { ConnectionInfo, RequestEntry } from '../../api/monitor';
@@ -82,6 +82,10 @@ export const ConnectionsPanel = memo(function ConnectionsPanel() {
   const [detailIp, setDetailIp] = useState<string | null>(null);
   const [entries, setEntries] = useState<RequestEntry[]>([]);
   const [detailOpen, setDetailOpen] = useState(false);
+  // Audit 2026-10-23 D-2: the latest requested IP — a slow getRequests
+  // resolving after a newer openDetails call must not fill the modal with
+  // a superseded IP's rows.
+  const detailIpRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,11 +109,14 @@ export const ConnectionsPanel = memo(function ConnectionsPanel() {
   }, []);
 
   const openDetails = useCallback(async (ip: string) => {
+    detailIpRef.current = ip;
     setDetailIp(ip);
     setEntries([]);
     setDetailOpen(true);
     try {
-      setEntries(await getRequests(ip));
+      const rows = await getRequests(ip);
+      if (detailIpRef.current !== ip) return; // superseded while fetching (D-2)
+      setEntries(rows);
     } catch {
       // Leave the list empty on a fetch failure.
     }

@@ -61,7 +61,8 @@ ws_connections_total = Counter("ws_connections_total", "Total WebSocket connecti
 
 _HTTP_STATUS_CODES = {
     400: "bad_request", 401: "unauthorized", 403: "forbidden", 404: "not_found",
-    405: "method_not_allowed", 409: "conflict", 422: "validation_error",
+    405: "method_not_allowed", 409: "conflict", 413: "payload_too_large",
+    422: "validation_error",
     500: "internal_error", 502: "bad_gateway", 503: "service_unavailable",
 }
 
@@ -145,6 +146,26 @@ def _sanitize_body(raw: bytes) -> str | None:
     text = raw[:BODY_PREVIEW_CAP].decode("utf-8", "replace")
     return "".join(ch for ch in text if ch == "\n" or ch == "\t" or ch >= " ")
 
+
+# Audit 2026-10-23 C-1: FastAPI/Pydantic buffer the whole request body in
+# memory — a multi-GB JSON from an (authenticated) LAN client would OOM
+# the container. Gate on the Content-Length header at the outermost layer
+# (registered last in main.py), before any body is read. Chunked bodies
+# (no parsable Content-Length) are outside the gate.
+_BODY_SIZE_LIMIT = 64 * 1024 * 1024
+
+async def body_size_gate_middleware(request: Request, call_next):
+    if request.method in _BODY_METHODS:
+        try:
+            content_length = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            content_length = 0
+        if content_length >= _BODY_SIZE_LIMIT:
+            return _error_response(
+                413, "payload_too_large",
+                f"Request body exceeds the {_BODY_SIZE_LIMIT // (1024 * 1024)} MB limit",
+                request)
+    return await call_next(request)
 
 async def request_log_middleware(request: Request, call_next):
     path = request.url.path

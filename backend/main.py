@@ -31,6 +31,7 @@ from .middleware import (
     _RedactApiKeyFilter,
     _RequestIdLogFilter,
     auth_middleware,
+    body_size_gate_middleware,
     http_exception_handler,
     request_id_metrics_middleware,
     request_log_middleware,
@@ -80,8 +81,11 @@ app = FastAPI(title="vLLM-Dashboard", version=__version__, lifespan=lifespan,
 
 app.middleware("http")(auth_middleware)
 app.middleware("http")(request_id_metrics_middleware)
-# Outermost: records every /api/v1 request (incl. 401s rejected by auth).
+# Records every /api/v1 request (incl. 401s rejected by auth).
 app.middleware("http")(request_log_middleware)
+# Outermost of all: reject oversized bodies on the Content-Length header
+# before anything reads them (audit 2026-10-23 C-1).
+app.middleware("http")(body_size_gate_middleware)
 app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)

@@ -216,4 +216,25 @@ describe('useConsoleWebSocket', () => {
     expect(MockWebSocket.instances).toHaveLength(1);
     unmount();
   });
+
+  it('does not open a socket for a connect attempt superseded by unmount (D-3)', async () => {
+    // the ticket round-trip is still pending when the hook unmounts:
+    // without the seq bump on unmount, `new WebSocket` would still run
+    // after unmount and the orphaned socket would leak (D-3).
+    let resolveUrl!: (v: string) => void;
+    vi.mocked(getWsUrl).mockImplementationOnce(
+      () => new Promise<string>((r) => { resolveUrl = r; }),
+    );
+    const { result, unmount } = renderHook(() => useConsoleWebSocket());
+    await act(async () => {
+      result.current.connectConsole();
+    });
+    expect(MockWebSocket.instances).toHaveLength(0); // still awaiting the ticket
+    unmount();
+    await act(async () => {
+      resolveUrl('ws://test/console');
+    });
+    // the superseded attempt must not create a socket after unmount
+    expect(MockWebSocket.instances).toHaveLength(0);
+  });
 });

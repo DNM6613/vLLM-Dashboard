@@ -62,12 +62,21 @@ NO_START_COMMAND_MESSAGE = "自动启动失败：未配置启动命令（在启�
 _crash_events: dict[str, list[tuple[datetime, bool]]] = {}
 _inflight: set[str] = set()
 _suspended: set[str] = set()
-_restart_tasks: set[asyncio.Task] = set()
+# model_id -> pending 10 s delayed-restart task. Audit 2026-10-23 A-2:
+# keyed by model so a manual stop can CANCEL the scheduled attempt — the
+# old set only cleared the crash history, and the task still fired and
+# re-launched a model the user had just stopped.
+_restart_tasks: dict[str, asyncio.Task] = {}
 _task: asyncio.Task | None = None
 _stopping = False
 
 
 def _clear(model_id: str) -> None:
+    # Cancel the pending restart of this model (audit 2026-10-23 A-2):
+    # clearing the history alone left the scheduled task free to fire.
+    task = _restart_tasks.pop(model_id, None)
+    if task is not None:
+        task.cancel()
     _crash_events.pop(model_id, None)
     _suspended.discard(model_id)
 
@@ -107,8 +116,15 @@ def on_model_crash(model_id: str, synthetic: bool = False) -> None:
         task = asyncio.get_running_loop().create_task(_restart_after_delay(model_id))
     except RuntimeError:
         return  # no running loop (tests); the tick will pick the event up
-    _restart_tasks.add(task)
-    task.add_done_callback(_restart_tasks.discard)
+    # A newer crash event supersedes the older pending attempt (the
+    # _inflight guard already makes a double start impossible).
+    _restart_tasks[model_id] = task
+
+    def _forget(done_task: asyncio.Task) -> None:
+        if _restart_tasks.get(model_id) is done_task:
+            _restart_tasks.pop(model_id, None)
+
+    task.add_done_callback(_forget)
 
 
 async def _restart_after_delay(model_id: str) -> None:
@@ -300,7 +316,7 @@ async def start_watchdog() -> None:
 async def stop_watchdog() -> None:
     global _task, _stopping
     _stopping = True
-    for task in list(_restart_tasks):
+    for task in list(_restart_tasks.values()):
         task.cancel()
     if _task is not None:
         _task.cancel()

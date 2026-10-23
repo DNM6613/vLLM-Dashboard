@@ -246,3 +246,50 @@ describe('ChatTab clear button (audit 2026-10-22 FE-10)', () => {
     expect(screen.getByTitle('Clear chat')).toBeTruthy();
   });
 });
+
+describe('ChatTab queue editing (audit 2026-10-23 D-1)', () => {
+  // The chat input is also a textbox (a textarea); the queue edit control
+  // is the only INPUT among them.
+  const findQueueInput = (): HTMLInputElement | null =>
+    (screen.queryAllByRole('textbox').find(
+      (el) => el.tagName === 'INPUT',
+    ) as HTMLInputElement | undefined) ?? null;
+
+  afterEach(() => {
+    mockChat.entries = [];
+    mockChat.queue = [];
+    vi.mocked(mockChat.removeQueued).mockClear();
+    vi.mocked(mockChat.editQueued).mockClear();
+    cleanup();
+  });
+
+  it('removing the item being edited cancels the edit', () => {
+    mockChat.queue = ['a', 'b', 'c'];
+    renderChat();
+    const editBtns = screen.getAllByTitle('Edit queued message');
+    fireEvent.click(editBtns[1]);
+    expect(findQueueInput()).not.toBeNull();
+    // removing the edited item itself: the edit is cancelled. fireEvent (not
+    // el.click()): in the act environment React 19 defers a native click's
+    // state update, leaving stale DOM for the assertion that follows.
+    fireEvent.click(screen.getAllByTitle('Remove from queue')[1]);
+    expect(mockChat.removeQueued).toHaveBeenCalledWith(1);
+    expect(findQueueInput()).toBeNull();
+  });
+
+  it('removing an item before the edited one keeps editing the right slot', () => {
+    mockChat.queue = ['a', 'b', 'c'];
+    renderChat();
+    const editBtns = screen.getAllByTitle('Edit queued message');
+    fireEvent.click(editBtns[2]); // start editing 'c' (index 2)
+    expect(findQueueInput()!.value).toBe('c');
+    // remove 'a' (index 0): the edited slot shifts from 2 down to 1
+    // (fireEvent, not el.click() — same flush reason as above)
+    fireEvent.click(screen.getAllByTitle('Remove from queue')[0]);
+    expect(mockChat.removeQueued).toHaveBeenCalledWith(0);
+    // the edit survives on the shifted slot — committing hits index 1
+    // (the old 'c'), not the stale index 2
+    fireEvent.keyDown(findQueueInput()!, { key: 'Enter' });
+    expect(mockChat.editQueued).toHaveBeenCalledWith(1, 'c');
+  });
+});

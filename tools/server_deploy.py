@@ -21,12 +21,43 @@ BUILD_DIR = os.environ.get("DEPLOY_BUILD_DIR", f"/home/{USER}/vllm-dashboard-bui
 TAR_LOCAL = "_server_deploy.tar"
 TAR_REMOTE = os.environ.get("DEPLOY_TAR_REMOTE", f"/home/{USER}/_server_deploy.tar")
 API_KEY = os.environ.get("DEPLOY_API_KEY", "")
+# Audit 2026-10-23 C-2: the API key lives on the server as a 0600 file
+# (``VLLM_DASHBOARD_API_KEY=<key>``) that docker reads via --env-file and
+# the health probes read via $(sed ...) — the key itself never appears
+# in a remote command line or the container's env.
+KEY_FILE = os.environ.get("DEPLOY_KEY_FILE", f"/home/{USER}/.vdb_deploy_api_key")
 
+
+def _key_header_arg() -> str:
+    """The wget --header argument that resolves the API key FROM the 0600
+    key file on the server (audit 2026-10-23 C-2). The command string is
+    ps-visible for the whole probe window — only the (unexpanded) file
+    reference may travel over SSH."""
+    if not API_KEY:
+        return ""
+    return (f"--header=\"X-API-Key: "
+            f"$(sed -n 's/^VLLM_DASHBOARD_API_KEY=//p' {KEY_FILE})\" ")
+
+def _write_key_file(c: paramiko.SSHClient) -> None:
+    """Overwrite the 0600 API-key file on the server (audit 2026-10-23
+    C-2). The key travels the SFTP channel, never a command line, and the
+    file is readable by the login user only. Idempotent — called from
+    deploy, probe and verify so the probes always find a fresh key."""
+    if not API_KEY:
+        return
+    sftp = c.open_sftp()
+    try:
+        with sftp.open(KEY_FILE, "w") as f:
+            f.write(f"VLLM_DASHBOARD_API_KEY={API_KEY}\n")
+        sftp.chmod(KEY_FILE, 0o600)
+    finally:
+        sftp.close()
 
 def health_wget() -> str:
-    # /health is behind the API-key gate when the container runs with a key.
-    header = f"--header='X-API-Key: {API_KEY}' " if API_KEY else ""
-    return f"wget -qO- {header}{API}/health"
+    # /health is behind the API-key gate when the container runs with a
+    # key — the key itself is resolved on the server from the 0600 key
+    # file (audit 2026-10-23 C-2), never inlined into the command.
+    return f"wget -qO- {_key_header_arg()}{API}/health"
 
 SHIP_FILES = ["Dockerfile", ".dockerignore", "requirements-lock.txt"]
 SHIP_DIRS = ["backend", "frontend"]
@@ -83,8 +114,39 @@ def _tracked_files() -> list[str] | None:
     return [p for p in r.stdout.decode("utf-8", "replace").split("\0") if p]
 
 
+def _untracked_ship_files() -> list[str]:
+    """Untracked (but not git-ignored) files under SHIP_FILES + SHIP_DIRS.
+    Audit 2026-10-23 E-2: build_tar ships ONLY tracked files, so a NEW
+    source file that was never ``git add``ed is silently missing from the
+    image (incident 2026-10-23: a fresh backend module was absent and the
+    container crashed at startup). Returns [] when git is unavailable."""
+    git = shutil.which("git")
+    if not git:
+        return []
+    try:
+        r = subprocess.run([git, "ls-files", "--others", "--exclude-standard",
+                            "-z", "--", *(SHIP_FILES + SHIP_DIRS)],
+                           capture_output=True)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if r.returncode != 0:
+        return []
+    return [p for p in r.stdout.decode("utf-8", "replace").split("\0") if p]
+
+
 def build_tar(path: str) -> None:
     tracked = _tracked_files()
+    if tracked is not None:
+        # Audit 2026-10-23 E-2: new files never reach the image unless they
+        # are tracked — surface them loudly instead of silently dropping
+        # them (the release flow deploys before committing, so this is
+        # expected to happen and must not block the deploy).
+        untracked = _untracked_ship_files()
+        for p in untracked:
+            print(f"      WARNING: untracked file NOT shipped: {p}")
+        if untracked:
+            print("      -> git add the new files first or they will be "
+                  "missing from the image")
     with tarfile.open(path, "w:gz") as tf:
         if tracked is not None:
             # Ship exactly the tracked files (worktree content) — the
@@ -106,6 +168,9 @@ def build_tar(path: str) -> None:
                     tf.add(full, arcname=full)
 
 def probe(c: paramiko.SSHClient) -> None:
+    # Audit 2026-10-23 C-2: the health line resolves the key from the 0600
+    # file — land a fresh one first (idempotent SFTP overwrite).
+    _write_key_file(c)
     fmt = "'{{.Names}} | {{.Image}} | {{.Status}}'"
     _, o, e = remote(
         c,
@@ -120,8 +185,11 @@ def run_container_cmd(image: str, api_key_arg: str) -> str:
     # the previous image with the EXACT same parameters.
     # HF/pip mirrors are explicit opt-ins here (settings.py defaults are now
     # empty = official sources). The intranet dev host needs the mirrors.
+    # Audit 2026-10-23 E-4: cap the container log (it was unbounded — the
+    # rollback path reruns this same command, so it is covered too).
     return (
         f"docker run -d --name {CONTAINER} --network host --restart always "
+        f"--log-opt max-size=50m --log-opt max-file=5 "
         f"-v {DATA_VOL} {api_key_arg}-e API_HOST=0.0.0.0 -e API_PORT={API_PORT} "
         f"-e STATIC_DIR=/app/static "
         f"-e HF_ENDPOINT=https://hf-mirror.com "
@@ -237,11 +305,15 @@ def _run_deploy(c: paramiko.SSHClient, image: str) -> None:
     old_image = (o or "").strip()
     if old_image:
         print(f"      previous image: {old_image}")
-    # Audit 2026-10-22 INF-1: pass the API key through so the container
-    # enforces auth when one is configured (settings.py reads
-    # VLLM_DASHBOARD_API_KEY). Without it the local .env never reaches the
-    # container and the auth gate stays silently open.
-    api_key_arg = f"-e VLLM_DASHBOARD_API_KEY={API_KEY} " if API_KEY else ""
+    # Audit 2026-10-22 INF-1: the container enforces auth when a key is
+    # configured (settings.py reads VLLM_DASHBOARD_API_KEY). Without a key
+    # the auth gate stays silently open.
+    # Audit 2026-10-23 C-2: the key enters via a 0600 --env-file (landed
+    # over SFTP) instead of -e — the docker run command line and
+    # `docker inspect` must not carry the key.
+    if API_KEY:
+        _write_key_file(c)
+    api_key_arg = f"--env-file {KEY_FILE} " if API_KEY else ""
     if not API_KEY:
         print("      WARNING: DEPLOY_API_KEY not set — the container will run WITHOUT an API key (auth open)")
     _stop_and_remove(c)
@@ -288,6 +360,9 @@ def _run_deploy(c: paramiko.SSHClient, image: str) -> None:
     sys.exit(1)
 
 def verify(c: paramiko.SSHClient) -> None:
+    # Audit 2026-10-23 C-2: probes [2/7] and [3/7] resolve the key from the
+    # 0600 file — land a fresh one first (idempotent SFTP overwrite).
+    _write_key_file(c)
     ok = True
 
     print("=== [1/7] container ===")
@@ -320,9 +395,10 @@ def verify(c: paramiko.SSHClient) -> None:
     # unmatched GET before FastAPI can answer 405. Presence of a POST route is
     # therefore NOT distinguishable via GET; a GET route in the same router
     # (200) is the reliable liveness signal. The probe carries the API key
-    # when configured: auth_middleware rejects every /api/v1 path BEFORE
-    # routing, so an unauthenticated probe would see 401 for every route.
-    header = f"--header='X-API-Key: {API_KEY}' " if API_KEY else ""
+    # when configured (resolved from the 0600 file — audit 2026-10-23
+    # C-2): auth_middleware rejects every /api/v1 path BEFORE routing, so
+    # an unauthenticated probe would see 401 for every route.
+    header = _key_header_arg()
     _, o, _ = remote(c, f"wget -S -O /dev/null {header}{API}/api/v1/config/server 2>&1 "
                         f"| grep -oE 'HTTP/[0-9.]+ [0-9][0-9][0-9]' | head -1")
     line = o.strip()

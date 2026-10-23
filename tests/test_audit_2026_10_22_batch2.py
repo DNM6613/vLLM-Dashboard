@@ -247,8 +247,9 @@ class TestDownloadAtomicCommand(unittest.TestCase):
         ops._escape_double_quoted = lambda s: s
         captured = {}
 
-        def fake_execute(cmd, timeout=60):
+        def fake_execute(cmd, timeout=60, stdin_data=None):
             captured["cmd"] = cmd
+            captured["stdin_data"] = stdin_data
             # the real executor.execute always returns these keys
             return {"success": True, "stdout": "42", "stderr": ""}
 

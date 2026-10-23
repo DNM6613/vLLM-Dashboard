@@ -432,7 +432,6 @@ class TestModelLock(unittest.TestCase):
             asyncio.run(drive2())
         finally:
             model_watchdog.RESTART_DELAY_SECONDS = orig_delay2
-            model_watchdog._restart_tasks.discard(None)
             model_watchdog._restart_tasks.clear()
         self.assertEqual(self._started, [mid])
         self.assertEqual(self._sm.get_model(mid).status, ModelStatus.LOADING)

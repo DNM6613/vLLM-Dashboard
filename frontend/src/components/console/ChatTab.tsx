@@ -239,7 +239,15 @@ export function ChatTab({ models }: ChatTabProps) {
                 type="button"
                 title={t('Remove from queue')}
                 onClick={() => {
-                  if (editing === i) cancelEdit();
+                  // Audit 2026-10-23 D-1: the editing slot is a plain index
+                  // into the queue — removing an item before it shifts the
+                  // edited slot down by one; removing the edited item
+                  // cancels the edit.
+                  if (editing === i) {
+                    cancelEdit();
+                  } else if (editing !== null && editing > i) {
+                    setEditing(editing - 1);
+                  }
                   removeQueued(i);
                 }}
                 className="shrink-0 rounded p-0.5 text-text-muted hover:bg-bg-hover hover:text-danger"

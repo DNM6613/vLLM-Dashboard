@@ -63,13 +63,18 @@ class TestHfTokenMasking(unittest.TestCase):
 
 class TestHfTokenDownloadCommand(unittest.TestCase):
     def test_token_injected_into_download_command(self):
+        # Audit 2026-10-23 C-3: the token must not sit in the remote
+        # command line — it travels the channel stdin into a 0600 file
+        # that the wrapper exports.
         ops = _make_ops()
         with patch.object(config_manager, "get_config",
                           return_value=ServerConfig(hf_token="hf_secret_token")):
             ops.download_model("org/name", hf_mirror=False)
         cmd = ops.execute.call_args[0][0]
-        self.assertIn("export HF_TOKEN=hf_secret_token", cmd)
+        self.assertNotIn("hf_secret_token", cmd)
+        self.assertIn("VDB_TOK", cmd)
         self.assertIn("hf download org/name", cmd)
+        self.assertEqual(ops.execute.call_args[1]["stdin_data"], "hf_secret_token")
 
     def test_no_token_no_hf_token_export(self):
         ops = _make_ops()
@@ -80,13 +85,18 @@ class TestHfTokenDownloadCommand(unittest.TestCase):
         self.assertNotIn("HF_TOKEN", cmd)
 
     def test_total_size_api_gets_bearer_auth(self):
+        # Audit 2026-10-23 C-3: Bearer auth travels a 0600 curl --config
+        # file (token via stdin), not the command line.
         ops = _make_ops()
         ops.execute.return_value = {"success": True, "stdout": "123456", "stderr": ""}
         with patch.object(config_manager, "get_config",
                           return_value=ServerConfig(hf_token="hf_abc")):
             result = ops.get_download_total_size("org/name")
         cmd = ops.execute.call_args[0][0]
-        self.assertIn("Authorization: Bearer hf_abc", cmd)
+        self.assertNotIn("hf_abc", cmd)
+        self.assertIn("--config", cmd)
+        self.assertIn("VDB_TOK", cmd)
+        self.assertEqual(ops.execute.call_args[1]["stdin_data"], "hf_abc")
         self.assertEqual(result["total_bytes"], 123456)
 
     def test_total_size_anonymous_without_token(self):

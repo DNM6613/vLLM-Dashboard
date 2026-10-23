@@ -44,6 +44,10 @@ jobs:
           lock = {}
           for line in open("requirements-lock.txt", encoding="utf-8"):
               line = line.split("#", 1)[0].strip()
+              # pip-locked entries are line-wrapped: the trailing backslash
+              # would defeat the $-anchored regex (audit 2026-10-23 E-3 —
+              # before this fix 0 of the 30 lock entries ever matched).
+              line = line.rstrip("\\").strip()
               m = re.match(r"^([A-Za-z0-9._-]+)\s*==\s*([\w.+-]+)$", line)
               if m:
                   lock[canon(m.group(1))] = (m.group(1), m.group(2))

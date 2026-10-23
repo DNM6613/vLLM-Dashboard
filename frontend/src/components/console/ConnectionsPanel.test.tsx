@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { I18nProvider } from '../../i18n';
 import { ConnectionsPanel } from './ConnectionsPanel';
 import { getConnections, getRequests, setConnectionNote } from '../../api/monitor';
@@ -117,5 +117,29 @@ describe('ConnectionsPanel', () => {
     fireEvent.keyDown(input, { key: 'Escape' });
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(mockSetConnectionNote).not.toHaveBeenCalled();
+  });
+
+  it('drops a superseded detail fetch (audit 2026-10-23 D-2)', async () => {
+    const rowA: RequestEntry = { ...entry, ip: '10.0.0.5', path: '/api/v1/a' };
+    const rowB: RequestEntry = { ...entry, ip: '10.0.0.6', path: '/api/v1/b' };
+    let resolveA!: (v: RequestEntry[]) => void;
+    let resolveB!: (v: RequestEntry[]) => void;
+    mockGetConnections.mockResolvedValue([conn, { ...conn, ip: '10.0.0.6' }]);
+    mockGetRequests
+      .mockImplementationOnce(() => new Promise<RequestEntry[]>((r) => { resolveA = r; }))
+      .mockImplementationOnce(() => new Promise<RequestEntry[]>((r) => { resolveB = r; }));
+    renderPanel();
+    const details = await screen.findAllByRole('button', { name: 'Details' });
+    details[0].click(); // 10.0.0.5
+    details[1].click(); // 10.0.0.6 supersedes the pending fetch
+    await act(async () => {
+      resolveA([rowA]); // stale result — must be dropped
+    });
+    await waitFor(() => expect(screen.queryByText('/api/v1/a')).toBeNull());
+    await act(async () => {
+      resolveB([rowB]);
+    });
+    await screen.findByText('/api/v1/b');
+    expect(screen.queryByText('/api/v1/a')).toBeNull();
   });
 });

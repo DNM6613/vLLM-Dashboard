@@ -167,6 +167,10 @@ export function useConsoleWebSocket() {
 
   useEffect(() => {
     return () => {
+      // Audit 2026-10-23 D-3: invalidate a connect attempt still awaiting
+      // the ticket round-trip — without this, `new WebSocket` runs after
+      // unmount and the orphaned socket leaks (nothing can close it).
+      consoleConnectSeqRef.current++;
       consoleManualCloseRef.current = true;
       if (consoleWsRef.current) { consoleWsRef.current.close(); consoleWsRef.current = null; }
       if (consoleReconnectRef.current) { clearTimeout(consoleReconnectRef.current); consoleReconnectRef.current = null; }

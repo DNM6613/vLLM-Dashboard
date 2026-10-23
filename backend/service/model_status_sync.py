@@ -181,7 +181,9 @@ async def _sync_status_once(timeout: float, track_current: bool = False,
                     f"resetting to STOPPED")
                 _ms.state_machine.update_model_status(model.id, ModelStatus.STOPPED)
                 _ms.state_machine.clear_current_model(model.id)
-                if model.locked:
+                # Same guard as the other two downgrade branches (audit
+                # 2026-10-23 A-1): a stop in flight is not a crash.
+                if model.locked and not _ms.is_stopping(model.id):
                     _ms._watchdog_on_crash(model.id)
                 changed += 1
         elif model.status == ModelStatus.STOPPED:
