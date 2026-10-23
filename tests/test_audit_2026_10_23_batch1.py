@@ -83,7 +83,9 @@ class TestVllmRollbackMutexDomain(unittest.TestCase):
                          ("vllm", "rollback_vllm"))
         self.assertEqual(dcommon.inflight_domain("driver"), ("driver", "cuda"))
         self.assertEqual(dcommon.inflight_domain("cuda"), ("driver", "cuda"))
-        self.assertEqual(dcommon.inflight_domain("reboot"), ("reboot",))
+        # audit 2026-10-23 B-5: reboot refuses every pipeline (one-way)
+        self.assertEqual(dcommon.inflight_domain("reboot"),
+                         ("driver", "cuda", "vllm", "rollback_vllm"))
 
 
 class TestCreateVllmRollbackDomain(unittest.TestCase):

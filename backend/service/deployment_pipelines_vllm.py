@@ -93,8 +93,13 @@ def _build_vllm_install_commands(payload: dict[str, Any], venv_path: str,
     # ~/.local/bin (see deployment_ops.UV_PATH_PREFIX).
     cuda_version = (payload.get("cuda_version") or "").strip()
     if payload.get("source_build"):
+        # Audit 2026-10-23 B-3: clean the fixed dir first (a stale clone
+        # makes every re-run fail with 'already exists') and pin the
+        # selected version's tag — the clone used to install main HEAD
+        # no matter which version was picked.
+        branch = f" --branch v{version}" if version not in ("", "latest") else ""
         install = (
-            UV_PATH_PREFIX + "git clone --depth 1 https://gh-proxy.com/https://github.com/vllm-project/vllm.git /tmp/vllm-src-vdb "
+            UV_PATH_PREFIX + f"rm -rf /tmp/vllm-src-vdb && git clone --depth 1{branch} https://gh-proxy.com/https://github.com/vllm-project/vllm.git /tmp/vllm-src-vdb "
             + f"&& uv pip install {index_args} --python {py_bin} -e /tmp/vllm-src-vdb".replace("  ", " ")
         )
     elif not cuda_version:

@@ -236,6 +236,10 @@ def start_rollback_vllm() -> Task:
 
 def start_reboot_task() -> Task:
     _require_remote()
+    # Audit 2026-10-23 B-5: refuse while any pipeline is in flight — the
+    # frontend only offers the button in awaiting_reboot, so this guards
+    # the manual API / multi-tab surface.
+    _reject_inflight("reboot")
     task = _ds.task_manager.create("reboot", "Reboot server", ["Reboot server"])
     _ds.task_manager.submit(task, _run_reboot)
     return task

@@ -63,7 +63,35 @@ def _run_driver(ctx: TaskContext, package: str, target_major: int | None) -> Non
             timeout=1800,
         )
     with ctx.step(2):
-        ctx.run_long(f"sudo apt-get update -y && sudo apt-get install -y {package}", timeout=3600)
+        try:
+            ctx.run_long(f"sudo apt-get update -y && sudo apt-get install -y {package}", timeout=3600)
+        except DeploymentError:
+            # Audit 2026-10-23 B-6: step 1 already purged every nvidia-*
+            # package, so a failed install leaves the machine with NO
+            # driver — reinstall the previously recorded package. The
+            # task still fails with the original error (TaskCancelled is
+            # not a DeploymentError, so a user cancel still propagates).
+            previous = (_ds.deployment_state.get()["snapshots"]["driver"]
+                        .get("previous_pkg") or "").strip()
+            if previous:
+                try:
+                    ctx.run_long(
+                        f"sudo apt-get update -y && sudo apt-get install -y {previous}",
+                        timeout=3600)
+                    ctx.log(f"Self-heal: reinstalled previous driver {previous} "
+                            f"(install of {package} failed).")
+                except DeploymentError as heal_err:
+                    ctx.log(
+                        f"Self-heal failed: {heal_err} — the machine has no "
+                        f"NVIDIA driver. Manual recovery: sudo apt-get "
+                        f"update -y && sudo apt-get install -y {previous}")
+            else:
+                ctx.log(
+                    f"warning: install of {package} failed after the purge and "
+                    "no previous driver is recorded — the machine has no "
+                    "NVIDIA driver. Manual recovery: sudo apt-get install "
+                    "-y <previous package>")
+            raise
         _ds.deployment_state.set_snapshot("driver", current_pkg=package)
     with ctx.manager._lock:
         ctx.task.status = "awaiting_reboot"

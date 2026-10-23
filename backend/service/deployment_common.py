@@ -76,6 +76,10 @@ INFLIGHT_DOMAINS: dict[str, tuple[str, ...]] = {
     "cuda": ("driver", "cuda"),
     "vllm": ("vllm", "rollback_vllm"),
     "rollback_vllm": ("vllm", "rollback_vllm"),
+    # audit 2026-10-23 B-5: one-way — a reboot must not hit the machine
+    # mid apt/uv install (the nohup job dies and dpkg is left half-
+    # configured); a pending reboot never blocks a pipeline.
+    "reboot": ("driver", "cuda", "vllm", "rollback_vllm"),
 }
 
 
