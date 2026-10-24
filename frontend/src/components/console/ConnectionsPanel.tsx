@@ -141,13 +141,15 @@ export const ConnectionsPanel = memo(function ConnectionsPanel() {
           </div>
         ) : (
           // table-fixed: the note edit input (or long notes) must not be able
-          // to reflow the table and squeeze the columns in front
+          // to reflow the table and squeeze the columns in front. The
+          // Details column keeps a fixed w-20; the other four columns carry
+          // no width and share the remaining space equally.
           <table className="w-full table-fixed text-sm">
             <colgroup>
-              <col className="w-32" />
-              <col className="w-20" />
-              <col className="w-24" />
-              <col className="w-64" />
+              <col />
+              <col />
+              <col />
+              <col />
               <col className="w-20" />
             </colgroup>
             <thead className="sticky top-0 bg-bg-card">

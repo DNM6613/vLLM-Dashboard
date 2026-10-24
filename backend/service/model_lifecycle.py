@@ -20,6 +20,7 @@ from ..console.session_manager import console_session_manager
 from ..executor.remote.process_ops import _STOP_SELF_SENTINEL, _VLLM_MAIN_PATTERN, _ps_filter_self
 from ..schemas.model import ModelStatus
 from . import model_service as _ms
+from .vllm_access_log import vllm_access_log
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +255,14 @@ async def _start_model(model_id: str) -> dict:
         _ms._verify_start_probe(model_id, server_config.host, target.port))
     _ms._start_probe_tasks.add(task)
     task.add_done_callback(_ms._start_probe_tasks.discard)
+
+    # Access-panel session boundary (2026-10-24 user ruling): every vLLM
+    # service (re)start restarts the per-IP stats — the previous instance's
+    # aggregates are dropped now, and the next poll skips the access log's
+    # pre-restart tail (the start point is persisted so a dashboard restart
+    # resumes the same session). Manual starts, stop-then-start switches,
+    # and watchdog auto-relaunches all funnel through here.
+    vllm_access_log.mark_session_start()
 
     return {
         "status": "loading",

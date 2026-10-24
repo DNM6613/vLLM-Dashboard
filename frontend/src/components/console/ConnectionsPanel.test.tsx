@@ -184,10 +184,17 @@ describe('ConnectionsPanel', () => {
     const table = screen.getByText('10.0.0.5').closest('table');
     // table-fixed: column widths come from the colgroup, not from cell
     // content — the note edit input (or long notes) cannot reflow the
-    // columns in front of it.
+    // columns in front of it. The Details column keeps a fixed w-20; the
+    // other four columns (IP / Requests / Last seen / Notes) carry no
+    // width class and share the remaining space equally.
     expect(table).toBeTruthy();
     expect(table!.className).toContain('table-fixed');
-    expect(table!.querySelectorAll('col')).toHaveLength(5);
+    const cols = table!.querySelectorAll('col');
+    expect(cols).toHaveLength(5);
+    for (let i = 0; i < 4; i++) {
+      expect(cols[i].className).not.toMatch(/\bw-\d+/);
+    }
+    expect(cols[4].className).toContain('w-20');
     fireEvent.click(screen.getByRole('button', { name: 'Notes' }));
     expect(screen.getByRole('textbox')).toBeTruthy();
   });

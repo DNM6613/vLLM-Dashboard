@@ -60,6 +60,39 @@ class TestStartModelProbe(unittest.IsolatedAsyncioTestCase):
             await model_service.start_model("m1")
         self.assertIn("already loading", str(ctx.exception))
 
+    async def test_start_restarts_access_log_session(self):
+        # 2026-10-24 user ruling: every vLLM (re)start restarts the access
+        # panel stats (previous instance's aggregates dropped, the poll
+        # skips the pre-restart tail).
+        from backend.service.vllm_access_log import vllm_access_log
+        fake_model = SimpleNamespace(status=ModelStatus.STOPPED)
+        executor = MagicMock()
+        executor._get_activate_cmd.return_value = ""
+        server_cfg = ServerConfig(host="10.131.1.7")
+        with patch.object(model_service.state_machine, "get_model",
+                          return_value=fake_model), \
+             patch.object(model_service.state_machine, "update_model_status",
+                          return_value=True), \
+             patch.object(model_service.state_machine, "set_current_model",
+                          return_value=True), \
+             patch.object(model_service, "check_ssh_connectivity",
+                          return_value={"connected": True}), \
+             patch.object(model_service.launch_config_manager, "load_config",
+                          return_value=dict(LAUNCH_CFG)), \
+             patch.object(model_service, "get_remote_executor",
+                          return_value=executor), \
+             patch.object(model_service.config_manager, "get_config",
+                          return_value=server_cfg), \
+             patch.object(model_service, "resolve_api_target",
+                          side_effect=_resolve_target_guard), \
+             patch.object(model_service, "_verify_start_probe",
+                          new=AsyncMock()), \
+             patch.object(vllm_access_log, "mark_session_start") as mark:
+            result = await model_service.start_model("m1")
+            await asyncio.sleep(0)
+        self.assertEqual(result["status"], "loading")
+        mark.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
