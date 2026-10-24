@@ -93,10 +93,10 @@ def probe_cuda_repo_versions(executor) -> tuple[list[str], str]:
     """CUDA toolkits the NVIDIA apt repo offers (or the static list).
 
     Only versions with a CUDA_MIN_DRIVER entry are offered — toolkits
-    without a documented minimum driver (12.8 and older, or a future
-    version not yet indexed) would render as "—" rows with no compat
-    check (user ruling 2026-10-24). Order: newest first (the parse is
-    ascending — reversed here).
+    without a documented minimum driver (a future version not yet
+    indexed) would render as "—" rows with no compat check (user ruling
+    2026-10-24). Order: newest first (the parse is ascending — reversed
+    here).
 
     Returns (versions, source) with source "repo" (live index) or
     "fallback" (static list — probe failed, negative window active, or

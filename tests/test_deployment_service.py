@@ -171,14 +171,16 @@ class TestValidationHelpers(unittest.TestCase):
 
     def test_compat_tables(self):
         # NVIDIA CUDA Toolkit release notes, "Corresponding Driver Versions"
-        # (Linux x86_64, GA rows): 12.9 >= 575, 13.0 >= 580, 13.1 >= 590,
-        # 13.2 >= 595, 13.3 >= 610; 13.4 corresponds to the R615 driver.
+        # (Linux x86_64, GA rows): 12.5 >= 555, 12.6 >= 560, 12.8 >= 570,
+        # 12.9 >= 575, 13.0 >= 580, 13.1 >= 590, 13.2 >= 595, 13.3 >= 610;
+        # 13.4 corresponds to the R615 driver.
         # vLLM's default wheel is built with CUDA 12.9, so VLLM_MIN_DRIVER
         # stays 575. DRIVER_MIN_CUDA stays empty: drivers are backward
         # compatible with older toolkits.
         self.assertEqual(ds.CUDA_MIN_DRIVER, {
-            "12.9": 575, "13.0": 580, "13.1": 590,
-            "13.2": 595, "13.3": 610, "13.4": 615,
+            "12.5": 555, "12.6": 560, "12.8": 570,
+            "12.9": 575, "13.0": 580, "13.1": 590, "13.2": 595,
+            "13.3": 610, "13.4": 615,
         })
         self.assertEqual(ds.VLLM_MIN_DRIVER, 575)
         self.assertEqual(ds.DRIVER_MIN_CUDA, {})
@@ -192,7 +194,7 @@ class TestValidationHelpers(unittest.TestCase):
         self.assertEqual(ds.driver_max_cuda(580), "13.0")
         self.assertEqual(ds.driver_max_cuda(590), "13.1")
         self.assertEqual(ds.driver_max_cuda(575), "12.9")
-        self.assertEqual(ds.driver_max_cuda(570), "")
+        self.assertEqual(ds.driver_max_cuda(570), "12.8")
         self.assertEqual(ds.driver_max_cuda(None), "")
         self.assertEqual(ds.driver_max_cuda(620), "13.4")
 
@@ -598,8 +600,9 @@ class TestCudaEndpoint(unittest.TestCase):
         # 26.04 target (user-verified: 12.9/13.0).
         self.assertEqual(body["versions"], ["12.9", "13.0", "13.2"])
         self.assertEqual(body["min_driver"], {
-            "12.9": 575, "13.0": 580, "13.1": 590,
-            "13.2": 595, "13.3": 610, "13.4": 615,
+            "12.5": 555, "12.6": 560, "12.8": 570,
+            "12.9": 575, "13.0": 580, "13.1": 590, "13.2": 595,
+            "13.3": 610, "13.4": 615,
         })
         # installed 595 driver tops out at CUDA 13.2; no driver selected yet
         self.assertEqual(body["driver_max_cuda"], "13.2")

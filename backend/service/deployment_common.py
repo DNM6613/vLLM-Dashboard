@@ -16,13 +16,15 @@ from ..config.server_config import has_parent_path_segment
 # ---- compatibility rules (spec) -------------------------------------------
 # Minimum driver major per CUDA toolkit version — NVIDIA CUDA Toolkit release
 # notes, "Corresponding Driver Versions" table (Linux x86_64, GA rows):
-# 12.9 >= 575.51.03, 13.0 >= 580.65.06, 13.1 >= 590.44.01, 13.2 >= 595.45.04,
+# 12.5 >= 555.42.02, 12.6 >= 560.28.03, 12.8 >= 570.26, 12.9 >= 575.51.03,
+# 13.0 >= 580.65.06, 13.1 >= 590.44.01, 13.2 >= 595.45.04,
 # 13.3 >= 610.43.02; CUDA 13.4 corresponds to the R615 driver branch (13.4.1
 # notes). A toolkit runs on any driver at/above its minimum, so a driver's
 # practical CUDA ceiling is the highest version it meets — driver 595 tops
 # out at 13.2 (verified 2026-09-18: nvidia-smi reports "CUDA Version: 13.2"
 # for 595.91.07).
 CUDA_MIN_DRIVER: dict[str, int] = {
+    "12.5": 555, "12.6": 560, "12.8": 570,
     "12.9": 575, "13.0": 580, "13.1": 590, "13.2": 595,
     "13.3": 610, "13.4": 615,
 }

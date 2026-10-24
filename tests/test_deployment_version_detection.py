@@ -94,9 +94,8 @@ class TestProbeCudaRepoVersions(unittest.TestCase):
         self.assertEqual(len(ex.calls), 1)
 
     def test_unlisted_versions_hidden_and_newest_first(self):
-        # 12.8/12.5 have no CUDA_MIN_DRIVER entry and 13.9 is not indexed
-        # yet — all excluded (user ruling 2026-10-24); the survivors are
-        # ordered newest first
+        # 13.9 is not indexed in CUDA_MIN_DRIVER — excluded (user ruling
+        # 2026-10-24); the indexed versions are ordered newest first
         ex = _FakeExecutor(stdout="\n".join([
             "Package: cuda-toolkit-12-8",
             "Package: cuda-toolkit-12-5",
@@ -105,7 +104,8 @@ class TestProbeCudaRepoVersions(unittest.TestCase):
             "Package: cuda-toolkit-13-4",
         ]))
         versions, source = vp.probe_cuda_repo_versions(ex)
-        self.assertEqual((versions, source), (["13.4", "13.0"], "repo"))
+        self.assertEqual(
+            (versions, source), (["13.4", "13.0", "12.8", "12.5"], "repo"))
 
     def test_probe_failure_falls_back_with_negative_window(self):
         ex = _FakeExecutor(success=False)
