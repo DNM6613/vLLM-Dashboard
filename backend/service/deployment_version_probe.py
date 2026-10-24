@@ -35,7 +35,7 @@ from ..executor.remote.deployment_commands import (
     CUDA_REPO_VERSIONS_CMD,
     parse_cuda_repo_versions,
 )
-from .deployment_common import _CUDA_VERSIONS
+from .deployment_common import _CUDA_VERSIONS, CUDA_MIN_DRIVER
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +92,12 @@ def reset_caches() -> None:
 def probe_cuda_repo_versions(executor) -> tuple[list[str], str]:
     """CUDA toolkits the NVIDIA apt repo offers (or the static list).
 
+    Only versions with a CUDA_MIN_DRIVER entry are offered — toolkits
+    without a documented minimum driver (12.8 and older, or a future
+    version not yet indexed) would render as "—" rows with no compat
+    check (user ruling 2026-10-24). Order: newest first (the parse is
+    ascending — reversed here).
+
     Returns (versions, source) with source "repo" (live index) or
     "fallback" (static list — probe failed, negative window active, or
     serving the cached value while another probe is in flight).
@@ -108,6 +114,8 @@ def probe_cuda_repo_versions(executor) -> tuple[list[str], str]:
     except Exception:
         logger.exception("CUDA repo version probe failed")
         versions = []
+    versions = [v for v in versions if v in CUDA_MIN_DRIVER]
+    versions.reverse()
     if versions:
         _cuda_cache.commit((versions, "repo"))
         return (versions, "repo")

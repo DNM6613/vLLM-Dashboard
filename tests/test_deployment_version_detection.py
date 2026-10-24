@@ -86,12 +86,26 @@ class TestProbeCudaRepoVersions(unittest.TestCase):
         ex = _FakeExecutor(stdout="Package: cuda-toolkit-13-2\n"
                                    "Package: cuda-toolkit-13-4\n")
         versions, source = vp.probe_cuda_repo_versions(ex)
-        self.assertEqual((versions, source), (["13.2", "13.4"], "repo"))
+        self.assertEqual((versions, source), (["13.4", "13.2"], "repo"))
         self.assertEqual(len(ex.calls), 1)
         # cache hit: no second SSH round-trip (the 5 s poll must not ride it)
         versions, source = vp.probe_cuda_repo_versions(ex)
         self.assertEqual(source, "repo")
         self.assertEqual(len(ex.calls), 1)
+
+    def test_unlisted_versions_hidden_and_newest_first(self):
+        # 12.8/12.5 have no CUDA_MIN_DRIVER entry and 13.9 is not indexed
+        # yet — all excluded (user ruling 2026-10-24); the survivors are
+        # ordered newest first
+        ex = _FakeExecutor(stdout="\n".join([
+            "Package: cuda-toolkit-12-8",
+            "Package: cuda-toolkit-12-5",
+            "Package: cuda-toolkit-13-9",
+            "Package: cuda-toolkit-13-0",
+            "Package: cuda-toolkit-13-4",
+        ]))
+        versions, source = vp.probe_cuda_repo_versions(ex)
+        self.assertEqual((versions, source), (["13.4", "13.0"], "repo"))
 
     def test_probe_failure_falls_back_with_negative_window(self):
         ex = _FakeExecutor(success=False)
@@ -222,7 +236,7 @@ class TestCudaEndpointVersions(unittest.TestCase):
         body = self._get_cuda(
             "13.0\n",
             "Package: cuda-toolkit-13-2\nPackage: cuda-toolkit-13-4\n")
-        self.assertEqual(body["versions"], ["13.2", "13.4"])
+        self.assertEqual(body["versions"], ["13.4", "13.2"])
         self.assertEqual(body["versions_source"], "repo")
 
     def test_repo_probe_failure_degrades_to_static_list(self):
