@@ -33,6 +33,16 @@ export function VllmTab({
     return <div className="text-xs text-text-muted py-6 text-center">{t('Loading...')}</div>;
   }
 
+  // PyPI version picker: the backend probes pypi.org (TTL-cached); an empty
+  // list (offline) keeps the legacy free-text input. '__custom' is the
+  // select's sentinel for "type a version that is not in the list".
+  const available = info.available_versions ?? [];
+  const hasVersionList = available.length > 0;
+  const inList = version !== 'latest' && available.includes(version);
+  const selectValue = version === 'latest'
+    ? (available[0] ?? '')
+    : (inList ? version : '__custom');
+
   const effVenv = venvName.trim() || info.venv_name || '.vllm';
   const spec = version.trim() && version.trim() !== 'latest' ? `vllm==${version.trim()}` : 'vllm';
   const mirrorFlag = pypiMirror ? ` --index-url ${pypiMirror}` : '';
@@ -103,23 +113,53 @@ export function VllmTab({
         <label className="flex items-center gap-2 text-xs cursor-pointer">
           <input type="radio" name="vllm-version" checked={version === 'latest'}
             onChange={() => setVersion('latest')} className="accent-sky-400" />
-          <span>{t('Latest stable (PyPI)')}</span>
+          <span>
+            {t('Latest stable (PyPI)')}
+            {info.latest_version ? ` · ${info.latest_version}` : ''}
+          </span>
         </label>
-        <label className="flex items-center gap-2 text-xs">
-          <input type="radio" name="vllm-version" checked={version !== 'latest'}
-            onChange={() => setVersion((v) => (v === 'latest' ? '0.29.0' : v))} className="accent-sky-400" />
-          <span className="flex items-center gap-2 flex-1">
-            {t('Pinned version')}
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <input type="radio" name="vllm-version" checked={version !== 'latest'}
+              onChange={() => setVersion((v) => (v === 'latest' ? (available[0] || '0.29.0') : v))}
+              className="accent-sky-400" />
+            <span>{t('Pinned version')}</span>
+          </label>
+          {hasVersionList ? (
+            <>
+              <select
+                aria-label={t('Pinned version')}
+                value={selectValue}
+                disabled={version === 'latest'}
+                onChange={(e) => setVersion(e.target.value === '__custom' ? '' : e.target.value)}
+                className={`${FIELD_CLASS} !w-40 !font-sans`}
+              >
+                {available.map((v) => <option key={v} value={v}>{v}</option>)}
+                <option value="__custom">{t('Other…')}</option>
+              </select>
+              {version !== 'latest' && !inList && (
+                <input
+                  type="text"
+                  aria-label={t('Custom version')}
+                  value={version}
+                  onChange={(e) => setVersion(e.target.value.replace(/[^0-9.]/g, ''))}
+                  placeholder="0.29.0"
+                  className={`${FIELD_CLASS} !w-40`}
+                />
+              )}
+            </>
+          ) : (
             <input
               type="text"
+              aria-label={t('Pinned version')}
               value={version === 'latest' ? '' : version}
               onChange={(e) => setVersion(e.target.value.replace(/[^0-9.]/g, ''))}
               placeholder="0.29.0"
               className={`${FIELD_CLASS} !w-40`}
               disabled={version === 'latest'}
             />
-          </span>
-        </label>
+          )}
+        </div>
       </div>
 
       {/* CUDA runtime — auto-bound to the effective CUDA, not selectable */}

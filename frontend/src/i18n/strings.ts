@@ -340,6 +340,10 @@ export const ZH: Record<string, string> = {
   'Currently installed: vLLM {version}': '当前已安装：vLLM {version}',
   'Latest stable (PyPI)': '最新稳定版（PyPI）',
   'Pinned version': '指定版本',
+  'Other…': '其他…',
+  'Custom version': '自定义版本',
+  'NVIDIA repo query failed — showing the built-in version list':
+    'NVIDIA 官方仓库查询失败 — 显示内置版本列表',
   'CUDA Runtime binding': 'CUDA Runtime 绑定',
   'Auto-bound: system CUDA runtime, {index} torch backend (matches CUDA {ver})':
     '自动绑定：系统 CUDA Runtime，{index} torch 后端（匹配 CUDA {ver}）',

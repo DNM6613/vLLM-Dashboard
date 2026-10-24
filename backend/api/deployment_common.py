@@ -13,18 +13,29 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from ..service import deployment_version_probe as version_probe
+from ..service.deployment_common import (
+    _CUDA_VERSIONS as _CUDA_VERSIONS,
+)
 from ..service.deployment_service import DeploymentError
 from . import deployment as _dep
 
-# Toolkits offered in the CUDA tab. Verified 2026-09-18: on the Ubuntu 26.04
-# target the ubuntu2604 repo only carries 13.3/13.4, the ubuntu2404 repo
-# carries 12.9–13.4 and its toolkits install cleanly on 26.04 (user-verified:
-# 12.9/13.0); the per-version keyring switch lives in
-# deployment_pipelines_vllm._run_cuda. Only versions with a torch wheel
-# channel on download.pytorch.org are offered — no cu131/cu133 channels exist
-# and cu134 ships no torch wheels (13.1/13.3/13.4 remain reachable via the
-# custom field, which binds the cu130 torch index).
-_CUDA_VERSIONS = ["12.9", "13.0", "13.2"]
+
+async def _cuda_versions_dynamic(executor) -> tuple[list[str], str]:
+    """Live NVIDIA repo toolkit list (TTL-cached) or the static fallback.
+
+    /cuda is polled every 5 s while the modal is open, so the repo fetch
+    must not ride the poll — the probe module's cache + in-flight claim
+    bound it. Any failure (stalled SSH, CDN down, unparseable index)
+    degrades to the static list with source "fallback" so the tab always
+    renders; the wall-clock cap keeps a wedged probe from holding the
+    endpoint (same posture as _probe_in_thread).
+    """
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(version_probe.probe_cuda_repo_versions, executor), 75)
+    except Exception:
+        return list(_CUDA_VERSIONS), "fallback"
 
 
 def _error_to_http(e: DeploymentError) -> HTTPException:

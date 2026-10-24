@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..executor.remote.deployment_ops import CUDA_VERSION_PROBE
 from ..service import deployment_service as ds
+from ..service import deployment_version_probe as version_probe
 from ..service.deployment_service import (
     DRIVER_MIN_CUDA,
     VLLM_MIN_DRIVER,
@@ -23,7 +24,7 @@ from ..service.deployment_service import (
 )
 from . import deployment as _dep
 from .deployment_common import (
-    _CUDA_VERSIONS,
+    _cuda_versions_dynamic,
     _disk_free_gb,
     _driver_sort_key,
     _error_to_http,
@@ -220,8 +221,12 @@ async def get_cuda():
         toolkit = ""
     selected_pkg = state["selected"].get("driver", "")
     selected_major = ds._driver_pkg_major(selected_pkg)
+    # Live NVIDIA repo toolkit list (TTL-cached); the static list only on
+    # probe failure, flagged by versions_source so the UI can say so.
+    versions, versions_source = await _cuda_versions_dynamic(executor)
     return {
-        "versions": list(_CUDA_VERSIONS),
+        "versions": versions,
+        "versions_source": versions_source,
         "min_driver": ds.CUDA_MIN_DRIVER,
         "selected": state["selected"].get("cuda", ""),
         "install_system": bool(state["selected"].get("cuda_install_system", False)),
@@ -261,10 +266,19 @@ async def get_vllm():
     if not env_info.get("success"):
         raise HTTPException(status_code=500, detail=env_info.get("error") or "vLLM env query failed")
     state = ds.deployment_state.get()
+    # PyPI release list for the version picker (TTL-cached; [] offline —
+    # the UI keeps the manual version input). cuda_versions rides the
+    # CUDA repo probe's cache — never forces a probe of its own.
+    available = await asyncio.to_thread(
+        version_probe.get_vllm_available_versions,
+        state["mirrors"].get("pypi", ""))
+    cuda_versions = await asyncio.to_thread(version_probe.cached_cuda_versions_or_fallback)
     return {
         **env_info,
         "venv_name": _dep.config_manager.get_config().venv_name,
-        "cuda_versions": list(_CUDA_VERSIONS),
+        "cuda_versions": cuda_versions,
+        "available_versions": available,
+        "latest_version": available[0] if available else "",
         "selected": {
             "version": state["selected"].get("vllm_version", ""),
             "runtime": state["selected"].get("vllm_runtime", "builtin"),

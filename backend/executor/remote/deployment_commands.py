@@ -198,3 +198,44 @@ def parse_net_lines(sections: dict[str, str]) -> dict[str, str]:
         if len(parts) == 3 and parts[0] == "NET":
             net[parts[1]] = parts[2]
     return net
+
+
+# Read-only probe of the NVIDIA CUDA apt repo index: which cuda-toolkit
+# versions the repo actually offers. The repo host geo-redirects (301) to a
+# CDN, so curl must follow redirects; the plain `Packages` index may 404
+# (only Packages.gz served), hence the .gz fallback. The ubuntu2604 repo
+# only carries the newest toolkits (13.3/13.4), so the ubuntu2404 index is
+# always probed as well — its toolkits install cleanly on newer releases
+# (the same keyring split the install pipeline uses). Filtering runs
+# remotely so only matched lines cross the SSH channel; the parser
+# re-validates (apt names the toolkit `cuda-toolkit-X-Y`, dash-separated).
+CUDA_REPO_VERSIONS_CMD = (
+    "BASE=https://developer.download.nvidia.com/compute/cuda/repos; "
+    "DISTRO=ubuntu$(. /etc/os-release 2>/dev/null && echo \"$VERSION_ID\" | tr -d '.'); "
+    "ARCH=$(dpkg --print-architecture 2>/dev/null); [ \"$ARCH\" = amd64 ] && ARCH=x86_64; "
+    "DISTS=ubuntu2404; "
+    "case \"$DISTRO\" in ubuntu2404|ubuntu) ;; *) DISTS=\"$DISTRO ubuntu2404\";; esac; "
+    "for D in $DISTS; do "
+    "{ curl -fsSL --max-time 15 \"$BASE/$D/$ARCH/Packages\" 2>/dev/null "
+    "|| { curl -fsSL --max-time 15 \"$BASE/$D/$ARCH/Packages.gz\" 2>/dev/null | gunzip -c; }; } "
+    "| grep -oE '^Package: cuda-toolkit-[0-9]+-[0-9]+$'; "
+    "done; echo VDB_REPO_DONE"
+)
+
+_CUDA_REPO_PKG_RE = re.compile(r"^Package: cuda-toolkit-(\d{1,2})-(\d{1,2})$")
+
+
+def parse_cuda_repo_versions(raw: str) -> list[str]:
+    """Repo index lines -> deduped, version-ascending CUDA toolkit list.
+
+    The remote command pre-filters, but the parser re-validates (exactly
+    two numeric components, dash-separated apt naming) so noisy output —
+    other cuda-* packages, single-component names, curl/apt noise — can
+    never reach the UI.
+    """
+    versions: set[str] = set()
+    for line in raw.splitlines():
+        m = _CUDA_REPO_PKG_RE.fullmatch(line.strip())
+        if m:
+            versions.add(f"{m.group(1)}.{m.group(2)}")
+    return sorted(versions, key=lambda v: tuple(int(p) for p in v.split(".")))

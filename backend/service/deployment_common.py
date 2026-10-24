@@ -35,6 +35,17 @@ VLLM_MIN_DRIVER = 575
 # stays empty; the binding direction is CUDA -> driver (CUDA_MIN_DRIVER).
 DRIVER_MIN_CUDA: dict[int, str] = {}
 
+# Static CUDA toolkit list — the fallback the CUDA tab offers when the live
+# NVIDIA repo probe fails (service/deployment_version_probe). Verified
+# 2026-09-18: on the Ubuntu 26.04 target the ubuntu2604 repo only carries
+# 13.3/13.4, the ubuntu2404 repo carries 12.9–13.4 and its toolkits install
+# cleanly on 26.04 (user-verified: 12.9/13.0); the per-version keyring
+# switch lives in deployment_pipelines_env._run_cuda. The CUDA tab used to
+# hard-code this list (only versions with a torch wheel channel on
+# download.pytorch.org were offered — no cu131/cu133 channels, cu134 ships
+# no torch wheels); the live repo probe supersedes it when it succeeds.
+_CUDA_VERSIONS: list[str] = ["12.9", "13.0", "13.2"]
+
 # ---- input validation ------------------------------------------------------
 DRIVER_PKG_RE = re.compile(r"^nvidia-driver-\d{3,4}(-[a-z0-9]+)*$")
 CUDA_VER_RE = re.compile(r"^\d{1,2}\.\d{1,2}$")

@@ -70,6 +70,12 @@ export function CudaTab({
         </div>
       )}
 
+      {info.versions_source === 'fallback' && (
+        <div className="text-xs text-warning">
+          {t('NVIDIA repo query failed — showing the built-in version list')}
+        </div>
+      )}
+
       <div className="border border-border rounded-lg overflow-hidden">
         <table className="w-full text-xs">
           <thead>

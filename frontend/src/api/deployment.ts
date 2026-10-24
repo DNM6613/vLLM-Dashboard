@@ -48,6 +48,9 @@ export interface Preflight {
 
 export interface CudaInfo {
   versions: string[];
+  // 'repo' = live NVIDIA apt repo probe; 'fallback' = static built-in list
+  // (repo unreachable / unparseable) — the UI surfaces the distinction.
+  versions_source: 'repo' | 'fallback';
   min_driver: Record<string, number>;
   selected: string;
   install_system: boolean;
@@ -67,6 +70,10 @@ export interface VllmInfo {
   vllm_version: string;
   venv_name: string;
   cuda_versions: string[];
+  // Stable versions on PyPI (newest first, capped) — [] when the PyPI
+  // probe failed; the UI then keeps the free-text version input.
+  available_versions: string[];
+  latest_version: string;
   selected: { version: string; runtime: string; cuda: string };
   snapshot: { version: string; previous_version: string; venv: string };
 }
@@ -124,10 +131,11 @@ export const applyDriver = async (pkg: string): Promise<{ status: string; task_i
   return response.data;
 };
 
-// Backend worst case is 45s + 30s of serial SSH probes; the timeout must
-// cover that or the 504 "retry shortly" hint never reaches the UI.
+// Backend worst case is 45s + 30s of serial SSH probes plus the NVIDIA
+// repo version probe (capped ~75s; TTL-cached so it rarely rides a
+// request). The timeout must cover that or the 504 hint never reaches.
 export const getCudaInfo = async (): Promise<CudaInfo> => {
-  const response = await api.get('/deployment/cuda', { timeout: 90000 });
+  const response = await api.get('/deployment/cuda', { timeout: 180000 });
   return response.data;
 };
 
@@ -136,8 +144,10 @@ export const applyCuda = async (version: string, installSystem: boolean): Promis
   return response.data;
 };
 
+// Worst case: 45s vLLM env probe + the PyPI version fetch (≤30s, TTL-
+// cached so it rarely rides a request).
 export const getVllmInfo = async (): Promise<VllmInfo> => {
-  const response = await api.get('/deployment/vllm', { timeout: 60000 });
+  const response = await api.get('/deployment/vllm', { timeout: 90000 });
   return response.data;
 };
 
