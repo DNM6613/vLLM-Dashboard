@@ -23,6 +23,12 @@ export interface ChatStreamEvent {
 // generation budget); a parameter panel may come later.
 export const CHAT_MAX_TOKENS = 131072;
 
+// Audit 2026-10-29 P3-7: bound a single pending SSE frame. Legit frames are
+// one small JSON delta each; if delimiters never arrive (broken framing or a
+// hostile stream) buf would otherwise grow without bound. Far above any real
+// frame; the throw lands in useChat's catch → error entry.
+export const CHAT_MAX_PENDING_FRAME_CHARS = 1_000_000;
+
 /** Parse one SSE frame (``data: ...``); null when it carries no payload. */
 export function parseSseFrame(frame: string): ChatStreamEvent | null {
   const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
@@ -111,6 +117,9 @@ export async function* openChatStream(
       const { value, done } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
+      if (buf.length > CHAT_MAX_PENDING_FRAME_CHARS) {
+        throw new Error('vLLM 流式响应超过大小上限，已中断');
+      }
       let idx: number;
       while ((idx = buf.indexOf('\n\n')) !== -1) {
         const frame = buf.slice(0, idx);

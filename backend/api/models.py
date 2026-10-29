@@ -71,8 +71,14 @@ def get_launch_config(model_id: str = Query(..., max_length=MODEL_ID_MAX)):
 @router.post("/launch-config")
 def save_launch_config(config: dict):
     model_id = config.get("model_id")
-    if not model_id:
+    # Audit 2026-10-29 P3-3: same type/length discipline as the model_id
+    # query params on the other endpoints — a non-string value would reach
+    # the JSON config-file write unchecked, an overlong one bypasses
+    # MODEL_ID_MAX.
+    if not isinstance(model_id, str) or not model_id:
         raise HTTPException(status_code=400, detail="model_id is required")
+    if len(model_id) > MODEL_ID_MAX:
+        raise HTTPException(status_code=400, detail=f"model_id too long (max {MODEL_ID_MAX} chars)")
 
     allowed_keys = {"model_id", "start_command", "env_vars"}
     extra_keys = set(config.keys()) - allowed_keys
@@ -113,6 +119,20 @@ def get_download_status(log_file: str = Query(..., max_length=REPO_MAX),
         raise HTTPException(status_code=400, detail="Invalid log file path")
     if not posixpath.normpath(log_file).startswith('/tmp/model_download_'):
         raise HTTPException(status_code=400, detail="Invalid log file path")
+
+    # Audit 2026-10-29 P3-1: repo/save_path ride along to the same remote
+    # shell commands as on /download — apply the identical whitelist here
+    # (both are optional on this endpoint, so only validate when present).
+    if repo:
+        if not re.fullmatch(r'[\w.\-:@~/]+', repo):
+            raise HTTPException(status_code=400, detail="Invalid repo")
+        if repo.startswith("-"):
+            raise HTTPException(status_code=400, detail="Invalid repo: must not start with '-'")
+    if save_path:
+        if has_parent_path_segment(save_path) or len(save_path) > 512:
+            raise HTTPException(status_code=400, detail="Invalid save_path")
+        if not re.fullmatch(r'[\w/\-.~:@]+', save_path):
+            raise HTTPException(status_code=400, detail="Invalid save_path")
 
     return model_service.get_download_status(log_file, repo, save_path, hf_mirror)
 
@@ -192,6 +212,10 @@ def download_model(model_repo: str = Query(..., max_length=REPO_MAX),
 def stop_download(model_repo: str = Query(..., max_length=REPO_MAX)):
     if not re.fullmatch(r'[\w.\-:@~/]+', model_repo):
         raise HTTPException(status_code=400, detail="Invalid model_repo")
+    # Audit 2026-10-29 P3-2: align with /download — the char class allows a
+    # leading '-', which would surface as a CLI option downstream.
+    if model_repo.startswith("-"):
+        raise HTTPException(status_code=400, detail="Invalid model_repo: must not start with '-'")
     return model_service.stop_download(model_repo)
 
 @router.get("/cli-status")

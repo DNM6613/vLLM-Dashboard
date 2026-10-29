@@ -20,10 +20,13 @@ from backend.service import model_service as ms
 class _FakeChatResponse:
     """Stands in for httpx's streaming response context manager."""
 
-    def __init__(self, status_code=200, lines=(), error_body=b""):
+    def __init__(self, status_code=200, lines=(), error_body=b"", chunks=None):
         self.status_code = status_code
         self._lines = list(lines)
         self._error_body = error_body
+        # Explicit raw byte chunks (override lines) — for streams whose
+        # SSE framing the proxy must reassemble itself.
+        self._chunks = chunks
 
     async def __aenter__(self):
         return self
@@ -31,9 +34,13 @@ class _FakeChatResponse:
     async def __aexit__(self, *exc):
         return False
 
-    async def aiter_lines(self):
-        for line in self._lines:
-            yield line
+    async def aiter_bytes(self):
+        if self._chunks is not None:
+            for chunk in self._chunks:
+                yield chunk
+        else:
+            for line in self._lines:
+                yield line.encode("utf-8") + b"\n"
 
     async def aread(self):
         return self._error_body
@@ -158,6 +165,75 @@ class TestStreamChat(_ChatBase):
         self.assertEqual(len(frames), 1)
         parsed = json.loads(frames[0][len("data: "):])
         self.assertIn("no route", parsed["error"]["message"])
+
+    def test_oversized_stream_aborts_with_error_frame(self):
+        # Audit 2026-10-29 P2-4: a runaway upstream must hit the total-size
+        # bound — normal frames flow, then ONE error frame, then nothing.
+        # Byte semantics (P3-4/6): each chunk is 17 bytes + "\n" = 18; cap
+        # 45 → chunks 1-2 fit (36), chunk 3 (54) crosses → abort.
+        lines = [f'data: {{"chunk":{i}}}' for i in range(10)]
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeChatResponse(lines=lines))
+        with patch.object(mc, "CHAT_MAX_STREAM_BYTES", 45):
+            frames = _consume(mc.stream_chat(client, self._target(), "served",
+                                             [{"role": "user", "content": "hi"}]))
+        self.assertEqual(len(frames), 3)
+        for frame in frames[:2]:
+            self.assertTrue(frame.startswith('data: {"chunk"'))
+        parsed = json.loads(frames[2][len("data: "):])
+        self.assertIn("上限", parsed["error"]["message"])
+
+    def test_stream_under_cap_streams_everything(self):
+        lines = [
+            'data: {"choices":[{"delta":{"content":"Hi"}}]}',
+            'data: [DONE]',
+        ]
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeChatResponse(lines=lines))
+        with patch.object(mc, "CHAT_MAX_STREAM_BYTES", 1000):
+            frames = _consume(mc.stream_chat(client, self._target(), "served",
+                                             [{"role": "user", "content": "hi"}]))
+        self.assertEqual(frames, [line + "\n\n" for line in lines])
+
+    def test_non_data_lines_count_toward_the_cap(self):
+        # Audit 2026-10-29 P3-6: comment/keep-alive lines are bytes the
+        # upstream sends too — they count toward the bound even though they
+        # are never forwarded.
+        lines = [": " + "x" * 40, 'data: {"a":1}']
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeChatResponse(lines=lines))
+        with patch.object(mc, "CHAT_MAX_STREAM_BYTES", 50):
+            frames = _consume(mc.stream_chat(client, self._target(), "served",
+                                             [{"role": "user", "content": "hi"}]))
+        # Chunk 1 = 42 + "\n" = 43 bytes ≤ 50 (dropped, not a data line);
+        # chunk 2 pushes the total to 57 > 50 → single error frame.
+        self.assertEqual(len(frames), 1)
+        parsed = json.loads(frames[0][len("data: "):])
+        self.assertIn("上限", parsed["error"]["message"])
+
+    def test_newlineless_giant_stream_aborts_at_the_cap(self):
+        # Audit 2026-10-29 P3-5: one giant "line" without newlines must hit
+        # the byte cap instead of ballooning the line buffer first.
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeChatResponse(
+            chunks=[b"x" * 60, b"y" * 60]))
+        with patch.object(mc, "CHAT_MAX_STREAM_BYTES", 100):
+            frames = _consume(mc.stream_chat(client, self._target(), "served",
+                                             [{"role": "user", "content": "hi"}]))
+        self.assertEqual(len(frames), 1)
+        parsed = json.loads(frames[0][len("data: "):])
+        self.assertIn("上限", parsed["error"]["message"])
+
+    def test_line_split_across_chunks_is_reassembled(self):
+        # The manual SSE splitter must rejoin a data line arriving in two
+        # network chunks, and still forward a trailing line whose stream
+        # ends without a final newline.
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeChatResponse(
+            chunks=[b'data: {"cho', b'ices":[]}\ndata: [DONE]']))
+        frames = _consume(mc.stream_chat(client, self._target(), "served",
+                                         [{"role": "user", "content": "hi"}]))
+        self.assertEqual(frames, ['data: {"choices":[]}\n\n', "data: [DONE]\n\n"])
 
 
 class TestChatEndpoint(_ChatBase):

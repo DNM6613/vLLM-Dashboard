@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { openChatStream, parseSseFrame } from './chat';
+import { CHAT_MAX_PENDING_FRAME_CHARS, openChatStream, parseSseFrame } from './chat';
 
 function streamFrom(chunks: string[]): ReadableStream<Uint8Array> {
   const enc = new TextEncoder();
@@ -106,6 +106,21 @@ describe('openChatStream', () => {
     const events = await drain(openChatStream('m1', [{ role: 'user', content: 'hi' }], 512, new AbortController().signal));
     expect(events).toHaveLength(1);
     expect(events[0].error).toBe('Failed to fetch');
+  });
+
+  it('throws when a single pending frame exceeds the size guard (P3-7)', async () => {
+    // One giant chunk without any frame delimiter: without the guard buf
+    // would grow without bound. The throw propagates to the consumer
+    // (useChat's catch surfaces it as the entry's error).
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      body: streamFrom(['x'.repeat(CHAT_MAX_PENDING_FRAME_CHARS + 1)]),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      drain(openChatStream('m1', [{ role: 'user', content: 'hi' }], 512, new AbortController().signal)),
+    ).rejects.toThrow('上限');
   });
 
   it('sends the stored API key as a header', async () => {

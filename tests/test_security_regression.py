@@ -180,6 +180,86 @@ class TestInstallStatusPathValidation(unittest.TestCase):
         executor.get_install_status.assert_called_once_with("hf", "/tmp/cli_install_hf.log")
 
 
+class TestDownloadParamValidation(unittest.TestCase):
+    """Audit 2026-10-29 P3-1/P3-2: /download/status and /download/stop must
+    apply the same repo/save_path whitelist as /download — the values ride
+    along to the same remote shell commands."""
+
+    def setUp(self):
+        from fastapi.testclient import TestClient
+
+        from backend.main import app
+        self.client = TestClient(app)
+        self.log = "/tmp/model_download_x.log"
+
+    def test_status_rejects_bad_repo_chars(self):
+        r = self.client.get("/api/v1/models/download/status",
+                            params={"log_file": self.log, "repo": "a b;rm"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_status_rejects_dash_repo(self):
+        r = self.client.get("/api/v1/models/download/status",
+                            params={"log_file": self.log, "repo": "--help"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_status_rejects_traversal_save_path(self):
+        r = self.client.get("/api/v1/models/download/status",
+                            params={"log_file": self.log, "repo": "org/m",
+                                    "save_path": "../etc"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_status_rejects_bad_save_path_chars(self):
+        r = self.client.get("/api/v1/models/download/status",
+                            params={"log_file": self.log,
+                                    "save_path": "/home/x;rm"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_status_allows_valid_params(self):
+        from unittest.mock import patch
+
+        from backend.service import model_service
+        with patch.object(model_service, "get_download_status",
+                          return_value={"status": "running"}) as m:
+            r = self.client.get("/api/v1/models/download/status",
+                                params={"log_file": self.log,
+                                        "repo": "org/model-1",
+                                        "save_path": "/home/uforce/models/m1"})
+        self.assertEqual(r.status_code, 200)
+        m.assert_called_once_with(self.log, "org/model-1",
+                                  "/home/uforce/models/m1", True)
+
+    def test_stop_rejects_dash_repo(self):
+        r = self.client.post("/api/v1/models/download/stop",
+                             params={"model_repo": "--help"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_stop_rejects_bad_repo_chars(self):
+        r = self.client.post("/api/v1/models/download/stop",
+                             params={"model_repo": "a b"})
+        self.assertEqual(r.status_code, 400)
+
+
+class TestLaunchConfigModelIdValidation(unittest.TestCase):
+    """Audit 2026-10-29 P3-3: the launch-config body's model_id gets the
+    same type/length discipline as the model_id query params."""
+
+    def setUp(self):
+        from fastapi.testclient import TestClient
+
+        from backend.main import app
+        self.client = TestClient(app)
+
+    def test_non_string_model_id_400(self):
+        r = self.client.post("/api/v1/models/launch-config",
+                             json={"model_id": ["not", "a", "string"]})
+        self.assertEqual(r.status_code, 400)
+
+    def test_overlong_model_id_400(self):
+        r = self.client.post("/api/v1/models/launch-config",
+                             json={"model_id": "m" * 129})
+        self.assertEqual(r.status_code, 400)
+
+
 class TestDocsAuthGate(unittest.TestCase):
     """B1: docs/openapi must not leak the API attack surface map."""
 

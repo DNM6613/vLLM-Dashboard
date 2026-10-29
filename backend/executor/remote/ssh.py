@@ -65,8 +65,11 @@ def build_ssh_client(
     connect_timeout = settings.SSH_CONNECT_TIMEOUT
 
     client = paramiko.SSHClient()
-    # Target is a user-configured trusted internal host; strict host-key
-    # verification is opt-in via settings.SSH_STRICT_HOST_KEY.
+    # Strict host-key verification is the DEFAULT (settings.SSH_STRICT_HOST_KEY
+    # defaults to True, audit 2026-10-29): first-seen hosts are recorded to
+    # data/ssh_known_hosts (TOFU) and every later connection is verified — a
+    # mismatch aborts the handshake. Setting the flag to false opts out
+    # (AutoAddPolicy, in-memory only) for a user-configured trusted internal host.
     sock = socket.create_connection((host, port), timeout=connect_timeout)
     # Keep the socket timeout through the SSH handshake: a half-dead sshd
     # (TCP up but no protocol banner) would otherwise block the handshake —

@@ -29,6 +29,15 @@ logger = logging.getLogger(__name__)
 # budget with their thinking tokens, so the default must fit both.
 CHAT_MAX_TOKENS_DEFAULT = 131072
 
+# Total-size bound on one proxied SSE stream (audit 2026-10-29 P2-4): a
+# runaway/compromised upstream must not stream unbounded bytes through the
+# dashboard. Counted in raw bytes over EVERY chunk (including non-data
+# lines — audit 2026-10-29 P3-6), so the bound is exact instead of the old
+# char-based estimate (P3-4: chars undercount multi-byte UTF-8). The cap
+# sits far above any legitimate generation (131072 max tokens ≈ a few MB of
+# SSE JSON); patchable in tests.
+CHAT_MAX_STREAM_BYTES = 64 * 1024 * 1024
+
 
 def _error_frame(message: str) -> str:
     return "data: " + json.dumps({"error": {"message": message}}, ensure_ascii=False) + "\n\n"
@@ -126,7 +135,31 @@ async def stream_chat(
                 logger.warning("chat: vLLM returned %s: %s", resp.status_code, detail)
                 yield _error_frame(f"vLLM 接口错误 {resp.status_code}: {detail}")
                 return
-            async for line in resp.aiter_lines():
+            # Audit 2026-10-29 P3-4/5/6: iterate raw bytes instead of
+            # aiter_lines — the bound counts true bytes, a single giant
+            # newline-less "line" can no longer balloon httpx's line buffer
+            # before the cap is checked (P3-5), and non-data lines count
+            # toward the bound too (P3-6). SSE framing is reassembled
+            # manually: forward data: lines verbatim, drop the rest.
+            streamed_bytes = 0
+            buf = b""
+            async for chunk in resp.aiter_bytes():
+                streamed_bytes += len(chunk)
+                if streamed_bytes > CHAT_MAX_STREAM_BYTES:
+                    logger.warning(
+                        "chat: SSE stream exceeded %d bytes; aborting",
+                        CHAT_MAX_STREAM_BYTES)
+                    yield _error_frame("vLLM 流式响应超过大小上限，已中断")
+                    return
+                buf += chunk
+                while b"\n" in buf:
+                    line_bytes, buf = buf.split(b"\n", 1)
+                    line = line_bytes.decode("utf-8", "replace").rstrip("\r")
+                    if line.startswith("data:"):
+                        yield line + "\n\n"
+            # Trailing line when the stream ends without a final newline.
+            if buf:
+                line = buf.decode("utf-8", "replace").rstrip("\r")
                 if line.startswith("data:"):
                     yield line + "\n\n"
     except asyncio.CancelledError:
