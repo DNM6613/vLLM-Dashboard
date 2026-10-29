@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fmtInt, fmtNum, fmtPct, formatSize } from './format';
+import { fmtDateTime, fmtInt, fmtNum, fmtPct, formatSize } from './format';
 
 describe('formatSize', () => {
   it('null/NaN → N/A', () => {
@@ -82,5 +82,17 @@ describe('fmtInt', () => {
   it('整数 → 原样', () => {
     expect(fmtInt(60)).toBe('60');
     expect(fmtInt(0)).toBe('0');
+  });
+});
+
+describe('fmtDateTime', () => {
+  it('后端 naive 本地时间 → YYYY-MM-DD HH:mm（按本地时区解析）', () => {
+    expect(fmtDateTime('2026-10-29T23:24:24')).toBe('2026-10-29 23:24');
+    expect(fmtDateTime('2026-01-02T03:04:00')).toBe('2026-01-02 03:04');
+  });
+
+  it('非法输入 → N/A', () => {
+    expect(fmtDateTime('not-a-date')).toBe('N/A');
+    expect(fmtDateTime('')).toBe('N/A');
   });
 });

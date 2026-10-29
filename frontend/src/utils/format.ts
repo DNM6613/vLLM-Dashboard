@@ -23,3 +23,12 @@ export function fmtPct(v: number): string {
 export function fmtInt(v: number): string {
   return v.toFixed(0);
 }
+
+// "YYYY-MM-DD HH:mm" in local time; the backend sends naive local datetimes
+// (no timezone suffix), which Date parses as local — matching server time.
+export function fmtDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return 'N/A';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}

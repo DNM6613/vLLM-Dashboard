@@ -165,6 +165,13 @@ class StateMachine:
             model.status = status
             if status == ModelStatus.LOADING and prev_status != ModelStatus.LOADING:
                 model.loading_since = _now
+                # Last start timestamp shown on the model card: every start
+                # (manual, stop-then-start switch, watchdog relaunch) funnels
+                # through _start_model → this LOADING transition, so this is
+                # the single shared hook point. Unlike loading_since it is
+                # never cleared — it survives stop/failure and dashboard
+                # restarts (persisted in the state file).
+                model.last_started_at = _now
             elif status != ModelStatus.LOADING:
                 model.loading_since = None
             model.updated_at = _now

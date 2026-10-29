@@ -1,6 +1,6 @@
 import { memo } from 'react';
-import { Folder, FolderDown, RefreshCw, Loader2, Play, Square, Settings, Trash2, Gauge, HardDrive, AlertCircle, AlertTriangle, Copy, Globe, Key, Lock, LockOpen } from 'lucide-react';
-import { formatSize, fmtNum } from '../../utils/format';
+import { Folder, FolderDown, RefreshCw, Loader2, Play, Square, Settings, Trash2, Gauge, HardDrive, AlertCircle, AlertTriangle, Copy, Globe, Key, Lock, LockOpen, Clock } from 'lucide-react';
+import { formatSize, fmtDateTime, fmtNum } from '../../utils/format';
 import { copyText } from '../../utils/clipboard';
 import { ModelStatus } from '../../types';
 import type { ModelInfo, BenchmarkResult, DownloadProgressInfo } from '../../types';
@@ -194,6 +194,15 @@ export const ModelList = memo(function ModelList({
                       </span>
                       : <span className="text-text-muted shrink-0">{t('No record')}</span>;
                   })()}
+                  {model.last_started_at && (
+                    <span
+                      className="flex items-center gap-1 text-text-muted shrink-0"
+                      title={t('Last started')}
+                    >
+                      <Clock className="w-3 h-3" />
+                      <span className="font-mono">{fmtDateTime(model.last_started_at)}</span>
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-1 ml-4">

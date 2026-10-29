@@ -71,6 +71,7 @@ export const ZH: Record<string, string> = {
   'Benchmark tok/s (single 128-token run, server-side token count)':
     '测速 tok/s（单次 128 token 生成，服务端 token 计数）',
   'No record': '无记录',
+  'Last started': '最后启动',
   'Copy model name': '复制模型名称',
   'Copy model path': '复制模型路径',
   'Copy OpenAI endpoint': '复制 OpenAI 接口地址',

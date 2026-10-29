@@ -134,6 +134,7 @@ export interface ModelInfo {
   config?: { name: string; path: string };
   created_at?: string;
   updated_at?: string;
+  last_started_at?: string | null;
   error_message?: string;
   locked?: boolean;
   benchmark?: BenchmarkInfo | null;

@@ -63,3 +63,24 @@ describe('ModelList lock button', () => {
     expect(lockIdx).toBeLessThan(stopIdx);
   });
 });
+
+describe('ModelList last started', () => {
+  afterEach(cleanup);
+
+  it('shows the formatted last start time when present', () => {
+    render(
+      <I18nProvider>
+        <ModelList
+          models={[{ ...mk(ModelStatus.STOPPED), last_started_at: '2026-10-29T23:24:24' }]}
+          {...baseProps}
+        />
+      </I18nProvider>,
+    );
+    expect(screen.getByText('2026-10-29 23:24')).toBeTruthy();
+  });
+
+  it('omits the entry when the model was never started', () => {
+    renderRow(ModelStatus.STOPPED);
+    expect(screen.queryByText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)).toBeNull();
+  });
+});
