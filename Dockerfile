@@ -49,6 +49,12 @@ RUN mkdir -p /app/data && chown appuser:appuser /app/data
 ENV API_HOST=0.0.0.0
 ENV API_PORT=5174
 ENV STATIC_DIR=/app/static
+# Audit 2026-10-30: pin the container timezone to Asia/Shanghai. The backend
+# records naive local datetimes (last_started_at, created_at, benchmark.at …)
+# and the frontend renders them as-is in the user's local time — with the
+# default UTC container every timestamp showed 8h behind the user's clock.
+# tzdata ships in python:3.12-slim, so TZ alone is enough (no apt install).
+ENV TZ=Asia/Shanghai
 EXPOSE 5174
 
 USER appuser
