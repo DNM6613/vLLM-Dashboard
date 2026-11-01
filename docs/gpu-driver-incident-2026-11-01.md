@@ -1,73 +1,61 @@
 # GPU 主机（10.131.1.7）NVML 驱动不匹配事故报告
 
-**日期**：2026-11-01　**现象**：`nvidia-smi` 报 `Failed to initialize NVML: Driver/library version mismatch`；vLLM 启动时 torch 报 `Can't initialize NVML`（`torch/cuda/__init__.py:1112`）。**状态：未做任何修复操作，仅只读诊断。**
+**日期**：2026-11-01　**现象**：`nvidia-smi` 报 `Failed to initialize NVML: Driver/library version mismatch`；vLLM 启动时 torch 报 `Can't initialize NVML`（`torch/cuda/__init__.py:1112`）。
 
-## 结论
+**状态：已恢复（2026-11-01 12:12）**——DKMS 615.71.09 彻底注销 + 重启后，内核/用户态均为 615.78.08（自编译 P2P 内核模块 + .run 用户态），nvidia-smi 正常、P2P 4x4 全 OK、vLLM healthy（11-01 晚间复核确认）。**本报告初版的「修复方案 A/B」基于误判，整体作废，方案 A 严禁执行**（见下）。
 
-**10-31 17:22 有人在该机运行 NVIDIA 官方 `.run` 安装器安装 615.78.08，覆盖了 apt 包管理体系的用户态驱动库并放入了自己的内核模块；而系统 apt/DKMS 世界仍是 615.71.09。开机时 initramfs 携带的旧版 615.71.09 内核模块先加载，与 615.78.08 用户态库不匹配，导致 NVML 初始化失败。今天 11:53 的重启无效，正是因为 initramfs 里背的还是旧模块。**
+## 更正（2026-11-01 晚间复核）
 
-## 证据链
+初版「结论」把 10-31 17:22 的 .run 安装误判为「有人」的异常操作。实际：**那是 uforce 自己发起的计划性 P2P cutover（`~/p2p-install/phase2_cutover.sh`）**——本机驱动自 10-31 起有意切到「自编译 615.78.08-p2p 内核模块 + .run 615.78.08 用户态（`--no-kernel-modules`）」，**不走 apt/DKMS**（`~/p2p-install/NOTES.txt` 明确「重要: 本机驱动不走 apt/DKMS!」）。.run 不在 bash history 中是因为它由 cutover 脚本在内部调用。
+
+初版方案 A（恢复纯 apt 615.71.09）会摧毁该配置：`nvidia-uninstall` 移除当前在役的 615.78.08 用户态，用户态降回 615.71.09 后与自编译 615.78.08-p2p 内核模块再次失配，且 P2P 补丁体系整体失效（PCIe P2P 速率受限）。**方案 A 作废，勿执行。**
+
+## 结论（修订）
+
+事故**真正触发点**：11-01 06:30 `unattended-upgrade` 重建了 apt 侧 DKMS 615.71.09 模块（`updates/dkms/`），依 depmod "updates built-in" 优先级**遮蔽**了 `kernel/drivers/video/` 的自编译 615.78.08-p2p 模块；11:53 重启后内核加载 615.71.09，与 615.78.08 用户态失配 → NVML 初始化失败。12:12 `dkms remove nvidia/615.71.09 --all`（DKMS 彻底注销、`updates/dkms` 清空）+ 重启后恢复。
+
+## 时间线（全程证据）
+
+| 时间 | 事件 |
+|---|---|
+| 10-26 21:38 | 克隆 open-gpu-kernel-modules 到 `~/p2p-install/src-p2p`，产出 P2P 补丁件（`patch-libcuda-p2p.py` 等） |
+| 10-31 17:04 | 由 src-p2p 编译 P2P 补丁内核模块 615.78.08（`uforce@ai-server` 签名） |
+| 10-31 17:13 | 下载 `NVIDIA-Linux-x86_64-615.78.08.run`（529834675 字节） |
+| 10-31 17:16–17:36 | `phase2_cutover.sh`：抓取并停 vLLM（argv/env 存 bin）→ `.run --no-kernel-modules`（用户态 615.78.08）→ rmmod 旧模块 → `dkms remove nvidia/615.71.09 --all` → `make modules_install`（自编译模块 → `kernel/drivers/video/`，17:17:12）→ 中途一次 nvidia-smi 校验失败自动 rollback 后重走 → **`CUTOVER_STATUS: OK @ 2026-10-31_17:36:03 KMD=615.78.08-p2p P2P=OK vLLM=healthy`** |
+| 11-01 06:30 | `unattended-upgrade` 重建 DKMS 615.71.09（`updates/dkms/`），遮蔽自编译模块（**事故根因动作**） |
+| 11-01 11:53 | 重启 → 内核 615.71.09 + 用户态 615.78.08 → NVML 失配（初版报告诊断点） |
+| 11-01 12:12 | DKMS 615.71.09 彻底注销 + 重启 → 内核 = 615.78.08-p2p（自编译），与用户态一致 → vLLM 恢复（boot.log attempt 12:12:13） |
+| 11-01 20:16 | 再次重启（vLLM 随后 healthy，pid 117325 在跑） |
+| 11-01 晚间 | 复核：`nvidia-smi -L` 4× RTX 5060 Ti 正常；`topo -m` 相邻卡 PHB P2P；`modinfo -n nvidia` = `kernel/drivers/video/nvidia.ko`（615.78.08） |
+
+## 诊断点（11-01 中午）时点证据，存档
 
 | 项 | 实测值 | 说明 |
 |---|---|---|
-| 内核已加载模块 | 615.71.09 | `/proc/driver/nvidia/version` |
-| 磁盘内核模块（modinfo -n） | 615.78.08 | `/lib/modules/7.0.0-42-generic/kernel/drivers/video/nvidia.ko`（`.run` 放置，mtime 10-31 17:17） |
-| 用户态 NVML / CUDA 库 | 615.78.08 | `libnvidia-ml.so.615.78.08`、`libcuda.so.615.78.08`（mtime 10-31 17:22，**dpkg -S 查无所属** = 非 apt 安装） |
-| apt 包版本（driver/dkms/utils/compute 全套） | 615.71.09-0ubuntu0.26.04.2 | apt 候选也是 615.71.09，**apt 装不出 615.78** |
-| DKMS | nvidia/615.71.09 built | `updates/dkms/` 下为 DKMS 模块 |
-| initramfs（7.0.0-42-generic） | 含 `updates/dkms/nvidia.ko.zst` = 615.71.09 | 开机先加载它 → 与 615.78 用户态错位 |
-| `.run` 安装日志 | `/var/log/nvidia-installer.log`，10-31 17:22 "Installation of ... 615.78.08 is now complete" | 铁证 |
-| 最近重启 | 2026-11-01 11:53:00 | 重启后故障依旧（initramfs 未变） |
-| 卸载器 | `/usr/bin/nvidia-uninstall` 存在（指向 nvidia-installer） | `.run` 卸载通道可用 |
+| 内核已加载模块 | 615.71.09 | `/proc/driver/nvidia/version`（重启后由 unattended-upgrade 重建的 DKMS 模块加载） |
+| 磁盘内核模块（modinfo -n） | 615.78.08 | `/lib/modules/7.0.0-42-generic/kernel/drivers/video/nvidia.ko`（**cutover 的 make modules_install 于 17:17 放入，非 .run 所为**；.run 用 `--no-kernel-modules`） |
+| 用户态 NVML / CUDA 库 | 615.78.08 | `libnvidia-ml.so.615.78.08`、`libcuda.so.615.78.08`（mtime 10-31 17:22，dpkg -S 查无所属 = .run 安装，计划内） |
+| apt 包版本（7 包） | 615.71.09-0ubuntu0.26.04.2 | apt 记账与磁盘实际脱节（计划内）；现已全部 `apt-mark hold` |
+| DKMS（诊断点） | nvidia/615.71.09 built | 06:30 unattended-upgrade 重建；**12:12 已彻底注销，现为空** |
+| initramfs（诊断点） | 含 updates/dkms/nvidia.ko.zst = 615.71.09 | 11:53 重启加载旧模块的原因；注销 DKMS 后不再复发 |
+| .run 安装日志 | 10-31 17:22 "Installation of ... 615.78.08 is now complete" | 仅用户态（`--no-kernel-modules` 警告在案） |
+| 卸载器 | `/usr/bin/nvidia-uninstall` 存在 | **勿用**（会移除在役 615.78.08 用户态） |
 
-注：`.run` 操作不在 uforce 的 bash history 中（可能经 root 或其他途径执行）；当天 06:30 另有一轮 `unattended-upgrade`，但与 615.78.08 无关（候选版本不含此版）。
+## 根因机制（对照 open-gpu-kernel-modules 仓库与 NVIDIA 官方文档）
 
-## 根因机制（2026-11-01 研究，对照 open-gpu-kernel-modules 仓库与 NVIDIA 官方文档）
+1. **两条渠道的内核模块同源**：NVIDIA 内核模块开源（MIT/GPLv2 双许可），每个驱动版本随附源码发布于 `NVIDIA/open-gpu-kernel-modules` 仓库；570 起专有内核模块已移除，open 为唯一形态。DKMS 615.71.09 与自编译 615.78.08-p2p 是同一源码树的两个版本（后者含本地 P2P 补丁）。
+2. **内核/用户态版本严格绑定**：仓库 README 明确内核模块 "must be used with GSP firmware and user-space NVIDIA GPU driver components from a corresponding 615.78.08 driver release"。NVML 版本校验在内核与用户态版本不一致时硬错误（`Driver/library version mismatch`；torch 的 NVML 初始化同理）。
+3. **depmod 优先级是事故的放大器**：.run/自编译模块在 `kernel/drivers/video/`（built-in 内核目录），DKMS 模块在 `updates/dkms/`。depmod 默认搜索顺序 "updates built-in"（depmod.d(5)）——`updates/` 恒优先，同名模块先列者遮蔽后列者。unattended-upgrade 一旦重建 DKMS 模块，自编译模块立刻被遮蔽，重启后加载错版本。
+4. **本机的双渠道是有意设计而非意外混装**：自编译内核模块 + .run 用户态（`--no-kernel-modules`）是 open-gpu-kernel-modules README 官方支持的组合（"This can be achieved by installing the NVIDIA GPU driver from the .run file using the `--no-kernel-modules` option"）。风险点不在 .run 本身，而在 **apt 侧自动升级（unattended-upgrade）重新植入 DKMS 模块**打破 depmod 解析——11-01 06:30 即由此复发。
 
-1. **两条渠道的内核模块同源**：NVIDIA 内核模块开源（MIT/GPLv2 双许可），每个驱动版本随附源码发布于 `NVIDIA/open-gpu-kernel-modules` 仓库；570 起专有内核模块已移除，open 为唯一形态。本机 DKMS 615.71.09 与 .run 615.78.08 是同一源码树的两个版本快照——本事故与「开源 vs 闭源」无关，纯是版本错位 + 双渠道混装。
-2. **内核/用户态版本严格绑定**：open-gpu-kernel-modules README 明确内核模块 "must be used with GSP firmware and user-space NVIDIA GPU driver components from a corresponding 615.78.08 driver release"。NVML 版本校验方向不对称：内核模块新于用户态时向后兼容可用；**内核模块旧于用户态 = 硬错误** `Driver/library version mismatch`（torch 的 NVML 初始化同理）。本机正踩后者：内核 615.71.09 < 用户态 615.78.08。
-3. **.run 的内核模块从未被加载（depmod 优先级）**：.run 把 615.78.08 模块放在 `kernel/drivers/video/nvidia.ko`（built-in 内核目录），DKMS 的 615.71.09 模块在 `updates/dkms/nvidia.ko`。depmod 默认搜索顺序为 "updates built-in"（depmod.d(5)）——`updates/` 恒优先于 built-in 内核目录，同名模块先列者遮蔽后列者，modules.dep 中 `nvidia.ko` 恒解析到 `updates/dkms` 旧模块；615.78.08 模块在磁盘上只是「影子模块」。11:53 重启不愈还因 initramfs（事故前构建）携带的仍是 615.71.09 模块。
-4. **用户态被原地覆盖、记账脱钩**：.run 的用户态库（`libnvidia-ml.so.*` / `libcuda.so.*` / `nvidia-smi`）直接写入 `/usr/lib/x86_64-linux-gnu`——与 apt 包完全相同的路径，原地覆盖（实证：dpkg -S 查无所属、mtime = .run 安装时刻）。.run 不认识 dpkg 数据库，apt 也不知道自己的文件被换掉，两套记账结构性脱钩。NVIDIA 官方安装指南的立场：包管理器渠道（"distribution-specific packages"）优先推荐，.run 面向无包管理环境——在 apt/DKMS 管理的机器上跑 .run 即本次事故的根因动作。
+## 方案作废与现行运维基线
 
-## 修复方案（二选一，均已拟定、未执行）
-
-### 方案 A：恢复纯 apt 管理的 615.71.09（推荐）
-
-关键事实：**当前内核里加载的就是 615.71.09**，只需把用户态库恢复成同版本，`nvidia-smi` 立即恢复、vLLM 可马上拉起，**修复本身不需要重启**；重启仅用于固化 initramfs、防止下次开机复发，可择期执行。
-
-```bash
-# 1) 卸载 .run 残留（用户态库 + kernel/drivers/video/ 下的 615.78.08 模块）
-sudo nvidia-uninstall
-# 2) 恢复被覆盖的 615.71.09 用户态文件
-sudo apt-get install --reinstall libnvidia-compute-615-server libnvidia-cfg1-615-server libnvidia-common-615-server nvidia-utils-615-server
-# 3) 重建模块依赖与 initramfs
-sudo depmod -a && sudo update-initramfs -u
-# 4) 验证（此时不重启即应通过）
-nvidia-smi
-# 5) 择期重启一次，固化 initramfs，之后重启永远安全
-sudo reboot
-```
-
-优点：回到纯包管理，根治；本次事故的根源（混装）被清除。缺点：步骤稍多。
-
-### 方案 B：对齐到 .run 的 615.78.08
-
-**固有隐患（2026-11-01 研究，见上「根因机制」第 3 条）**：只要 DKMS 的 615.71.09 构建还在 `updates/dkms/`，depmod 默认优先级 "updates built-in" 使 `nvidia.ko` 恒解析旧模块——**必须先移除 DKMS 构建**，原样只跑 depmod 方案 B 执行完重启后内核仍是 615.71.09，故障不愈、错位依旧。
-
-```bash
-sudo dkms remove -m nvidia -v 615.71.09 --all   # 必须先执行，否则 depmod 恒解析 updates/dkms 旧模块
-sudo depmod -a
-sudo modprobe --show-depends nvidia            # 验证闸门：须解析到 kernel/drivers/video/nvidia.ko (615.78.08)
-sudo update-initramfs -u
-sudo reboot                                    # 验证通过才重启，加载新模块
-```
-
-**验证闸门**：`modprobe --show-depends nvidia` 若仍解析到 `updates/dkms`，不得继续重启。
-
-优点：命令最少。缺点：**runfile 与 apt/DKMS 混装保留**——runfile 模块不经 DKMS 管理，下次换内核不会自动重建（换内核即挂）；apt 侧驱动更新时大概率复发本次事故。
-
-## 共同注意项
-
-- 修复动作含 sudo 与（方案 B / 择期固化时）一次重启，会中断该机所有 GPU 任务。
-- 修复后验证：`nvidia-smi` 正常 → vLLM 服务拉起 → dashboard 三灯与 GPU 卡片恢复。
-- 建议补一条运维约束：该机驱动只经 apt/DKMS 安装（`nvidia-driver-615-server-open`），禁用 `.run` 安装器。
+- **方案 A（恢复 apt 615.71.09）：作废，勿执行**——方向与本机既定运维策略相反（见「更正」）。
+- 原方案 B 的 `dkms remove nvidia/615.71.09 --all` 前置步骤即 12:12 已完成的动作，现状即其结果。
+- 现行基线（权威说明以 `~/p2p-install/NOTES.txt` 为准，2026-11-01 更新）：
+  1. **驱动不走 apt/DKMS**：自编译 615.78.08-p2p 模块（`kernel/drivers/video/`）+ .run 615.78.08 用户态；DKMS 615.71.09 已注销；7 个 nvidia apt 包 `apt-mark hold`（libnvidia-cfg1/common/compute-615-server、nvidia-dkms-615-server、nvidia-dkms-615-server-open、nvidia-driver-615-server-open、nvidia-utils-615-server），防止 unattended-upgrade 复发。
+  2. **P2P**：`/etc/modprobe.d/nvidia.conf` 注入 `NVreg_RegistryDwords="RMForceStaticBar1=1;RMPcieP2PType=1;RMForceP2PType=1"`（static BAR1 + PCIe P2P）；vLLM 用 `NCCL_P2P_LEVEL=PHB`（实测 154 tok/s 最优，NODE 反而 140，勿改）。
+  3. **内核升级时**：自编译模块会丢失 → `cd ~/p2p-install/src-p2p && make modules -j32 && sudo make modules_install && sudo depmod -a $(uname -r)`。
+  4. **重启后若再遇 NVML 失配**：`head -2 /proc/driver/nvidia/version` 看内存里加载的版本；`modinfo -n nvidia` 若未解析到 `kernel/drivers/video/nvidia.ko`（615.78.08）→ `sudo depmod -a`，然后 `sudo systemctl stop nvidia-persistenced` + `rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia` + `modprobe nvidia nvidia_modeset nvidia_uvm nvidia_drm`，再 `bash /tmp/vllm_boot.sh` 重启 vLLM（/tmp 已清时用 `~/p2p-install/vllm_argv.bin` + `vllm_env.bin` 重放）。
+  5. 解除 hold 须另行评估（`sudo apt-mark unhold <包名>`）。
+- 残留小项：`/lib/firmware/nvidia/615.71.09` 固件残留（无害）；`src-p2p/patch-libcuda-p2p.py`（615.78.08 用户态 libcuda 二进制补丁，目标为混合代际 P2P）当前是否已施加于系统 libcuda 未逐一核验——CUTOVER_STATUS 与 NOTES 均记 P2P 4x4 全 OK，`topo -m` 现状 PHB P2P 在役。
