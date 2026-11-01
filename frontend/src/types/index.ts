@@ -44,7 +44,7 @@ export interface HardwareMetrics {
 export interface SoftwareInfo {
   os: string;
   gpu_driver: string;
-  cuda_toolkit: string;
+  cuda_runtime: string;
   vllm: string;
 }
 

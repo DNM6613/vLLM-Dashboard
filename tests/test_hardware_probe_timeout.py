@@ -29,7 +29,7 @@ class StalledExecutor:
 
     def get_software_info(self):
         time.sleep(0.5)
-        return {"os": "Ubuntu", "gpu_driver": "580", "cuda_toolkit": "", "vllm": ""}
+        return {"os": "Ubuntu", "gpu_driver": "580", "cuda_runtime": "", "vllm": ""}
 
     def get_nvidia_smi(self):
         time.sleep(0.5)

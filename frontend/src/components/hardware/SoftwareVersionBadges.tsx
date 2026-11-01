@@ -6,7 +6,7 @@ import { useI18n } from '../../i18n/context';
 const FIELDS: { key: keyof SoftwareInfo; labelKey: string }[] = [
   { key: 'os', labelKey: 'OS' },
   { key: 'gpu_driver', labelKey: 'GPU Driver' },
-  { key: 'cuda_toolkit', labelKey: 'CUDA' },
+  { key: 'cuda_runtime', labelKey: 'CUDA' },
   { key: 'vllm', labelKey: 'vLLM' },
 ];
 

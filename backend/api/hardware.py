@@ -164,5 +164,5 @@ async def get_software_info():
             raise HTTPException(status_code=504, detail=_PROBE_504_DETAIL) from e
     return {
         "os": "Unknown", "gpu_driver": "Unknown",
-        "cuda_toolkit": "Unknown", "vllm": "Unknown",
+        "cuda_runtime": "Unknown", "vllm": "Unknown",
     }

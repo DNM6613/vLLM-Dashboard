@@ -241,16 +241,15 @@ class MonitorOps:
         cmd = (
             "OS=$(grep -m1 '^PRETTY_NAME=' /etc/os-release | cut -d'\"' -f2); "
             "DRV=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1); "
-            "TOOLKIT=$(/usr/local/cuda/bin/nvcc --version 2>/dev/null | grep -oE 'release [0-9]+\\.[0-9]+' | head -1 | awk '{print $2}'); "
-            "[ -n \"$TOOLKIT\" ] || TOOLKIT=$(readlink -f /usr/local/cuda 2>/dev/null | sed -n 's|.*cuda-\\([0-9][0-9.]*\\)$|\\1|p'); "
+            "CUDA_RT=$( { " + activate + "python -c 'import torch;print(torch.version.cuda or \"\")' ; } 2>/dev/null); "
             "VLLM=$( { " + activate + "python -c 'import vllm;print(vllm.__version__)' ; } 2>/dev/null); "
-            "echo \"$OS|$DRV|$TOOLKIT|$VLLM\""
+            "echo \"$OS|$DRV|$CUDA_RT|$VLLM\""
         )
-        result = self.execute(cmd, timeout=30)
+        result = self.execute(cmd, timeout=60)
         if not result["success"]:
             return {
                 "os": "Unknown", "gpu_driver": "Unknown",
-                "cuda_toolkit": "Unknown", "vllm": "Unknown",
+                "cuda_runtime": "Unknown", "vllm": "Unknown",
             }
 
         parts = result["stdout"].strip().split("|")
@@ -261,6 +260,6 @@ class MonitorOps:
         return {
             "os": _at(0) or "Unknown",
             "gpu_driver": _at(1) or "Unknown",
-            "cuda_toolkit": _at(2) or "Unknown",
+            "cuda_runtime": _at(2) or "Unknown",
             "vllm": _at(3) or "Unknown",
         }
