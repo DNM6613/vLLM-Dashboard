@@ -24,6 +24,7 @@ import { LaunchConfigModal } from '../components/modals/LaunchConfigModal';
 import { BenchmarkModal } from '../components/modals/BenchmarkModal';
 import { terminalReset } from '../utils/terminalSink';
 import { deriveServerOn } from '../utils/powerState';
+import { lightColor, lightText } from '../utils/lightStatus';
 import { useSettledFlag } from '../hooks/useSettledFlag';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { IconButton } from '../components/ui/IconButton';
@@ -38,7 +39,17 @@ export function HomePage() {
   const { t, lang, toggleLang } = useI18n();
   const { theme, toggleTheme } = useTheme();
 
-  const { serverConfig, setServerConfig, savingConfig, configMessage, showServerConfig, setShowServerConfig, sshConnected, apiConnected, bmcStatus, serverVersion, shuttingDown, shutdownRequested, requestShutdownServer, confirmShutdownServer, cancelShutdownServer, powerOning, handlePowerOnServer, handleSaveConfig } = useServerConfig();
+  const { serverConfig, setServerConfig, savingConfig, configMessage, showServerConfig, setShowServerConfig, sshConnected, sshLight, apiLight, bmcStatus, serverVersion, shuttingDown, shutdownRequested, requestShutdownServer, confirmShutdownServer, cancelShutdownServer, powerOning, handlePowerOnServer, handleSaveConfig } = useServerConfig();
+
+  // v6: the three header lights show the NETWORK layer (fresh per-request
+  // probe, 3-strike ping debounce owned by the backend); the text is the
+  // specific service error. BMC light state is assembled from bmcStatus.
+  const bmcLight = {
+    net: bmcStatus.net_state ?? 'down',
+    code: bmcStatus.error_code ?? null,
+    connected: bmcStatus.connected,
+    probed: bmcStatus.net_state !== undefined,
+  };
 
   const fetchHardwareMetrics = useHardwareStore(s => s.fetchHardwareMetrics);
   const fetchSoftware = useHardwareStore(s => s.fetchSoftware);
@@ -111,8 +122,14 @@ export function HomePage() {
   // Power state is BMC-authoritative when the BMC is actually reporting
   // (powerFresh); a stale 'off' held while the BMC is unreachable must not
   // hide a machine that is actually up and serving, so deriveServerOn
-  // falls back to raw reachability otherwise.
-  const serverOn = deriveServerOn(bmcStatus, sshConnected, apiConnected);
+  // falls back to NETWORK-layer reachability otherwise (v6: ping state, not
+  // the service layer — a machine that is up but still booting sshd counts
+  // as on).
+  const serverOn = deriveServerOn(
+    bmcStatus,
+    sshLight.net !== 'down',   // SSH host answers ICMP (degraded still counts)
+    apiLight.net === 'up',     // vLLM API port answers TCP
+  );
 
   const serverOff = !serverOn;
   const powerOffShown = useSettledFlag(serverOff, 2000);
@@ -178,19 +195,22 @@ export function HomePage() {
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <SoftwareVersionBadges sshConnected={sshConnected} />
             <div className="flex items-center gap-3">
+              {/* v6: light color = network layer (fresh probe, 3-strike ping
+                  debounce on the backend); text = specific service error.
+                  No hover tooltip — the label carries the whole message. */}
               {bmcStatus.configured && (
                 <span role="status" className="flex items-center gap-1.5">
-                  <span className={`w-2 h-2 rounded-full ${bmcStatus.connected ? 'bg-success animate-pulse' : 'bg-danger'}`} />
-                  <span className="text-xs text-text-muted">BMC: {bmcStatus.connected ? t('Connected') : t('Disconnected')}</span>
+                  <span className={`w-2 h-2 rounded-full ${lightColor(bmcLight)}`} />
+                  <span className="text-xs text-text-muted">BMC: {lightText(bmcLight, t)}</span>
                 </span>
               )}
               <span role="status" className="flex items-center gap-1.5">
-                <span className={`w-2 h-2 rounded-full ${sshConnected ? 'bg-success animate-pulse' : 'bg-danger'}`} />
-                <span className="text-xs text-text-muted">SSH: {sshConnected ? t('Connected') : t('Disconnected')}</span>
+                <span className={`w-2 h-2 rounded-full ${lightColor(sshLight)}`} />
+                <span className="text-xs text-text-muted">SSH: {lightText(sshLight, t)}</span>
               </span>
               <span role="status" className="flex items-center gap-1.5">
-                <span className={`w-2 h-2 rounded-full ${apiConnected ? 'bg-success animate-pulse' : 'bg-danger'}`} />
-                <span className="text-xs text-text-muted">API: {apiConnected ? t('Connected') : t('Disconnected')}</span>
+                <span className={`w-2 h-2 rounded-full ${lightColor(apiLight)}`} />
+                <span className="text-xs text-text-muted">API: {lightText(apiLight, t)}</span>
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -220,7 +240,10 @@ export function HomePage() {
                 <IconButton
                   ariaLabel={serverOn ? t('Power OFF') : t('Power ON')}
                   onClick={() => (serverOn ? requestShutdownServer() : handlePowerOnClick())}
-                  disabled={shuttingDown || powerOning || powerOnWaiting || (!serverOn && !bmcStatus.connected)}
+                  // v6: disabled only when the BMC's own network layer is down
+                  // (3 consecutive failed pings) — a transient degraded ping
+                  // must not block a power action the user is about to take.
+                  disabled={shuttingDown || powerOning || powerOnWaiting || (bmcStatus.net_state === 'down')}
                   className={serverOn ? 'text-danger' : 'text-success'}
                 >
                   {shuttingDown || powerOning || powerOnWaiting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Power className="w-5 h-5" />}

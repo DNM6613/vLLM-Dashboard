@@ -138,11 +138,107 @@ class TestPowerOnServer(unittest.TestCase):
 
 
 class _FakeConfig:
-    def __init__(self, bmc_host="10.99.99.99"):
+    def __init__(self, bmc_host="10.99.99.99", bmc_rmcp_port=623):
         self.bmc_host = bmc_host
         self.bmc_username = "admin"
         self.bmc_password = "secret"
+        self.bmc_rmcp_port = bmc_rmcp_port
         self.host = "10.99.99.7"
+
+
+class TestCheckBmcStatusNetProbe(unittest.TestCase):
+    """v6: the BMC light's network layer is an ICMP ping (3-strike tracker);
+    a ping failure skips the ipmitool round trip entirely."""
+
+    def setUp(self):
+        self.ops = PowerOps()
+        self._saved_diag_ts = power_ops_mod._bmc_diag_last_ts
+        power_ops_mod._bmc_diag_last_ts = 0.0
+        power_ops_mod.bmc_ping.reset("10.99.99.99")
+
+    def tearDown(self):
+        power_ops_mod._bmc_diag_last_ts = self._saved_diag_ts
+        power_ops_mod.bmc_ping.reset("10.99.99.99")
+
+    def _patched(self, ping_rtt):
+        config = _FakeConfig()
+        return (
+            patch("backend.config.remote_client.config_manager.get_config",
+                  return_value=config),
+            patch.object(power_ops_mod.shutil, "which",
+                         return_value="/usr/bin/ipmitool"),
+            patch.object(power_ops_mod, "icmp_ping", return_value=ping_rtt),
+        )
+
+    def test_ping_down_skips_ipmitool(self):
+        run = patch.object(power_ops_mod.subprocess, "run")
+        p1, p2, p3 = self._patched(None)
+        with p1, p2, p3, run as run_mock:
+            out = self.ops.check_bmc_status()
+        # One failed ping → degraded (yellow), ipmitool never runs.
+        self.assertEqual(out["net_state"], "degraded")
+        self.assertEqual(out["error_code"], "ping")
+        self.assertFalse(out["connected"])
+        self.assertIsNone(out["power"])
+        run_mock.assert_not_called()
+        # Three consecutive failures → down (red).
+        with p1, p2, p3:
+            for _ in range(2):
+                out = self.ops.check_bmc_status()
+        self.assertEqual(out["net_state"], "down")
+        self.assertEqual(out["error_code"], "ping")
+        run_mock.assert_not_called()
+
+    def test_ping_ok_runs_ipmitool_with_rmcp_port(self):
+        class _Proc:
+            returncode = 0
+            stdout = "Chassis Power is on\n"
+            stderr = ""
+
+        run = patch.object(power_ops_mod.subprocess, "run")
+        p1, p2, p3 = self._patched(0.005)
+        with p1, p2, p3, run as run_mock:
+            run_mock.return_value = _Proc()
+            out = self.ops.check_bmc_status()
+        self.assertEqual(out["net_state"], "up")
+        self.assertEqual(out["error_code"], None)
+        self.assertTrue(out["connected"])
+        self.assertEqual(out["power"], "on")
+        self.assertIsInstance(out["ping_rtt_ms"], float)
+        args, kwargs = run_mock.call_args
+        cmd = args[0] if args else kwargs["cmd"]
+        self.assertIn("-P", cmd)
+        self.assertEqual(cmd[cmd.index("-P") + 1], "623")
+        self.assertEqual(kwargs["env"]["IPMI_PASSWORD"], "secret")
+
+    def test_ipmitool_auth_failure_classified_auth(self):
+        class _Proc:
+            returncode = 1
+            stdout = ""
+            stderr = "Unable to establish IPMI session (code 0x20)\n"
+
+        run = patch.object(power_ops_mod.subprocess, "run")
+        p1, p2, p3 = self._patched(0.005)
+        with p1, p2, p3, run as run_mock:
+            run_mock.return_value = _Proc()
+            out = self.ops.check_bmc_status()
+        self.assertEqual(out["net_state"], "up")
+        self.assertEqual(out["error_code"], "auth")
+        self.assertFalse(out["connected"])
+
+    def test_power_on_cmd_includes_rmcp_port(self):
+        class _Proc:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        config = _FakeConfig(bmc_rmcp_port=6666)
+        with patch.object(power_ops_mod.subprocess, "run") as run_mock:
+            run_mock.return_value = _Proc()
+            ok, _err = self.ops._ipmi_power_on(config, "/usr/bin/ipmitool")
+        self.assertTrue(ok)
+        cmd = run_mock.call_args[0][0]
+        self.assertEqual(cmd[cmd.index("-P") + 1], "6666")
 
 
 if __name__ == "__main__":

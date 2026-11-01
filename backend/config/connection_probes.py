@@ -176,30 +176,71 @@ class ConnectionProbeMixin:
             )
 
     async def get_health(self) -> dict[str, Any]:
+        """vLLM API light probe: TCP reach, then ``GET /health``.
+
+        Always returns a structured dict (the endpoint stays 200) so the
+        frontend can render the light's *specific* error instead of a
+        generic 503: ``reachable`` = TCP answered, ``service_ok`` = /health
+        returned 2xx, ``error_code`` = ``refused`` / ``timeout`` /
+        ``http:<status>`` / ``no_response``.
+        """
         if not self.config.host or self.config.host in ("localhost", "127.0.0.1"):
-            return {"status": "no server configured"}
+            return {"reachable": True, "service_ok": True,
+                    "error_code": None, "status": "no server configured"}
         target = _rc.resolve_api_target(self.config)
-        def _tcp_probe() -> bool:
+
+        def _tcp_probe() -> str:
+            # Distinguish refused (machine up, vLLM down) from timeout
+            # (machine down / network cut) — the light shows a different
+            # specific error for each.
             try:
                 with socket.create_connection(
                         (self.config.host, target.port),
                         timeout=HEALTH_REACH_PROBE_TIMEOUT):
-                    return True
+                    return "ok"
+            except ConnectionRefusedError:
+                return "refused"
             except OSError:
-                return False
+                return "timeout"
 
-        if not await asyncio.to_thread(_tcp_probe):
-            raise httpx.ConnectError(
-                f"host unreachable (TCP probe no response): "
-                f"{self.config.host}:{target.port}")
+        t0 = time.monotonic()
+        probe = await asyncio.to_thread(_tcp_probe)
+        latency_ms = round((time.monotonic() - t0) * 1000, 2)
+        if probe != "ok":
+            return {
+                "reachable": False,
+                "service_ok": False,
+                "error_code": probe,
+                "error": ("connection refused" if probe == "refused"
+                          else "connection timeout"),
+                "latency_ms": latency_ms,
+            }
         client = _rc.get_http_client()
-        response = await client.get(
-            f"{target.base_url}/health",
-            timeout=httpx.Timeout(5.0, connect=3.0),
-            headers=target.headers,
-        )
-        response.raise_for_status()
         try:
-            return response.json()
-        except Exception:
-            return {"status": "healthy"}
+            response = await client.get(
+                f"{target.base_url}/health",
+                timeout=httpx.Timeout(5.0, connect=3.0),
+                headers=target.headers,
+            )
+        except httpx.TimeoutException:
+            return {"reachable": True, "service_ok": False,
+                    "error_code": "no_response",
+                    "error": "vLLM /health request timed out",
+                    "latency_ms": round((time.monotonic() - t0) * 1000, 2)}
+        except httpx.HTTPError as e:
+            return {"reachable": True, "service_ok": False,
+                    "error_code": "no_response",
+                    "error": str(e)[:200],
+                    "latency_ms": round((time.monotonic() - t0) * 1000, 2)}
+        latency_ms = round((time.monotonic() - t0) * 1000, 2)
+        if 200 <= response.status_code < 300:
+            try:
+                data = response.json()
+            except Exception:
+                data = {"status": "healthy"}
+            return {"reachable": True, "service_ok": True,
+                    "error_code": None, "latency_ms": latency_ms, **data}
+        return {"reachable": True, "service_ok": False,
+                "error_code": f"http:{response.status_code}",
+                "error": f"vLLM /health returned HTTP {response.status_code}",
+                "latency_ms": latency_ms}

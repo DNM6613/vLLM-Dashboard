@@ -33,6 +33,7 @@ class ServerConfigUpdate(BaseModel):
     bmc_host: str | None = None
     bmc_username: str | None = None
     bmc_password: str | None = None
+    bmc_rmcp_port: int | None = None
     hf_token: str | None = None
 
 _CREDENTIAL_FIELDS = ("ssh_password", "bmc_password", "api_key", "hf_token")
@@ -70,14 +71,21 @@ async def get_server_status(refresh: bool = False):
 
 @router.get("/server/health")
 async def get_server_health():
+    """Always 200 with a structured payload (reachable/service_ok/error_code).
+
+    The API light renders the *specific* error from ``error_code``; a 503
+    would only tell the frontend "something failed" and force a generic
+    red light.
+    """
     try:
-        health = await config_manager.get_health()
-        return health
+        return await config_manager.get_health()
     except Exception as e:
         # Log the real error server-side; do not echo exception text
         # (may include addresses/probe details) back to the client.
         logger.warning("Server health check failed: %s", e)
-        raise HTTPException(status_code=503, detail="Server unreachable")
+        return {"reachable": False, "service_ok": False,
+                "error_code": "no_response", "error": "health probe failed",
+                "latency_ms": None}
 
 @router.get("/ssh/status")
 def get_ssh_status():

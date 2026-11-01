@@ -43,6 +43,10 @@ class ServerConfig(BaseModel):
     bmc_host: str = ""
     bmc_username: str = ""
     bmc_password: str | None = None
+    # RMCP+ (IPMI over UDP) port the BMC listens on. Injected into every
+    # ipmitool invocation via ``-P``; the IP 443/80 web ports are NOT
+    # probed — the BMC light's network layer is an ICMP ping.
+    bmc_rmcp_port: int = Field(623, ge=1, le=65535)
 
     venv_name: str = ".vllm"
 

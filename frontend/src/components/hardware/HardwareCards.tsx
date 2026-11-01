@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Cpu, MemoryStick, HardDrive, CircuitBoard } from 'lucide-react';
+import { Cpu, MemoryStick, HardDrive, CircuitBoard } from 'lucide-react';
 import { fmtPct, formatSize } from '../../utils/format';
 import { useHardwareStore } from '../../stores/hardware';
 import { useI18n } from '../../i18n/context';
@@ -21,18 +21,6 @@ function pcieMaxMbs(gpu: GPUInfo): number {
   return perLane * lanes;
 }
 
-// Audit 2026-10-22 FE-7: frames normally arrive every ~0.5–2 s (the backend
-// broadcaster polls at 0.5 s). 10 s without a frame while SSH is still
-// connected means the feed stalled (a deployment task occupies SSH so the
-// probe cannot run) — the frozen values must not keep looking "live".
-const HW_STALE_MS = 10_000;
-
-function formatClock(ms: number): string {
-  const d = new Date(ms);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
-
 // Bar colors (user ruling 2026-10-21): core / memory green, PCIe Rx/Tx blue
 // (default bg-accent), power / temp amber (bg-warning).
 export const HardwareCards = memo(function HardwareCards({ sshConnected }: HardwareCardsProps) {
@@ -40,18 +28,7 @@ export const HardwareCards = memo(function HardwareCards({ sshConnected }: Hardw
   const cpu = useHardwareStore(s => s.cpu);
   const memory = useHardwareStore(s => s.memory);
   const disk = useHardwareStore(s => s.disk);
-  const lastUpdated = useHardwareStore(s => s.lastUpdated);
   const { t } = useI18n();
-
-  // FE-7: a slow clock so the stale indicator appears/disappears (and its
-  // "last updated" time ages) without waiting for the next data frame.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!sshConnected) return;
-    const id = setInterval(() => setNow(Date.now()), 5000);
-    return () => clearInterval(id);
-  }, [sshConnected]);
-  const stale = sshConnected && lastUpdated != null && now - lastUpdated > HW_STALE_MS;
 
   const safeGpus = useMemo(() => (Array.isArray(gpus) ? gpus : []), [gpus]);
   const [lastGpus, setLastGpus] = useState<GPUInfo[]>([]);
@@ -65,12 +42,6 @@ export const HardwareCards = memo(function HardwareCards({ sshConnected }: Hardw
 
   return (
     <>
-      {stale && lastUpdated != null && (
-        <div className="mb-2 flex items-center gap-1.5 text-xs text-warning">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          <span>{t('Hardware data not updating — last updated {time}', { time: formatClock(lastUpdated) })}</span>
-        </div>
-      )}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-bg-card rounded-xl p-4 border border-border shadow-md">
           <div className="flex items-center gap-2 mb-2">

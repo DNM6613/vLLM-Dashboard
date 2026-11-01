@@ -62,20 +62,49 @@ export interface ServerConfig {
   bmc_host: string;
   bmc_username: string;
   bmc_password?: string;
+  /** RMCP+ (IPMI over UDP) port; injected into ipmitool via `-P`. */
+  bmc_rmcp_port?: number;
   hf_token?: string | null;
 }
+
+// Network-layer state of a header light, probed fresh per request on the
+// backend: "up" (green baseline), "degraded" (1–2 consecutive ICMP ping
+// failures — yellow), "down" (>= 3 consecutive failures — red).
+export type NetState = 'up' | 'degraded' | 'down';
+
+// Specific service/network error code driving the light's text label.
+// "http:<status>" covers vLLM /health non-2xx responses.
+export type ProbeErrorCode =
+  | 'not_configured'
+  | 'ping'
+  | 'timeout'
+  | 'refused'
+  | 'auth'
+  | 'no_response'
+  | (string & {});
 
 export interface ServerHealth {
   status: string;
   version?: string;
   mode?: string;
   uptime_seconds?: number;
+  /** v6: TCP 8000 answered. */
+  reachable?: boolean;
+  /** v6: /health returned 2xx. */
+  service_ok?: boolean;
+  error_code?: ProbeErrorCode | null;
+  error?: string;
+  latency_ms?: number;
 }
 
 export interface SshStatus {
   connected: boolean;
   error?: string;
   host_down?: boolean;
+  /** v6: per-request ICMP ping state (up / degraded / down). */
+  net_state?: NetState;
+  error_code?: ProbeErrorCode | null;
+  ping_rtt_ms?: number | null;
 }
 
 export interface BmcStatus {
@@ -86,6 +115,10 @@ export interface BmcStatus {
    *  last-known value held while the BMC is unreachable). */
   powerFresh?: boolean;
   error?: string;
+  /** v6: per-request ICMP ping state (up / degraded / down). */
+  net_state?: NetState;
+  error_code?: ProbeErrorCode | null;
+  ping_rtt_ms?: number | null;
 }
 
 export interface DownloadProgressInfo {

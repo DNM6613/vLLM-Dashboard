@@ -1,6 +1,15 @@
 export const ZH: Record<string, string> = {
   'Connected': '已连接',
   'Disconnected': '已断开',
+  // v6 header lights: specific error labels (no "未连接" prefix).
+  'Ping failed': 'ping 失败',
+  'Connection timeout': '连接超时',
+  'Port refused': '端口拒绝',
+  'Auth failed': '认证失败',
+  'No response': '无响应',
+  'Not configured': '未配置',
+  'HTTP {code}': 'HTTP {code}',
+  'RMCP Port': 'RMCP 端口',
   'Server Config': '服务器配置',
   'Power OFF': '关闭电源',
   'Power ON': '打开电源',

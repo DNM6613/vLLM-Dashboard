@@ -2,11 +2,12 @@ import concurrent.futures
 import logging
 import os
 import shutil
-import socket
 import subprocess
 import threading
 import time
 from typing import Any
+
+from .net_probe import bmc_ping, icmp_ping
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +23,16 @@ _bmc_diag_lock = threading.Lock()
 _bmc_diag_last: tuple[bool, bool] | None = None
 _bmc_diag_last_ts = 0.0
 
-def _bmc_diag(host: str, pre: str, pre_ms: float, budget: float,
-              ipmi: str, ipmi_ms: float, connected: bool, power: Any) -> None:
+def _bmc_diag(host: str, net_state: str, ipmi: str, ipmi_ms: float,
+              connected: bool, power: Any) -> None:
+    """Throttled (15 s) single-line BMC probe diagnostic.
+
+    ``ipmi`` is the ipmitool outcome (``ok`` / ``timeout`` / ``fail(rc)`` /
+    ``skip`` — skipped on the ping fast path when the host does not answer
+    ICMP).
+    """
     global _bmc_diag_last, _bmc_diag_last_ts
-    key = (connected, pre == "timeout")
+    key = (connected, ipmi == "timeout")
     now = time.monotonic()
     with _bmc_diag_lock:
         if (_bmc_diag_last is not None and _bmc_diag_last == key
@@ -34,9 +41,8 @@ def _bmc_diag(host: str, pre: str, pre_ms: float, budget: float,
         _bmc_diag_last = key
         _bmc_diag_last_ts = now
     logger.info(
-        "BMC probe diag: host=%s 443=%s(%.0fms) ipmi=%s(budget=%gs, %.0fms) "
-        "connected=%s power=%s",
-        host, pre, pre_ms, ipmi, budget, ipmi_ms, connected, power)
+        "BMC probe diag: host=%s ping=%s ipmi=%s(%.0fms) connected=%s power=%s",
+        host, net_state, ipmi, ipmi_ms, connected, power)
 
 class PowerOps:
 
@@ -61,6 +67,7 @@ class PowerOps:
             ipmitool_path, "-I", "lanplus",
             "-H", config.bmc_host,
             "-U", config.bmc_username or "admin",
+            "-P", str(config.bmc_rmcp_port),
             "-E",
             "chassis", "power", "on",
         ]
@@ -175,79 +182,99 @@ class PowerOps:
         }
 
     BMC_STATUS_TIMEOUT = 8
-    BMC_STATUS_TIMEOUT_FAST = 3
-    BMC_REACH_PROBE_TIMEOUT = 2
-    BMC_WEB_PORT = 443
 
     def check_bmc_status(self) -> dict[str, Any]:
+        """Check BMC (IPMI) connectivity + chassis power state.
+
+        Network layer = one fresh ICMP ping per request fed to the
+        3-strike tracker (:class:`~.net_probe.PingTracker`): on ping
+        failure the ipmitool round trip is skipped entirely (fast path —
+        no subprocess on a dead host). Success =
+        ``ipmitool chassis power status`` answered within
+        ``BMC_STATUS_TIMEOUT``; a failed session with bad credentials is
+        classified ``auth``, anything else ``no_response``.
+        """
         from ...config.remote_client import config_manager
         config = config_manager.get_config()
 
         if not config.bmc_host:
-            return {"configured": False, "connected": False, "power": None, "error": None}
+            return {"configured": False, "connected": False, "power": None,
+                    "error": None, "error_code": "not_configured",
+                    "net_state": "up", "ping_rtt_ms": None}
         if not config.bmc_password:
             return {"configured": True, "connected": False, "power": None,
-                    "error": "BMC password not configured (Server Config: BMC Password)"}
+                    "error": "BMC password not configured (Server Config: BMC Password)",
+                    "error_code": "not_configured",
+                    "net_state": "up", "ping_rtt_ms": None}
 
         ipmitool_path = shutil.which("ipmitool")
         if not ipmitool_path:
             return {"configured": True, "connected": False, "power": None,
-                    "error": "ipmitool not available on dashboard host"}
+                    "error": "ipmitool not available on dashboard host",
+                    "error_code": "no_response",
+                    "net_state": "up", "ping_rtt_ms": None}
 
-        t_pre = time.monotonic()
-        pre_probe_timeout = False
-        pre_probe_rst = False
         try:
-            with socket.create_connection(
-                    (config.bmc_host, self.BMC_WEB_PORT),
-                    timeout=self.BMC_REACH_PROBE_TIMEOUT):
-                pass
-        except ConnectionRefusedError:
-            pre_probe_rst = True
+            rtt = icmp_ping(config.bmc_host)
         except OSError:
-            pre_probe_timeout = True
-        pre_ms = (time.monotonic() - t_pre) * 1000
-        pre = ("timeout" if pre_probe_timeout
-               else "rst" if pre_probe_rst else "ok")
+            rtt = None
+        net_state, ping_rtt = bmc_ping.record(config.bmc_host, rtt)
+        ping_rtt_ms = round(ping_rtt * 1000, 2) if ping_rtt is not None else None
+        if net_state != "up":
+            # Fast path: the BMC does not answer ICMP (1–3 strikes) — do not
+            # run ipmitool. Power is unknown this round; the frontend holds
+            # the last known reading.
+            _bmc_diag(config.bmc_host, net_state, "skip", 0.0, False, None)
+            return {"configured": True, "connected": False, "power": None,
+                    "error": "BMC unreachable (ping no response)",
+                    "error_code": "ping",
+                    "net_state": net_state, "ping_rtt_ms": ping_rtt_ms}
 
-        ipmi_timeout = (self.BMC_STATUS_TIMEOUT_FAST if pre_probe_timeout
-                        else self.BMC_STATUS_TIMEOUT)
         cmd = [
             ipmitool_path, "-I", "lanplus",
             "-H", config.bmc_host,
             "-U", config.bmc_username or "admin",
+            "-P", str(config.bmc_rmcp_port),
             "-E",
             "chassis", "power", "status",
         ]
         t_ipmi = time.monotonic()
         try:
             result = subprocess.run(cmd, capture_output=True, text=True,
-                                    timeout=ipmi_timeout,
+                                    timeout=self.BMC_STATUS_TIMEOUT,
                                     env=_ipmitool_env(config.bmc_password))
         except subprocess.TimeoutExpired:
-            _bmc_diag(config.bmc_host, pre, pre_ms, ipmi_timeout, "timeout",
-                      (time.monotonic() - t_ipmi) * 1000, False, None)
+            ipmi_ms = (time.monotonic() - t_ipmi) * 1000
+            _bmc_diag(config.bmc_host, net_state, "timeout", ipmi_ms, False, None)
             return {"configured": True, "connected": False, "power": None,
-                    "error": "BMC status probe timeout (no response from BMC)"}
+                    "error": "BMC status probe timeout (no response from BMC)",
+                    "error_code": "no_response",
+                    "net_state": net_state, "ping_rtt_ms": ping_rtt_ms}
         except Exception as e:
-            _bmc_diag(config.bmc_host, pre, pre_ms, ipmi_timeout, "fail",
-                      (time.monotonic() - t_ipmi) * 1000, False, None)
+            ipmi_ms = (time.monotonic() - t_ipmi) * 1000
+            _bmc_diag(config.bmc_host, net_state, "fail", ipmi_ms, False, None)
             return {"configured": True, "connected": False, "power": None,
-                    "error": f"BMC status probe failed: {e}"}
+                    "error": f"BMC status probe failed: {e}",
+                    "error_code": "no_response",
+                    "net_state": net_state, "ping_rtt_ms": ping_rtt_ms}
         ipmi_ms = (time.monotonic() - t_ipmi) * 1000
 
         if result.returncode != 0:
             err = (result.stderr or result.stdout or "").strip()
+            code = "auth" if "unable to establish ipmi" in err.lower() else "no_response"
             detail = ("Cannot reach BMC or BMC authentication failed "
                       "(check BMC address and credentials)"
-                      if "unable to establish ipmi" in err.lower()
+                      if code == "auth"
                       else (err[:200] or f"ipmitool exited with code {result.returncode}"))
             logger.debug("BMC status probe failed for %s (rc=%s)", config.bmc_host, result.returncode)
-            _bmc_diag(config.bmc_host, pre, pre_ms, ipmi_timeout,
-                      f"fail({result.returncode})", ipmi_ms, False, None)
-            return {"configured": True, "connected": False, "power": None, "error": detail}
+            _bmc_diag(config.bmc_host, net_state, f"fail({result.returncode})", ipmi_ms, False, None)
+            return {"configured": True, "connected": False, "power": None,
+                    "error": detail, "error_code": code,
+                    "net_state": net_state, "ping_rtt_ms": ping_rtt_ms}
 
         out = (result.stdout or "").lower()
         power = "on" if "power is on" in out else ("off" if "power is off" in out else None)
-        _bmc_diag(config.bmc_host, pre, pre_ms, ipmi_timeout, "ok", ipmi_ms, True, power)
-        return {"configured": True, "connected": True, "power": power, "error": None}
+        _bmc_diag(config.bmc_host, net_state, "ok", ipmi_ms, True, power)
+        return {"configured": True, "connected": True, "power": power,
+                "error": None, "error_code": None,
+                "net_state": net_state, "ping_rtt_ms": ping_rtt_ms}

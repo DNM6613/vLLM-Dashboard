@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { errMsg, useModelStore } from '../stores/model';
 import { getServerConfig, getSshStatus, getServerHealth, getDashboardHealth, updateServerConfig, shutdownServer, powerOnServer, getBmcStatus, resetModelsAfterPowerOff } from '../api/serverConfig';
-import type { ServerConfig as ServerConfigType, BmcStatus } from '../types';
+import type { ServerConfig as ServerConfigType, BmcStatus, ServerHealth } from '../types';
 import { useI18n } from '../i18n/context';
+import type { LightState } from '../utils/lightStatus';
 
-const SSH_FAIL_THRESHOLD = 3;
+// v6: no frontend debounce for the header lights — the backend owns it
+// (per-request fresh probes + the ICMP 3-strike tracker). These callbacks
+// render whatever the probe response says; a failed dashboard-API request
+// keeps the last rendered state instead of flapping the lights.
 
-const BMC_DISCONNECT_HOLD_MS = 30_000;
+const LIGHT_DOWN: LightState = { net: 'down', code: null, connected: false };
 
 export function useServerConfig() {
   const { t } = useI18n();
@@ -19,11 +23,9 @@ export function useServerConfig() {
   const [savingConfig, setSavingConfig] = useState(false);
   const [configMessage, setConfigMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showServerConfig, setShowServerConfig] = useState(false);
-  const [sshConnected, setSshConnected] = useState(false);
-  const sshFailStreakRef = useRef(0);
-  const [apiConnected, setApiConnected] = useState(false);
+  const [sshLight, setSshLight] = useState<LightState>(LIGHT_DOWN);
+  const [apiLight, setApiLight] = useState<LightState>(LIGHT_DOWN);
   const [bmcStatus, setBmcStatus] = useState<BmcStatus>({ configured: false, connected: false, power: null, powerFresh: false });
-  const bmcFirstFailAtRef = useRef<number | null>(null);
   const bmcPrevPowerRef = useRef<BmcStatus['power']>(null);
   const [bmcProbed, setBmcProbed] = useState(false);
   const [serverVersion, setServerVersion] = useState<string | null>(null);
@@ -48,33 +50,31 @@ export function useServerConfig() {
   }, []);
 
   const checkSshConnection = useCallback(async () => {
-    let failed = false;
-    let hostDown = false;
+    let status;
     try {
-      const status = await getSshStatus();
-      failed = !status.connected;
-      hostDown = failed && !!status.host_down;
+      status = await getSshStatus();
     } catch {
-      failed = true;
+      return; // dashboard API unreachable — keep the last rendered light
     }
-    if (!failed) {
-      sshFailStreakRef.current = 0;
-      setSshConnected(true);
-    } else if (hostDown) {
-      sshFailStreakRef.current = 0;
-      setSshConnected(false);
-    } else {
-      sshFailStreakRef.current += 1;
-      setSshConnected((prev) => prev && sshFailStreakRef.current < SSH_FAIL_THRESHOLD);
-    }
+    setSshLight({
+      net: status.net_state ?? (status.host_down ? 'down' : 'degraded'),
+      code: status.error_code ?? (status.connected ? null : 'no_response'),
+      connected: !!status.connected,
+      probed: true,
+    });
   }, []);
 
   const checkApiConnection = useCallback(async () => {
     try {
-      await getServerHealth();
-      setApiConnected(true);
+      const health: ServerHealth = await getServerHealth();
+      setApiLight({
+        net: health.reachable === false ? 'down' : 'up',
+        code: health.error_code ?? (health.service_ok ? null : 'no_response'),
+        connected: health.service_ok === true,
+        probed: true,
+      });
     } catch {
-      setApiConnected(false);
+      // The dashboard's own API is unreachable — keep the last rendered light.
     }
     try {
       const dashboardHealth = await getDashboardHealth();
@@ -92,11 +92,6 @@ export function useServerConfig() {
       probeFailed = true;
       status = { configured: false, connected: false, power: null, error: 'BMC probe request failed' };
     }
-    if (status.connected) {
-      bmcFirstFailAtRef.current = null;
-    } else if (bmcFirstFailAtRef.current === null) {
-      bmcFirstFailAtRef.current = Date.now();
-    }
     const prevPower = bmcPrevPowerRef.current;
     // Audit 2026-10-23 D-7: only a REAL reading (non-null) may move the
     // edge detector — a null from a failed probe would wipe the last known
@@ -108,20 +103,25 @@ export function useServerConfig() {
     if (status.power === 'off' && prevPower !== 'off') {
       resetModelsAfterPowerOff().catch(() => {  });
     }
-    const firstFailAt = bmcFirstFailAtRef.current;
-    const sustainedDown = firstFailAt !== null
-      && Date.now() - firstFailAt >= BMC_DISCONNECT_HOLD_MS;
     const rawConnected = status.connected;
     setBmcStatus((prev) => {
-      const connected = rawConnected || (prev.connected && !sustainedDown);
-      // `power` is sticky (last known value) so a brief BMC outage does not
-      // flap the UI; `powerFresh` marks whether the value came from a probe
-      // that just succeeded, so "on" claims are only trusted when fresh.
+      // v6: the backend's ping 3-strike tracker owns the light color; the
+      // frontend only holds the last known power reading while the probe is
+      // down (`power` is sticky, `powerFresh` marks a fresh reading).
       const power = rawConnected ? status.power : prev.power;
       const configured = probeFailed ? prev.configured : status.configured;
-      const next: BmcStatus = { ...status, connected, power, configured, powerFresh: rawConnected };
+      const next: BmcStatus = {
+        ...status,
+        configured,
+        connected: rawConnected,
+        power,
+        powerFresh: rawConnected,
+        net_state: status.net_state ?? (rawConnected ? 'up' : 'degraded'),
+        error_code: status.error_code ?? (rawConnected ? null : 'no_response'),
+      };
       return prev.configured === next.configured && prev.connected === next.connected &&
-        prev.power === next.power && prev.powerFresh === next.powerFresh && prev.error === next.error
+        prev.power === next.power && prev.powerFresh === next.powerFresh &&
+        prev.error === next.error && prev.net_state === next.net_state
         ? prev
         : next;
     });
@@ -143,6 +143,7 @@ export function useServerConfig() {
   // Audit 2026-10-22 FE-11: the initial load ran once on mount; if it failed
   // (a transient blip, or the API key not (re)entered yet), saving would stay
   // disabled until a full page reload. Retry once the API answers again.
+  const apiConnected = apiLight.connected;
   useEffect(() => {
     if (apiConnected && configLoadFailed) {
       loadServerConfig();
@@ -231,6 +232,7 @@ export function useServerConfig() {
   }, []);
 
   const bmcConfigured = bmcStatus.configured || (serverConfig.bmc_host !== '' && !bmcProbed);
+  const sshConnected = sshLight.connected;
 
   return {
     serverConfig,
@@ -239,8 +241,13 @@ export function useServerConfig() {
     configMessage,
     showServerConfig,
     setShowServerConfig,
-    // Raw reachability, ungated by BMC state: a stale 'off' from an
-    // unreachable BMC must not hide a machine that is actually up and serving.
+    // Header lights: network-layer state (color) + specific error code
+    // (text). v6 — no frontend debounce, the backend probes fresh per
+    // request and owns the 3-strike ping debounce.
+    sshLight,
+    apiLight,
+    // Service-layer connectivity (model ops, hardware cards, badges):
+    // can we actually run SSH commands / reach vLLM right now.
     sshConnected,
     apiConnected,
     bmcStatus: bmcConfigured ? { ...bmcStatus, configured: true } : bmcStatus,

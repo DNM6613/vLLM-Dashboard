@@ -276,6 +276,7 @@ class TestProbeThreadSelfHeal(unittest.TestCase):
             "thread": probe._ssh_probe_thread,
         }
         probe._ssh_probe_stop.clear()
+        probe.ssh_ping.reset("10.99.99.99")
 
     def tearDown(self):
         probe._ssh_probe_stop.set()
@@ -288,6 +289,7 @@ class TestProbeThreadSelfHeal(unittest.TestCase):
         probe._stale_warn_ts = self._state["warn_ts"]
         probe._ssh_probe_thread = self._state["thread"]
         probe._ssh_probe_stop.clear()
+        probe.ssh_ping.reset("10.99.99.99")
 
     def test_stale_cache_restarts_wedged_thread(self):
         cfg = SimpleNamespace(host="10.99.99.99", ssh_port=22, ssh_username="u",
@@ -312,13 +314,19 @@ class TestProbeThreadSelfHeal(unittest.TestCase):
         probe._ssh_probe_thread = old
 
         try:
-            with patch.object(probe, "_probe_once",
+            # v6: a stale cache (>5 s) also triggers a bounded self-heal
+            # round, whose (patched) result — not the old cache value — is
+            # served. The fresh per-request ping is mocked as a success so
+            # the net layer reports "up".
+            with patch.object(probe, "icmp_ping", return_value=0.001), \
+                 patch.object(probe, "_probe_once",
                               return_value={"connected": False,
                                             "error": "mock", "latency_ms": 1}), \
                  patch.object(config_manager, "get_config", return_value=cfg):
                 out = probe.check_ssh_connectivity(refresh=False)
                 new_thread = probe._ssh_probe_thread
-            self.assertTrue(out["connected"])  # serves the old cache value
+            self.assertFalse(out["connected"])  # serves the self-heal round
+            self.assertEqual(out["net_state"], "up")
             self.assertIsNotNone(new_thread)
             self.assertIsNot(new_thread, old)
             self.assertTrue(new_thread.is_alive())
@@ -328,6 +336,32 @@ class TestProbeThreadSelfHeal(unittest.TestCase):
             self.assertFalse(old.is_alive())
         finally:
             release.set()
+
+    def test_stale_cache_self_heal_timeout_serves_last_known(self):
+        cfg = SimpleNamespace(host="10.99.99.99", ssh_port=22, ssh_username="u",
+                              ssh_password="p", ssh_key_path="")
+        probe._ssh_probe_cache = {"connected": True, "error": None, "latency_ms": 1}
+        probe._ssh_probe_fp = ("10.99.99.99", 22, "u", "p", "")
+        probe._ssh_probe_ts = time.monotonic() - 120.0
+        probe._probe_restart_ts = 0.0
+        probe._stale_warn_ts = 0.0
+
+        # The self-heal round exceeds its (patched-down) wall-clock bound:
+        # the request must not wait for it and serves the last known state.
+        def slow_round():
+            time.sleep(2)
+            return {"connected": False, "error": "late", "latency_ms": 1}
+
+        start = time.monotonic()
+        with patch.object(probe, "icmp_ping", return_value=0.001), \
+             patch.object(probe, "_run_ssh_probe", side_effect=slow_round), \
+             patch.object(probe, "SSH_SERVICE_HEAL_TIMEOUT", 0.3), \
+             patch.object(config_manager, "get_config", return_value=cfg):
+            out = probe.check_ssh_connectivity(refresh=False)
+        elapsed = time.monotonic() - start
+        self.assertTrue(out["connected"])  # last known value, not the late round
+        self.assertEqual(out["net_state"], "up")
+        self.assertLess(elapsed, 1.5)  # bounded by the heal timeout
 
 
 class TestStartProbeWallClock(unittest.IsolatedAsyncioTestCase):

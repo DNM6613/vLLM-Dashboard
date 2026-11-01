@@ -29,12 +29,14 @@ const FIELD_CLASS = 'w-full px-3 py-1.5 bg-bg rounded-lg border border-border te
 export function ServerConfigModal({ config, onConfigChange, onSave, saving, message, onClose, onOpenDeployEnv }: ServerConfigModalProps) {
   const { t } = useI18n();
   const [sshPortDraft, setSshPortDraft] = useState(String(config.ssh_port));
+  const [rmcpPortDraft, setRmcpPortDraft] = useState(String(config.bmc_rmcp_port ?? 623));
   const parsePort = (s: string): number | null => {
     if (!/^\d{1,5}$/.test(s)) return null;
     const n = parseInt(s, 10);
     return n >= 1 && n <= 65535 ? n : null;
   };
   const sshPort = parsePort(sshPortDraft);
+  const rmcpPort = parsePort(rmcpPortDraft);
 
   // Credentials as they were when the modal opened ("***" mask if the
   // value is stored server-side, "" if not). Used to detect that the user
@@ -98,7 +100,7 @@ export function ServerConfigModal({ config, onConfigChange, onSave, saving, mess
         footer={
           <>
             <Button onClick={onClose}>{t('Cancel')}</Button>
-            <Button variant="primary" onClick={handleSaveClick} disabled={saving || sshPort === null}>
+            <Button variant="primary" onClick={handleSaveClick} disabled={saving || sshPort === null || rmcpPort === null}>
               {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />} {t('Save')}
             </Button>
           </>
@@ -155,6 +157,12 @@ export function ServerConfigModal({ config, onConfigChange, onSave, saving, mess
                 <input id="srv-bmc-username" type="text" value={config.bmc_username || ''} onChange={(e) => onConfigChange({ ...config, bmc_username: e.target.value })} className={FIELD_CLASS} />
               </div>
               {renderCredField('bmc_password', 'srv-bmc-password', t('BMC Password'))}
+            </div>
+            <div className="grid grid-cols-2 gap-3 mt-3">
+              <div>
+                <label htmlFor="srv-bmc-rmcp-port" className="block text-xs text-text-muted mb-1">{t('RMCP Port')}</label>
+                <input id="srv-bmc-rmcp-port" type="text" inputMode="numeric" value={rmcpPortDraft} onChange={(e) => { const v = e.target.value.replace(/\D/g, ''); setRmcpPortDraft(v); const p = parsePort(v); if (p !== null) onConfigChange({ ...config, bmc_rmcp_port: p }); }} className={FIELD_CLASS} placeholder="623" />
+              </div>
             </div>
           </section>
         </div>

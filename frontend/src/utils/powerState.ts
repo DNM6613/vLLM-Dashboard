@@ -9,12 +9,13 @@ import type { BmcStatus } from '../types';
 // button stuck on "Power OFF" with no way to power the machine back on).
 // A stale 'off' held while the BMC is unreachable must not hide a machine
 // that is actually up and serving, so when the BMC is not fresh we fall
-// back to raw reachability.
+// back to NETWORK-layer reachability (v6: ping state / TCP answered — a
+// machine that is up but still booting sshd or vLLM counts as on).
 export function deriveServerOn(
   bmc: Pick<BmcStatus, 'power' | 'powerFresh'>,
-  sshConnected: boolean,
-  apiConnected: boolean,
+  sshReachable: boolean,
+  apiReachable: boolean,
 ): boolean {
   const bmcPowerAuthoritative = !!bmc.powerFresh && bmc.power !== null;
-  return bmcPowerAuthoritative ? bmc.power === 'on' : (sshConnected || apiConnected);
+  return bmcPowerAuthoritative ? bmc.power === 'on' : (sshReachable || apiReachable);
 }

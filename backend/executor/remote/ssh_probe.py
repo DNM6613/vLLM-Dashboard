@@ -1,16 +1,34 @@
+"""Shared SSH reachability probe for the dashboard.
+
+Two layers feed the header's SSH light:
+
+* **Network layer** — one fresh ICMP echo per request (see
+  :mod:`.net_probe`), debounced by a 3-strike tracker: a single dropped
+  packet is yellow (degraded), the light turns red only after three
+  consecutive failed pings. The light never trusts a cached reachability
+  value — the 2026-10-21 power-off incident kept the UI green because a
+  wedged probe thread kept serving a stale "connected".
+* **Service layer** — the background probe thread below (``echo ok`` over
+  the shared SSH pool every second). Its cache provides the
+  service-level fields (connected / latency); when the cache goes stale a
+  bounded fresh round self-heals it, so a dead or wedged thread cannot pin
+  a stale "connected" for minutes.
+"""
+from __future__ import annotations
+
+import concurrent.futures
 import contextlib
 import logging
-import socket
 import threading
 import time
 from typing import Any
 
+from .net_probe import icmp_ping, ssh_ping
 from .ssh import ssh_pool
 
 logger = logging.getLogger(__name__)
 
 SSH_PROBE_CMD_TIMEOUT = 5
-SSH_REACH_PROBE_TIMEOUT = 1
 
 SSH_PROBE_INTERVAL = 1.0
 # Audit 2026-10-22 BCK-2 residue: beyond this cache age the shared probe
@@ -18,6 +36,15 @@ SSH_PROBE_INTERVAL = 1.0
 # so the `is_alive()` rebuild check alone never fires and the stale result
 # (possibly 'connected' on a dead machine) is served forever.
 SSH_PROBE_STALE_SECONDS = 60.0
+# Self-heal: the probe thread refreshes its cache every second, so a cache
+# older than this on a per-request read means the thread stopped making
+# rounds (2026-10-21 power-off incident: a stale 'connected' result kept
+# the UI green while the machine was off).
+SSH_SERVICE_REFRESH_SECONDS = 5.0
+# Wall-clock bound for a self-heal round (ping 1 s + echo 5 s ≈ 6 s worst
+# case). The round runs in a one-shot executor; on timeout the last known
+# state is served instead of blocking the request.
+SSH_SERVICE_HEAL_TIMEOUT = 8.0
 
 _ssh_probe_lock = threading.Lock()
 _ssh_probe_cache: dict[str, Any] | None = None
@@ -45,27 +72,37 @@ def _ssh_probe_fingerprint(config) -> tuple:
         config.ssh_key_path or "",
     )
 
+def _classify_service_error(error: str) -> str:
+    if "authentication" in error.lower() or "permission denied" in error.lower():
+        return "auth"
+    return "no_response"
+
 def _probe_once(config) -> dict[str, Any]:
     if not config.host or config.host in ("localhost", "127.0.0.1"):
         return {
             "connected": False,
             "error": "Remote host not configured",
-            "latency_ms": None
+            "error_code": "not_configured",
+            "host_down": True,
+            "net_state": "down",
+            "latency_ms": None,
         }
 
     start_time = time.time()
+    # Network layer first: one ICMP echo (1 s budget). Ping failure means
+    # the host is unreachable — skip the SSH round trip entirely (the fast
+    # path behind the header light's red state).
     try:
-        with socket.create_connection(
-                (config.host, config.ssh_port),
-                timeout=SSH_REACH_PROBE_TIMEOUT):
-            pass
-    except ConnectionRefusedError:
-        pass
+        rtt = icmp_ping(config.host)
     except OSError:
+        rtt = None
+    if rtt is None:
         return {
             "connected": False,
             "host_down": True,
-            "error": "host unreachable (TCP probe no response)",
+            "error": "host unreachable (ping no response)",
+            "error_code": "ping",
+            "net_state": "down",
             "latency_ms": round((time.time() - start_time) * 1000, 2),
         }
     client = None
@@ -91,12 +128,16 @@ def _probe_once(config) -> dict[str, Any]:
                 "latency_ms": latency_ms,
                 "host": config.host,
                 "port": config.ssh_port,
-                "username": config.ssh_username
+                "username": config.ssh_username,
+                "error_code": None,
+                "net_state": "up",
             }
         else:
             return {
                 "connected": False,
                 "error": "SSH probe returned unexpected output",
+                "error_code": "no_response",
+                "net_state": "up",
                 "latency_ms": latency_ms
             }
     except Exception as e:
@@ -104,6 +145,8 @@ def _probe_once(config) -> dict[str, Any]:
         return {
             "connected": False,
             "error": str(e)[:200],
+            "error_code": _classify_service_error(str(e)),
+            "net_state": "up",
             "latency_ms": latency_ms
         }
     finally:
@@ -160,35 +203,67 @@ def _ssh_probe_loop() -> None:
             if _ssh_probe_stop.is_set():
                 return
 
+def _self_heal_round() -> dict[str, Any] | None:
+    """Run one bounded fresh probe round; ``None`` when it exceeds the cap.
+
+    One-shot executor (same pattern as the BMC power-on path): an
+    abandoned round keeps running in its thread and exits on the internal
+    ping/echo timeouts, so a stuck round cannot pile up on a shared queue.
+    """
+    executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="ssh-probe-heal")
+    try:
+        return executor.submit(_run_ssh_probe).result(timeout=SSH_SERVICE_HEAL_TIMEOUT)
+    except concurrent.futures.TimeoutError:
+        logger.warning(
+            "SSH probe self-heal round exceeded %.0fs — serving last known state",
+            SSH_SERVICE_HEAL_TIMEOUT)
+        return None
+    finally:
+        executor.shutdown(wait=False)
+
 def check_ssh_connectivity(refresh: bool = False) -> dict[str, Any]:
     global _ssh_probe_thread, _stale_warn_ts, _probe_restart_ts
     from ...config.remote_client import config_manager
     config = config_manager.get_config()
 
     if refresh:
+        # Model start / power-on path: force a full fresh round (ping +
+        # echo); the caller may block on the probe itself.
         return _run_ssh_probe()
 
     if not config.host or config.host in ("localhost", "127.0.0.1"):
         return {
             "connected": False,
             "error": "Remote host not configured",
-            "latency_ms": None
+            "error_code": "not_configured",
+            "host_down": True,
+            "net_state": "down",
+            "latency_ms": None,
         }
 
+    # Network layer: a fresh per-request ping (1 s) feeds the 3-strike
+    # tracker. The light never reads a cached reachability value.
+    try:
+        rtt = icmp_ping(config.host)
+    except OSError:
+        rtt = None
+    net_state, ping_rtt = ssh_ping.record(config.host, rtt)
+
+    service: dict[str, Any] | None = None
+    age = 0.0
     with _ssh_probe_lock:
-        if (_ssh_probe_cache is not None
-                and _ssh_probe_fp == _ssh_probe_fingerprint(config)):
-            now = time.monotonic()
-            age = now - _ssh_probe_ts
+        if _ssh_probe_cache is not None and _ssh_probe_fp == _ssh_probe_fingerprint(config):
+            age = time.monotonic() - _ssh_probe_ts
             if age > SSH_PROBE_STALE_SECONDS:
-                # Audit 2026-10-22 BCK-2: a wedged probe thread stays alive,
-                # so the is_alive() check below never rebuilds it and this
-                # stale result (possibly 'connected' on a dead machine) is
-                # served forever. Beyond the stale bound, restart the thread
-                # and keep serving the old value until the first new round.
-                # Throttled so a still-wedged fresh thread is not rebuilt on
-                # every caller.
-                if now - _probe_restart_ts >= SSH_PROBE_STALE_SECONDS:
+                # A wedged probe thread stays alive, so the is_alive()
+                # check below never rebuilds it and the stale result
+                # (possibly 'connected' on a dead machine) would be served
+                # forever. Beyond the stale bound, restart the thread and
+                # keep serving the old value until the first new round.
+                # Throttled so a still-wedged fresh thread is not rebuilt
+                # on every caller (audit 2026-10-22 BCK-2).
+                if time.monotonic() - _probe_restart_ts >= SSH_PROBE_STALE_SECONDS:
                     logger.warning(
                         "SSH shared probe cache %.0fs stale — restarting the "
                         "probe thread (audit 2026-10-22 BCK-2)", age)
@@ -199,31 +274,41 @@ def check_ssh_connectivity(refresh: bool = False) -> dict[str, Any]:
                     _ssh_probe_thread = threading.Thread(
                         target=_ssh_probe_loop, name="ssh-probe", daemon=True)
                     _ssh_probe_thread.start()
-                    _probe_restart_ts = now
-                elif now - _stale_warn_ts >= 30.0:
-                    _stale_warn_ts = now
+                    _probe_restart_ts = time.monotonic()
+                elif time.monotonic() - _stale_warn_ts >= 30.0:
+                    _stale_warn_ts = time.monotonic()
                     logger.warning(
                         "SSH shared probe cache %.0fs stale after restart "
                         "(thread still wedged)", age)
-                return dict(_ssh_probe_cache)
-            if age > 15.0 and now - _stale_warn_ts >= 30.0:
-                # The shared thread refreshes every second; a cache this
-                # old means it is no longer making rounds (2026-10-21
-                # power-off incident: a stale 'connected' result kept the
-                # UI green while the machine was off).
-                _stale_warn_ts = now
-                logger.warning(
-                    "SSH shared probe cache %.0fs stale (thread may be blocked)",
-                    age)
-            return dict(_ssh_probe_cache)
-        if _ssh_probe_thread is None or not _ssh_probe_thread.is_alive():
+            service = dict(_ssh_probe_cache)
+        elif _ssh_probe_thread is None or not _ssh_probe_thread.is_alive():
             _ssh_probe_stop.clear()
             _ssh_probe_thread = threading.Thread(
                 target=_ssh_probe_loop, name="ssh-probe", daemon=True)
             _ssh_probe_thread.start()
 
-    return {
-        "connected": False,
-        "error": "SSH probe not ready",
-        "latency_ms": None,
-    }
+    if service is not None and age > SSH_SERVICE_REFRESH_SECONDS:
+        healed = _self_heal_round()
+        if healed is not None:
+            service = healed
+
+    if service is None:
+        result: dict[str, Any] = {
+            "connected": False,
+            "error": "SSH probe not ready",
+            "error_code": "no_response",
+            "latency_ms": None,
+        }
+    else:
+        result = dict(service)
+
+    # Host unreachable per the tracker: the service layer cannot be true.
+    if net_state == "down" and result.get("connected"):
+        result["connected"] = False
+        result["error"] = "host unreachable (ping no response)"
+        result["error_code"] = "ping"
+    result["net_state"] = net_state
+    result["host_down"] = net_state != "up"
+    if ping_rtt is not None:
+        result["ping_rtt_ms"] = round(ping_rtt * 1000, 2)
+    return result
