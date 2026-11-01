@@ -27,6 +27,7 @@ import { deriveServerOn } from '../utils/powerState';
 import { lightColor, lightText } from '../utils/lightStatus';
 import { useSettledFlag } from '../hooks/useSettledFlag';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { PowerActionDialog } from '../components/ui/PowerActionDialog';
 import { IconButton } from '../components/ui/IconButton';
 
 // After clicking power-on the button keeps spinning for this long (unless
@@ -39,7 +40,7 @@ export function HomePage() {
   const { t, lang, toggleLang } = useI18n();
   const { theme, toggleTheme } = useTheme();
 
-  const { serverConfig, setServerConfig, savingConfig, configMessage, showServerConfig, setShowServerConfig, sshConnected, sshLight, apiLight, bmcStatus, serverVersion, shuttingDown, shutdownRequested, requestShutdownServer, confirmShutdownServer, cancelShutdownServer, powerOning, handlePowerOnServer, handleSaveConfig } = useServerConfig();
+  const { serverConfig, setServerConfig, savingConfig, configMessage, showServerConfig, setShowServerConfig, sshConnected, sshLight, apiLight, bmcStatus, serverVersion, shuttingDown, shutdownRequested, requestShutdownServer, confirmPowerAction, cancelShutdownServer, powerOning, handlePowerOnServer, handleSaveConfig } = useServerConfig();
 
   // v6: the three header lights show the NETWORK layer (fresh per-request
   // probe, 2-strike ping debounce owned by the backend); the text is the
@@ -236,14 +237,18 @@ export function HomePage() {
               >
                 <Settings className="w-5 h-5" />
               </IconButton>
-              {bmcStatus.configured && (
+              {(serverOn || bmcStatus.configured) && (
                 <IconButton
                   ariaLabel={serverOn ? t('Power OFF') : t('Power ON')}
                   onClick={() => (serverOn ? requestShutdownServer() : handlePowerOnClick())}
-                  // v6: disabled only when the BMC's own network layer is down
-                  // (2 consecutive failed pings) — a transient degraded ping
-                  // must not block a power action the user is about to take.
-                  disabled={shuttingDown || powerOning || powerOnWaiting || (bmcStatus.net_state === 'down')}
+                  // With a BMC the action rides IPMI — disabled only when the
+                  // BMC's own network layer is down. Without one the only
+                  // actions are SSH (soft/reboot) — disabled when SSH is down.
+                  // A transient degraded ping must not block a power action.
+                  disabled={
+                    shuttingDown || powerOning || powerOnWaiting ||
+                    (bmcStatus.configured ? bmcStatus.net_state === 'down' : !sshConnected)
+                  }
                   className={serverOn ? 'text-danger' : 'text-success'}
                 >
                   {shuttingDown || powerOning || powerOnWaiting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Power className="w-5 h-5" />}
@@ -383,12 +388,9 @@ export function HomePage() {
       )}
 
       {shutdownRequested && (
-        <ConfirmDialog
-          title={t('Shut down the AI server?')}
-          description={t('The machine will power off and vLLM will be stopped. You will need to power it back on to use it again.')}
-          confirmLabel={t('Power OFF')}
-          danger
-          onConfirm={confirmShutdownServer}
+        <PowerActionDialog
+          bmcConfigured={bmcStatus.configured}
+          onConfirm={confirmPowerAction}
           onCancel={cancelShutdownServer}
         />
       )}

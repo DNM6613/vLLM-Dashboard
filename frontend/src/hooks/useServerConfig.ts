@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { errMsg, useModelStore } from '../stores/model';
-import { getServerConfig, getSshStatus, getServerHealth, getDashboardHealth, updateServerConfig, shutdownServer, powerOnServer, getBmcStatus, resetModelsAfterPowerOff } from '../api/serverConfig';
-import type { ServerConfig as ServerConfigType, BmcStatus, ServerHealth } from '../types';
+import { getServerConfig, getSshStatus, getServerHealth, getDashboardHealth, updateServerConfig, powerOffServer, powerOnServer, getBmcStatus, resetModelsAfterPowerOff } from '../api/serverConfig';
+import type { ServerConfig as ServerConfigType, BmcStatus, ServerHealth, PowerAction } from '../types';
 import { useI18n } from '../i18n/context';
 import type { LightState } from '../utils/lightStatus';
 
@@ -199,13 +199,13 @@ export function useServerConfig() {
     setShutdownRequested(true);
   }, []);
 
-  const confirmShutdownServer = useCallback(async () => {
+  const confirmPowerAction = useCallback(async (action: PowerAction) => {
     setShutdownRequested(false);
     if (shuttingDownRef.current) return;
     shuttingDownRef.current = true;
     setShuttingDown(true);
     try {
-      await shutdownServer();
+      await powerOffServer(action);
     } finally {
       shuttingDownRef.current = false;
       setShuttingDown(false);
@@ -255,7 +255,7 @@ export function useServerConfig() {
     shuttingDown,
     shutdownRequested,
     requestShutdownServer,
-    confirmShutdownServer,
+    confirmPowerAction,
     cancelShutdownServer,
     powerOning,
     handlePowerOnServer,

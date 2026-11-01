@@ -194,9 +194,14 @@ export const ZH: Record<string, string> = {
   'Config load failed — reload the page before saving': '配置加载失败 — 保存前请刷新页面',
   'Configuration saved': '配置已保存',
   'Save failed': '保存失败',
-  'Shut down the AI server?': '确定关闭 AI 服务器？',
-  'The machine will power off and vLLM will be stopped. You will need to power it back on to use it again.':
-    '机器将断电，vLLM 停止，需重新上电后才能再次使用。',
+  'Power action?': '电源操作',
+  'Hard power off — immediate, the OS does not shut down cleanly.': '硬断电——立即断电，不走正常关机流程',
+  'Graceful shutdown — the OS shuts down normally.': '优雅关机——系统走正常关机流程',
+  'Hard reboot — CPU reset, unsaved data is lost.': '硬重启——CPU 复位，未保存的数据丢失',
+  'Power cycle — full power off then power on.': '断电重启——完整断电后重新上电',
+  'Graceful reboot — the OS restarts, power is not cut.': '优雅重启——系统重启，不断电',
+  'BMC required': '需要 BMC',
+  'Without a BMC there is no way to power the server back on remotely.': '未配置 BMC，关机后将无法远程开机。',
 
   'Console': '控制台',
   'Console connection failed — the start command may not have been delivered':

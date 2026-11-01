@@ -62,23 +62,24 @@ class PowerOps:
     BMC_POWERON_CONFIRM_SECS = 4
     POWERON_SSH_PROBE_INTERVAL = 5
 
-    def _ipmi_power_on(self, config, ipmitool_path) -> tuple[bool, str | None]:
+    def _ipmi_power_on(self, config, ipmitool_path, action: str = "on") -> tuple[bool, str | None]:
+        """Issue ``chassis power <action>`` over IPMI (default ``on``)."""
         cmd = [
             ipmitool_path, "-I", "lanplus",
             "-H", config.bmc_host,
             "-U", config.bmc_username or "admin",
             "-P", str(config.bmc_rmcp_port),
             "-E",
-            "chassis", "power", "on",
+            "chassis", "power", action,
         ]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True,
                                     timeout=self.BMC_POWER_TIMEOUT,
                                     env=_ipmitool_env(config.bmc_password))
         except subprocess.TimeoutExpired:
-            return False, "BMC power-on timeout (no response from BMC)"
+            return False, f"BMC power {action} timeout (no response from BMC)"
         except Exception as e:
-            return False, f"BMC power-on failed: {e}"
+            return False, f"BMC power {action} failed: {e}"
 
         if result.returncode != 0:
             err = (result.stderr or result.stdout or "").strip()
@@ -86,7 +87,7 @@ class PowerOps:
                       "(check BMC address and credentials)"
                       if "unable to establish ipmi" in err.lower()
                       else (err[:200] or f"ipmitool exited with code {result.returncode}"))
-            logger.warning("BMC power-on failed for %s (rc=%s)", config.bmc_host, result.returncode)
+            logger.warning("BMC power %s failed for %s (rc=%s)", action, config.bmc_host, result.returncode)
             return False, detail
         return True, None
 
@@ -180,6 +181,78 @@ class PowerOps:
             "success": False,
             "error": "; ".join(parts),
         }
+
+    #: Chassis actions offered by the power-off dialog (IPMI ``chassis power``
+    #: verbs).
+    CHASSIS_ACTIONS = ("off", "soft", "reset", "cycle")
+
+    def power_off_server(self, action: str) -> dict[str, Any]:
+        """Issue one BMC chassis power action (off/soft/reset/cycle).
+
+        Fire-and-forget: the command is delivered to the BMC and the 2 s
+        BMC status probe tracks the resulting chassis state. No verification
+        loop — unlike ``power_on_server``, whose success criterion is the
+        machine actually coming back online.
+        """
+        if action not in self.CHASSIS_ACTIONS:
+            return {"success": False,
+                    "error": (f"Invalid power action: {action} "
+                              f"(expected {'/'.join(self.CHASSIS_ACTIONS)})")}
+
+        from ...config.remote_client import config_manager
+        config = config_manager.get_config()
+
+        if not config.bmc_host:
+            return {"success": False, "error": "BMC host not configured (Server Config: BMC Address)"}
+        if not config.bmc_password:
+            return {"success": False, "error": "BMC password not configured (Server Config: BMC Password)"}
+
+        ipmitool_path = shutil.which("ipmitool")
+        if not ipmitool_path:
+            return {"success": False, "error": "ipmitool not available on dashboard host"}
+
+        ok, err = self._ipmi_power_on(config, ipmitool_path, action)
+        if not ok:
+            logger.warning("BMC power action %s failed for %s: %s",
+                           action, config.bmc_host, err)
+            return {"success": False, "error": err}
+        logger.info("BMC power action %s issued for %s", action, config.bmc_host)
+        return {"success": True, "error": None, "action": action}
+
+    def ssh_poweroff_server(self) -> dict[str, Any]:
+        """Graceful OS shutdown over SSH (``sudo poweroff``) — the no-BMC
+        fallback. With no BMC/IPMI channel there is nothing to drive the
+        chassis, so the OS itself must shut down. Same sudo dance as
+        ``DeploymentOps.reboot_server``: try passwordless sudo first, fall
+        back to the SSH password via stdin. ``poweroff`` kills the SSH
+        channel mid-execution, so anything other than a channel-open failure
+        means the command was delivered."""
+        if not self._is_remote():
+            return {"success": False, "error": "Server poweroff requires remote SSH mode"}
+
+        probe = self.execute("sudo -n -p '' true", timeout=10)
+        if probe.get("success"):
+            result = self.execute("sudo -n -p '' poweroff", timeout=20)
+            return {"success": not result.get("channel_open_failed"),
+                    "error": (result.get("stderr")
+                              if result.get("channel_open_failed") else None)}
+
+        if not self.password:
+            return {"success": False,
+                    "error": (probe.get("stderr")
+                              or "sudo requires a password: set an SSH password or configure "
+                                 "NOPASSWD sudoers for passwordless poweroff")}
+
+        pw_input = self.password + "\n"
+        probe = self.execute("sudo -S -p '' true", timeout=10, stdin_data=pw_input)
+        if not probe.get("success"):
+            return {"success": False,
+                    "error": probe.get("stderr") or "sudo authentication failed"}
+
+        result = self.execute("sudo -S -p '' poweroff", timeout=20, stdin_data=pw_input)
+        return {"success": not result.get("channel_open_failed"),
+                "error": (result.get("stderr")
+                          if result.get("channel_open_failed") else None)}
 
     BMC_STATUS_TIMEOUT = 8
 

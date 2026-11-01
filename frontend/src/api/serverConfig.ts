@@ -1,5 +1,5 @@
 import api from './client';
-import type { ServerConfig, ServerHealth, SshStatus, BmcStatus } from '../types';
+import type { ServerConfig, ServerHealth, SshStatus, BmcStatus, PowerAction } from '../types';
 
 export const getServerConfig = async (): Promise<ServerConfig> => {
   const response = await api.get('/config/server');
@@ -31,13 +31,16 @@ export const getBmcStatus = async (): Promise<BmcStatus> => {
   return response.data;
 };
 
-export interface ShutdownResult {
-  status: 'success' | 'timeout';
-  stopped: boolean;
+export interface PowerActionResult {
+  status: 'success';
+  action: PowerAction;
 }
 
-export const shutdownServer = async (): Promise<ShutdownResult> => {
-  const response = await api.post<ShutdownResult>('/config/server/shutdown');
+// One BMC chassis power command (off/soft/reset/cycle): a single ipmitool
+// round trip on the backend, so the default 30s budget is plenty (unlike
+// power-on, which verifies for up to ~120s).
+export const powerOffServer = async (action: PowerAction): Promise<PowerActionResult> => {
+  const response = await api.post<PowerActionResult>('/config/server/shutdown', { action });
   return response.data;
 };
 

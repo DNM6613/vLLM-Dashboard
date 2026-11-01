@@ -107,6 +107,11 @@ export interface SshStatus {
   ping_rtt_ms?: number | null;
 }
 
+/** Power verbs the power-off dialog can issue.
+ *  off/soft/reset/cycle are IPMI chassis commands (require a BMC);
+ *  reboot is the SSH-only graceful restart available without a BMC. */
+export type PowerAction = 'off' | 'soft' | 'reset' | 'cycle' | 'reboot';
+
 export interface BmcStatus {
   configured: boolean;
   connected: boolean;

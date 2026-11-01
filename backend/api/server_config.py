@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ValidationError
@@ -100,19 +101,45 @@ def _reset_models_for_power_off() -> int:
             reset += 1
     return reset
 
+class PowerActionRequest(BaseModel):
+    action: Literal["off", "soft", "reset", "cycle", "reboot"]
+
 @router.post("/server/shutdown")
-async def shutdown_server():
+async def shutdown_server(body: PowerActionRequest):
+    """Dispatch a power action by channel. With a BMC configured the action
+    is an IPMI chassis command (off/soft/reset/cycle). Without one there is
+    no IPMI channel to drive the chassis, so only the SSH fallbacks apply:
+    'soft' -> ``sudo poweroff``, 'reboot' -> ``sudo reboot`` (graceful, no
+    power cut). 'reboot' is rejected when a BMC is present (IPMI reset/cycle
+    cover it) and off/reset/cycle are rejected without one (IPMI-only)."""
     executor = get_remote_executor()
-    result = await asyncio.to_thread(executor.shutdown_server)
+    bmc_configured = bool(config_manager.get_config().bmc_host)
+    if bmc_configured:
+        if body.action == "reboot":
+            raise HTTPException(
+                status_code=400,
+                detail=("SSH reboot is only available without a BMC; "
+                        "use the IPMI 'reset' or 'cycle' action"))
+        result = await asyncio.to_thread(executor.power_off_server, body.action)
+    elif body.action == "soft":
+        result = await asyncio.to_thread(executor.ssh_poweroff_server)
+    elif body.action == "reboot":
+        result = await asyncio.to_thread(executor.reboot_server)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Action '{body.action}' requires a BMC (IPMI); configure a BMC "
+                    "address or use 'soft' (SSH graceful shutdown) / 'reboot' (SSH reboot)"))
     if not result.get("success"):
         raise HTTPException(
             status_code=500,
-            detail=result.get("error") or "Shutdown command failed",
+            detail=result.get("error") or "Power action failed",
         )
 
     _reset_models_for_power_off()
-    logger.info("Server shutdown (poweroff) command issued to %s", executor.host)
-    return {"status": "success", "stopped": True}
+    logger.info("Server power action %s (%s) issued",
+                body.action, "BMC IPMI" if bmc_configured else "SSH")
+    return {"status": "success", "action": body.action}
 
 @router.post("/server/poweron")
 async def poweron_server():

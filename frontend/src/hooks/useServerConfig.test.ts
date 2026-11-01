@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getBmcStatus, getServerConfig, resetModelsAfterPowerOff, shutdownServer } from '../api/serverConfig';
+import { getBmcStatus, getServerConfig, powerOffServer, resetModelsAfterPowerOff } from '../api/serverConfig';
 import { useServerConfig } from './useServerConfig';
 
 // Model-store API surface the hook touches on shutdown; hoisted so the
@@ -36,7 +36,7 @@ vi.mock('../api/serverConfig', () => ({
   getServerHealth: vi.fn().mockResolvedValue({ status: 'healthy', reachable: true, service_ok: true }),
   getDashboardHealth: vi.fn().mockResolvedValue({ version: 'test' }),
   getBmcStatus: vi.fn().mockResolvedValue({ configured: true, connected: true, power: 'on', powerFresh: true, net_state: 'up', error_code: null }),
-  shutdownServer: vi.fn(),
+  powerOffServer: vi.fn(),
   powerOnServer: vi.fn().mockResolvedValue({ status: 'success', powered_on: true }),
   resetModelsAfterPowerOff: vi.fn().mockResolvedValue({ reset: 0 }),
 }));
@@ -55,33 +55,35 @@ describe('useServerConfig shutdown', () => {
     vi.clearAllMocks();
   });
 
-  it('resets the shutdown state when the shutdown command fails', async () => {
-    vi.mocked(shutdownServer).mockRejectedValueOnce(new Error('Failed to connect to SSH'));
+  it('resets the shutdown state when the power action fails', async () => {
+    vi.mocked(powerOffServer).mockRejectedValueOnce(new Error('BMC unreachable'));
     const { result, unmount } = renderHook(() => useServerConfig());
 
     let failed = false;
     await act(async () => {
       try {
-        await result.current.confirmShutdownServer();
+        await result.current.confirmPowerAction('off');
       } catch {
         failed = true;
       }
     });
 
-    expect(shutdownServer).toHaveBeenCalledTimes(1);
+    expect(powerOffServer).toHaveBeenCalledWith('off');
+    expect(powerOffServer).toHaveBeenCalledTimes(1);
     expect(failed).toBe(true);
     expect(result.current.shuttingDown).toBe(false);
     unmount();
   });
 
-  it('syncs model status on a successful shutdown', async () => {
-    vi.mocked(shutdownServer).mockResolvedValueOnce({ status: 'success', stopped: true });
+  it('syncs model status on a successful power action', async () => {
+    vi.mocked(powerOffServer).mockResolvedValueOnce({ status: 'success', action: 'soft' });
     const { result, unmount } = renderHook(() => useServerConfig());
 
     await act(async () => {
-      await result.current.confirmShutdownServer();
+      await result.current.confirmPowerAction('soft');
     });
 
+    expect(powerOffServer).toHaveBeenCalledWith('soft');
     expect(modelStoreApi.syncModelStatus).toHaveBeenCalled();
     expect(result.current.shuttingDown).toBe(false);
     unmount();
