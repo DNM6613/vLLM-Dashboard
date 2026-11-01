@@ -22,6 +22,13 @@
 
 注：`.run` 操作不在 uforce 的 bash history 中（可能经 root 或其他途径执行）；当天 06:30 另有一轮 `unattended-upgrade`，但与 615.78.08 无关（候选版本不含此版）。
 
+## 根因机制（2026-11-01 研究，对照 open-gpu-kernel-modules 仓库与 NVIDIA 官方文档）
+
+1. **两条渠道的内核模块同源**：NVIDIA 内核模块开源（MIT/GPLv2 双许可），每个驱动版本随附源码发布于 `NVIDIA/open-gpu-kernel-modules` 仓库；570 起专有内核模块已移除，open 为唯一形态。本机 DKMS 615.71.09 与 .run 615.78.08 是同一源码树的两个版本快照——本事故与「开源 vs 闭源」无关，纯是版本错位 + 双渠道混装。
+2. **内核/用户态版本严格绑定**：open-gpu-kernel-modules README 明确内核模块 "must be used with GSP firmware and user-space NVIDIA GPU driver components from a corresponding 615.78.08 driver release"。NVML 版本校验方向不对称：内核模块新于用户态时向后兼容可用；**内核模块旧于用户态 = 硬错误** `Driver/library version mismatch`（torch 的 NVML 初始化同理）。本机正踩后者：内核 615.71.09 < 用户态 615.78.08。
+3. **.run 的内核模块从未被加载（depmod 优先级）**：.run 把 615.78.08 模块放在 `kernel/drivers/video/nvidia.ko`（built-in 内核目录），DKMS 的 615.71.09 模块在 `updates/dkms/nvidia.ko`。depmod 默认搜索顺序为 "updates built-in"（depmod.d(5)）——`updates/` 恒优先于 built-in 内核目录，同名模块先列者遮蔽后列者，modules.dep 中 `nvidia.ko` 恒解析到 `updates/dkms` 旧模块；615.78.08 模块在磁盘上只是「影子模块」。11:53 重启不愈还因 initramfs（事故前构建）携带的仍是 615.71.09 模块。
+4. **用户态被原地覆盖、记账脱钩**：.run 的用户态库（`libnvidia-ml.so.*` / `libcuda.so.*` / `nvidia-smi`）直接写入 `/usr/lib/x86_64-linux-gnu`——与 apt 包完全相同的路径，原地覆盖（实证：dpkg -S 查无所属、mtime = .run 安装时刻）。.run 不认识 dpkg 数据库，apt 也不知道自己的文件被换掉，两套记账结构性脱钩。NVIDIA 官方安装指南的立场：包管理器渠道（"distribution-specific packages"）优先推荐，.run 面向无包管理环境——在 apt/DKMS 管理的机器上跑 .run 即本次事故的根因动作。
+
 ## 修复方案（二选一，均已拟定、未执行）
 
 ### 方案 A：恢复纯 apt 管理的 615.71.09（推荐）
@@ -45,11 +52,17 @@ sudo reboot
 
 ### 方案 B：对齐到 .run 的 615.78.08
 
+**固有隐患（2026-11-01 研究，见上「根因机制」第 3 条）**：只要 DKMS 的 615.71.09 构建还在 `updates/dkms/`，depmod 默认优先级 "updates built-in" 使 `nvidia.ko` 恒解析旧模块——**必须先移除 DKMS 构建**，原样只跑 depmod 方案 B 执行完重启后内核仍是 615.71.09，故障不愈、错位依旧。
+
 ```bash
-sudo depmod -a          # 确认 modprobe 解析到 kernel/drivers/video/nvidia.ko (615.78.08)
+sudo dkms remove -m nvidia -v 615.71.09 --all   # 必须先执行，否则 depmod 恒解析 updates/dkms 旧模块
+sudo depmod -a
+sudo modprobe --show-depends nvidia            # 验证闸门：须解析到 kernel/drivers/video/nvidia.ko (615.78.08)
 sudo update-initramfs -u
-sudo reboot             # 必须重启，加载新模块
+sudo reboot                                    # 验证通过才重启，加载新模块
 ```
+
+**验证闸门**：`modprobe --show-depends nvidia` 若仍解析到 `updates/dkms`，不得继续重启。
 
 优点：命令最少。缺点：**runfile 与 apt/DKMS 混装保留**——runfile 模块不经 DKMS 管理，下次换内核不会自动重建（换内核即挂）；apt 侧驱动更新时大概率复发本次事故。
 
