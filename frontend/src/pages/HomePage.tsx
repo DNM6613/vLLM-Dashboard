@@ -42,7 +42,7 @@ export function HomePage() {
   const { serverConfig, setServerConfig, savingConfig, configMessage, showServerConfig, setShowServerConfig, sshConnected, sshLight, apiLight, bmcStatus, serverVersion, shuttingDown, shutdownRequested, requestShutdownServer, confirmShutdownServer, cancelShutdownServer, powerOning, handlePowerOnServer, handleSaveConfig } = useServerConfig();
 
   // v6: the three header lights show the NETWORK layer (fresh per-request
-  // probe, 3-strike ping debounce owned by the backend); the text is the
+  // probe, 2-strike ping debounce owned by the backend); the text is the
   // specific service error. BMC light state is assembled from bmcStatus.
   const bmcLight = {
     net: bmcStatus.net_state ?? 'down',
@@ -195,7 +195,7 @@ export function HomePage() {
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <SoftwareVersionBadges sshConnected={sshConnected} />
             <div className="flex items-center gap-3">
-              {/* v6: light color = network layer (fresh probe, 3-strike ping
+              {/* v6: light color = network layer (fresh probe, 2-strike ping
                   debounce on the backend); text = specific service error.
                   No hover tooltip — the label carries the whole message. */}
               {bmcStatus.configured && (
@@ -241,7 +241,7 @@ export function HomePage() {
                   ariaLabel={serverOn ? t('Power OFF') : t('Power ON')}
                   onClick={() => (serverOn ? requestShutdownServer() : handlePowerOnClick())}
                   // v6: disabled only when the BMC's own network layer is down
-                  // (3 consecutive failed pings) — a transient degraded ping
+                  // (2 consecutive failed pings) — a transient degraded ping
                   // must not block a power action the user is about to take.
                   disabled={shuttingDown || powerOning || powerOnWaiting || (bmcStatus.net_state === 'down')}
                   className={serverOn ? 'text-danger' : 'text-success'}

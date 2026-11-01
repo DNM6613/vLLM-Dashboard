@@ -106,12 +106,12 @@ class TestCheckSshConnectivityNetMerge(_Base):
         self.assertTrue(out["connected"])  # service layer: last known
         self.assertTrue(out["host_down"])  # degraded counts as not-verified
 
-    def test_third_ping_failure_down_forces_disconnected(self):
+    def test_second_ping_failure_down_forces_disconnected(self):
         self._prime_cache(connected=True)
         with patch.object(probe, "icmp_ping", return_value=None), \
              patch.object(remote_client.config_manager, "get_config",
                           return_value=CFG):
-            for _ in range(3):
+            for _ in range(2):
                 out = probe.check_ssh_connectivity()
         self.assertEqual(out["net_state"], "down")
         self.assertFalse(out["connected"])

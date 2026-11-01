@@ -1,4 +1,4 @@
-"""v6 header lights: ICMP echo probe + 3-strike PingTracker.
+"""v6 header lights: ICMP echo probe + 2-strike PingTracker.
 
 No test touches the real network: the socket is faked at the
 ``socket.socket`` boundary, so these run on Windows too (where
@@ -22,7 +22,6 @@ class TestPingTracker(unittest.TestCase):
 
     def test_degraded_then_down_then_reset(self):
         self.assertEqual(self.tr.record("h", None)[0], "degraded")
-        self.assertEqual(self.tr.record("h", None)[0], "degraded")
         self.assertEqual(self.tr.record("h", None)[0], "down")
         self.assertEqual(self.tr.record("h", None)[0], "down")  # stays down
         # A single success resets to up immediately (the light clears).
@@ -32,8 +31,10 @@ class TestPingTracker(unittest.TestCase):
 
     def test_hosts_independent(self):
         self.assertEqual(self.tr.record("a", None)[0], "degraded")
+        self.assertEqual(self.tr.record("a", None)[0], "down")
         self.assertEqual(self.tr.record("b", 0.001)[0], "up")
-        self.assertEqual(self.tr.record("a", None)[0], "degraded")
+        # a's failure streak must not leak into b's state.
+        self.assertEqual(self.tr.record("b", 0.001)[0], "up")
 
     def test_reset(self):
         self.tr.record("h", None)

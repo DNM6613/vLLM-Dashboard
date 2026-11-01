@@ -147,7 +147,7 @@ class _FakeConfig:
 
 
 class TestCheckBmcStatusNetProbe(unittest.TestCase):
-    """v6: the BMC light's network layer is an ICMP ping (3-strike tracker);
+    """v6: the BMC light's network layer is an ICMP ping (2-strike tracker);
     a ping failure skips the ipmitool round trip entirely."""
 
     def setUp(self):
@@ -181,7 +181,7 @@ class TestCheckBmcStatusNetProbe(unittest.TestCase):
         self.assertFalse(out["connected"])
         self.assertIsNone(out["power"])
         run_mock.assert_not_called()
-        # Three consecutive failures → down (red).
+        # Two consecutive failures → down (red).
         with p1, p2, p3:
             for _ in range(2):
                 out = self.ops.check_bmc_status()

@@ -3,9 +3,9 @@
 Two layers feed the header's SSH light:
 
 * **Network layer** — one fresh ICMP echo per request (see
-  :mod:`.net_probe`), debounced by a 3-strike tracker: a single dropped
-  packet is yellow (degraded), the light turns red only after three
-  consecutive failed pings. The light never trusts a cached reachability
+  :mod:`.net_probe`), debounced by a 2-strike tracker: a single dropped
+  packet is yellow (degraded), the light turns red on the second
+  consecutive failed ping. The light never trusts a cached reachability
   value — the 2026-10-21 power-off incident kept the UI green because a
   wedged probe thread kept serving a stale "connected".
 * **Service layer** — the background probe thread below (``echo ok`` over
@@ -242,7 +242,7 @@ def check_ssh_connectivity(refresh: bool = False) -> dict[str, Any]:
             "latency_ms": None,
         }
 
-    # Network layer: a fresh per-request ping (1 s) feeds the 3-strike
+    # Network layer: a fresh per-request ping (1 s) feeds the 2-strike
     # tracker. The light never reads a cached reachability value.
     try:
         rtt = icmp_ping(config.host)

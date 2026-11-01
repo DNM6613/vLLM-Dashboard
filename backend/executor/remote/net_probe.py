@@ -1,4 +1,4 @@
-"""Unprivileged ICMP echo probe + per-host 3-strike state for header lights.
+"""Unprivileged ICMP echo probe + per-host 2-strike state for header lights.
 
 The SSH/BMC header lights report the *network layer*, probed fresh on every
 request (never from cache). A single dropped echo must not flip the light
@@ -19,7 +19,7 @@ import struct
 import threading
 import time
 
-DOWN_STRIKES = 3
+DOWN_STRIKES = 2
 PING_TIMEOUT = 1.0
 
 _seq_lock = threading.Lock()
@@ -81,8 +81,8 @@ def icmp_ping(host: str, timeout: float = PING_TIMEOUT) -> float | None:
 class PingTracker:
     """Per-host consecutive-failure state feeding a light's network layer.
 
-    ``up`` — last ping ok (streak 0); ``degraded`` — 1–2 consecutive
-    failures (yellow); ``down`` — >= *down_strikes* consecutive failures
+    ``up`` — last ping ok (streak 0); ``degraded`` — a single consecutive
+    failure (yellow); ``down`` — >= *down_strikes* consecutive failures
     (red). A success resets the streak to zero immediately.
     """
 

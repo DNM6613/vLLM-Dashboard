@@ -1,7 +1,7 @@
 import type { NetState, ProbeErrorCode } from '../types';
 
 // Header-light state. The light color is the NETWORK layer (fresh per
-// request on the backend: ICMP ping 3-strike debounce for SSH/BMC, TCP 8000
+// request on the backend: ICMP ping 2-strike debounce for SSH/BMC, TCP 8000
 // for the API); the text is the specific SERVICE-layer error. No hover
 // tooltips: the label carries the whole message.
 export interface LightState {

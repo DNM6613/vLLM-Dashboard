@@ -6,7 +6,7 @@ import { useI18n } from '../i18n/context';
 import type { LightState } from '../utils/lightStatus';
 
 // v6: no frontend debounce for the header lights — the backend owns it
-// (per-request fresh probes + the ICMP 3-strike tracker). These callbacks
+// (per-request fresh probes + the ICMP 2-strike tracker). These callbacks
 // render whatever the probe response says; a failed dashboard-API request
 // keeps the last rendered state instead of flapping the lights.
 
@@ -105,7 +105,7 @@ export function useServerConfig() {
     }
     const rawConnected = status.connected;
     setBmcStatus((prev) => {
-      // v6: the backend's ping 3-strike tracker owns the light color; the
+      // v6: the backend's ping 2-strike tracker owns the light color; the
       // frontend only holds the last known power reading while the probe is
       // down (`power` is sticky, `powerFresh` marks a fresh reading).
       const power = rawConnected ? status.power : prev.power;
@@ -243,7 +243,7 @@ export function useServerConfig() {
     setShowServerConfig,
     // Header lights: network-layer state (color) + specific error code
     // (text). v6 — no frontend debounce, the backend probes fresh per
-    // request and owns the 3-strike ping debounce.
+    // request and owns the 2-strike ping debounce.
     sshLight,
     apiLight,
     // Service-layer connectivity (model ops, hardware cards, badges):

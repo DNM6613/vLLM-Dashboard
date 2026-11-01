@@ -68,8 +68,8 @@ export interface ServerConfig {
 }
 
 // Network-layer state of a header light, probed fresh per request on the
-// backend: "up" (green baseline), "degraded" (1–2 consecutive ICMP ping
-// failures — yellow), "down" (>= 3 consecutive failures — red).
+// backend: "up" (green baseline), "degraded" (a single consecutive ICMP
+// ping failure — yellow), "down" (>= 2 consecutive failures — red).
 export type NetState = 'up' | 'degraded' | 'down';
 
 // Specific service/network error code driving the light's text label.

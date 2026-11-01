@@ -187,7 +187,7 @@ class PowerOps:
         """Check BMC (IPMI) connectivity + chassis power state.
 
         Network layer = one fresh ICMP ping per request fed to the
-        3-strike tracker (:class:`~.net_probe.PingTracker`): on ping
+        2-strike tracker (:class:`~.net_probe.PingTracker`): on ping
         failure the ipmitool round trip is skipped entirely (fast path —
         no subprocess on a dead host). Success =
         ``ipmitool chassis power status`` answered within
