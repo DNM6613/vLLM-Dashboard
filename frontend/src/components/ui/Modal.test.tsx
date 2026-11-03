@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { I18nProvider } from '../../i18n';
 import { Modal } from './Modal';
 
@@ -75,5 +75,49 @@ describe('Modal Escape stacking (audit 2026-10-22 FE-1)', () => {
     pressEscape();
     expect(first).toHaveBeenCalledTimes(1);
     expect(second).not.toHaveBeenCalled();
+  });
+});
+
+describe('Modal backdrop (nested deploy modal on server config)', () => {
+  it('renders the dark backdrop by default', () => {
+    render(
+      <I18nProvider>
+        <Modal title="M" onClose={() => {}}>body</Modal>
+      </I18nProvider>,
+    );
+    const overlay = screen.getByRole('dialog').parentElement as HTMLElement;
+    expect(overlay.className).toContain('bg-black/60');
+    expect(overlay.className).toContain('backdrop-blur-sm');
+  });
+
+  it('skips the dark backdrop with backdrop={false} but keeps the positioning overlay', () => {
+    const onClose = vi.fn();
+    render(
+      <I18nProvider>
+        <Modal title="M" onClose={onClose} backdrop={false}>body</Modal>
+      </I18nProvider>,
+    );
+    const overlay = screen.getByRole('dialog').parentElement as HTMLElement;
+    expect(overlay.className).not.toContain('bg-black/60');
+    expect(overlay.className).not.toContain('backdrop-blur-sm');
+    expect(overlay.className).toContain('fixed');
+    expect(overlay.className).toContain('inset-0');
+    expect(overlay.className).toContain('z-[95]');
+    // The invisible overlay still swallows the click (blocks the modal
+    // underneath) but does not close the panel.
+    fireEvent.mouseDown(overlay);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('does not close on outside click (user ruling 2026-11-03: all panels)', () => {
+    const onClose = vi.fn();
+    render(
+      <I18nProvider>
+        <Modal title="M" onClose={onClose}>body</Modal>
+      </I18nProvider>,
+    );
+    const overlay = screen.getByRole('dialog').parentElement as HTMLElement;
+    fireEvent.mouseDown(overlay);
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

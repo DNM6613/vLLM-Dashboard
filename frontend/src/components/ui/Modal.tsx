@@ -13,6 +13,13 @@ interface ModalProps {
   headerAction?: ReactNode;
   /** Hide the scroll indicator (the panel stays scrollable). */
   hideScrollbar?: boolean;
+  /**
+   * Set to false for a modal opened on top of another modal (the deploy
+   * modal from the server config modal): the overlay still catches outside
+   * clicks, but the dark backdrop/blur is skipped so the parent modal's
+   * backdrop is the only dimming layer.
+   */
+  backdrop?: boolean;
 }
 
 const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
@@ -27,7 +34,7 @@ const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:
 // naive push/pop stack would get nested modals backwards.
 const mountedModals = new Set<HTMLElement>();
 
-export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, footer, headerAction, hideScrollbar }: ModalProps) {
+export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, footer, headerAction, hideScrollbar, backdrop = true }: ModalProps) {
   const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
@@ -86,8 +93,10 @@ export function Modal({ title, icon, maxWidth = 'max-w-xl', onClose, children, f
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-[95] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onCloseRef.current(); }}
+      // No outside-click close (user ruling 2026-11-03: clicking outside
+      // must not close any panel); the overlay still blocks the modal
+      // underneath so its inputs are not clickable while this one is open.
+      className={`fixed inset-0 z-[95] flex items-center justify-center p-4${backdrop ? ' bg-black/60 backdrop-blur-sm' : ''}`}
     >
       <div
         ref={panelRef}

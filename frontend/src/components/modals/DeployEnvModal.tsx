@@ -58,7 +58,7 @@ export function DeployEnvModal({ onClose }: DeployEnvModalProps) {
   const snapshot = dep.state?.snapshots;
 
   return (
-    <Modal title={t('Environment Deployment')} icon={<Rocket className="w-5 h-5" />} maxWidth="max-w-4xl" hideScrollbar onClose={onClose}
+    <Modal title={t('Environment Deployment')} icon={<Rocket className="w-5 h-5" />} maxWidth="max-w-4xl" hideScrollbar backdrop={false} onClose={onClose}
       footer={
         <>
           {snapshot?.driver.previous_pkg && (
